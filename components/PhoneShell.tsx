@@ -432,8 +432,8 @@ const PhoneShell: React.FC = () => {
       <div
         className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none flex flex-col"
         style={{
-          paddingTop: activeApp !== AppID.Launcher ? 'env(safe-area-inset-top)' : 0,
-          paddingBottom: activeApp !== AppID.Launcher ? 'env(safe-area-inset-bottom)' : 0
+          paddingTop: activeApp !== AppID.Launcher ? 'var(--safe-top, env(safe-area-inset-top))' : 0,
+          paddingBottom: activeApp !== AppID.Launcher ? 'var(--safe-bottom, env(safe-area-inset-bottom))' : 0
         }}
       >
         {/* App Container */}
@@ -449,7 +449,7 @@ const PhoneShell: React.FC = () => {
         {!theme.hideStatusBar && <StatusBar />}
 
         {/* Overlays: iOS-Style Banner Notifications */}
-        <div className="absolute top-0 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]" style={{ paddingTop: 'max(12px, calc(env(safe-area-inset-top) + 4px))' }}>
+        <div className="absolute top-0 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]" style={{ paddingTop: 'max(12px, calc(var(--safe-top, env(safe-area-inset-top)) + 4px))' }}>
           {toasts.map(toast => (
             <div key={toast.id} className="animate-notif-in w-[92%] max-w-md bg-white/90 backdrop-blur-2xl rounded-[20px] shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-white/40 overflow-hidden pointer-events-auto">
               <div className="px-4 py-3 flex items-start gap-3">

@@ -257,6 +257,17 @@
   /* System Pill Tokens */
   --pill-bg: rgba(226, 232, 240, 0.4);
   --pill-text: #64748b;
+
+  /* Smart Safe Area Variables */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+/* When the app is in native HTML5 Fullscreen mode, ignore safe areas 
+   since the notch is handled natively or viewport is adjusted */
+:fullscreen {
+  --safe-top: 0px !important;
+  --safe-bottom: 0px !important;
 }
 
 body {

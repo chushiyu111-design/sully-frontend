@@ -38,20 +38,18 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isPwaMode()) return;
 
-    // Fullscreen API 需要用户手势触发，监听第一次触摸/点击
-    const handler = () => {
+    // 积极维护全屏状态：任何点击或触摸（用户手势）都会尝试恢复全屏
+    // 这是为了解决 Android 侧滑返回、键盘收起时意外退出全屏的 Bug
+    const ensureFullscreen = () => {
       requestSystemFullscreen();
-      // 触发一次后移除监听
-      document.removeEventListener('touchstart', handler);
-      document.removeEventListener('click', handler);
     };
 
-    document.addEventListener('touchstart', handler, { once: true });
-    document.addEventListener('click', handler, { once: true });
+    document.addEventListener('click', ensureFullscreen, { capture: true, passive: true });
+    document.addEventListener('touchstart', ensureFullscreen, { capture: true, passive: true });
 
     return () => {
-      document.removeEventListener('touchstart', handler);
-      document.removeEventListener('click', handler);
+      document.removeEventListener('click', ensureFullscreen, { capture: true } as any);
+      document.removeEventListener('touchstart', ensureFullscreen, { capture: true } as any);
     };
   }, []);
 

@@ -13,6 +13,7 @@ import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+import { requestSystemFullscreen } from '../App';
 
 // --- Lazy-loaded Apps (only downloaded when user opens them) ---
 const Settings = React.lazy(() => import('../apps/Settings'));
@@ -327,6 +328,7 @@ const PhoneShell: React.FC = () => {
             Notification.requestPermission();
           }
           haptic.light();
+          requestSystemFullscreen();
           unlock();
         }}
         className="relative w-full h-full bg-cover bg-center cursor-pointer overflow-hidden group font-light select-none overscroll-none"

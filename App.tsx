@@ -19,7 +19,8 @@ function isPwaMode(): boolean {
  * 请求系统级全屏 (Fullscreen API)
  * 隐藏安卓状态栏 + 导航栏
  */
-function requestSystemFullscreen() {
+export function requestSystemFullscreen() {
+  if (typeof document === 'undefined') return;
   const el = document.documentElement;
   const request =
     el.requestFullscreen ||

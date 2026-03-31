@@ -6,6 +6,7 @@ import { onSystemLog } from '../utils/systemInterceptor';
 import { exportSystemData, importSystemData, ExportStateSnapshot, ImportCallbacks } from '../utils/systemBackup';
 import { BackendAgentManager } from '../utils/autonomousAgent';
 import { haptic, setHapticsEnabled as setHapticsEnabledGlobal, getHapticsEnabled } from '../utils/haptics';
+import { initPushSubscription } from '../utils/pushSubscription';
 
 // Sub-contexts
 import { NotificationProvider, useNotification, NotificationContextType } from './NotificationContext';
@@ -660,6 +661,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                 role: 'assistant',
                                 type: 'text',
                                 content: msg.content,
+                                timestamp: msg.createdAt,
                                 ...(msg.metadata ? { metadata: msg.metadata } : {}),
                             });
                             await DB.deleteScheduledMessage(msg.id);
@@ -727,6 +729,47 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
         const cleanup = manager.start(activeCharacterId, char, secondaryApi);
         return cleanup;
     }, [isDataLoaded, activeCharacterId, characters, agentReloadCounter]);
+
+    // --- Push Notification Registration (延迟 3 秒，不阻塞首屏) ---
+    useEffect(() => {
+        if (!isDataLoaded) return;
+        const timer = setTimeout(() => {
+            initPushSubscription().catch(err => {
+                console.warn('🔔 [Push] Init failed:', err.message || err);
+            });
+        }, 3000);
+        return () => clearTimeout(timer);
+    }, [isDataLoaded]);
+
+    // --- Service Worker: 通知点击 → 切换角色 + 打开聊天 ---
+    useEffect(() => {
+        if (!navigator.serviceWorker) return;
+        const handler = (event: MessageEvent) => {
+            if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.charId) {
+                const charId = event.data.charId;
+                handleSetActiveCharacter(charId);
+                appCtx.openApp(AppID.Chat);
+                // 清除该角色的未读标记
+                setUnreadMessages(prev => ({ ...prev, [charId]: 0 }));
+            }
+        };
+        navigator.serviceWorker.addEventListener('message', handler);
+        return () => navigator.serviceWorker.removeEventListener('message', handler);
+    }, []);
+
+    // --- URL 参数: 从通知新窗口打开时自动导航 ---
+    useEffect(() => {
+        if (!isDataLoaded || characters.length === 0) return;
+        const params = new URLSearchParams(window.location.search);
+        const notifCharId = params.get('notif_charId');
+        if (notifCharId && characters.find(c => c.id === notifCharId)) {
+            handleSetActiveCharacter(notifCharId);
+            appCtx.openApp(AppID.Chat);
+            setUnreadMessages(prev => ({ ...prev, [notifCharId]: 0 }));
+            // 清理 URL（避免刷新后重复触发）
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    }, [isDataLoaded, characters]);
 
     const updateTheme = async (updates: Partial<OSTheme>) => {
         const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;

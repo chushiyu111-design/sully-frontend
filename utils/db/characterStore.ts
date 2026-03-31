@@ -19,6 +19,16 @@ export const saveCharacter = async (character: CharacterProfile): Promise<void> 
     transaction.objectStore(STORE_CHARACTERS).put(character);
 };
 
+export const getCharacterById = async (id: string): Promise<CharacterProfile | undefined> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+        const request = transaction.objectStore(STORE_CHARACTERS).get(id);
+        request.onsuccess = () => resolve(request.result || undefined);
+        request.onerror = () => reject(request.error);
+    });
+};
+
 export const deleteCharacter = async (id: string): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_CHARACTERS, 'readwrite');
@@ -163,12 +173,12 @@ export const getMessagesByIds = async (ids: number[]): Promise<Message[]> => {
     });
 };
 
-export const saveMessage = async (msg: Omit<Message, 'id' | 'timestamp'>): Promise<number> => {
+export const saveMessage = async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
-        const request = store.add({ ...msg, timestamp: Date.now() });
+        const request = store.add({ ...msg, timestamp: msg.timestamp ?? Date.now() });
         request.onsuccess = () => resolve(request.result as number);
         request.onerror = () => reject(request.error);
     });

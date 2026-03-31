@@ -75,7 +75,7 @@ export async function initPushNotifications(
         // 4. 创建推送订阅
         const subscription = await reg.pushManager.subscribe({
             userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+            applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as any,
         });
 
         // 5. 发送订阅到后端

@@ -25,6 +25,7 @@ export const DB = {
 
     // Characters
     getAllCharacters: characterStore.getAllCharacters,
+    getCharacterById: characterStore.getCharacterById,
     saveCharacter: characterStore.saveCharacter,
     deleteCharacter: characterStore.deleteCharacter,
 

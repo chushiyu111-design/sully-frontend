@@ -275,12 +275,36 @@ mode 可选值：
                 fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
             }
 
-            // 3. API Call — when deep immersion mode is on and model is Gemini,
-            // request native thinking via thinking_config. Otherwise, plain call.
-            const isGeminiModel = /gemini/i.test(apiConfig.model || '');
-            const wantNativeThinking = !!(apiConfig.useGeminiJailbreak && isGeminiModel);
+            // 3. API Call — prefill-based CoT only, native thinking disabled.
+            // Native thinking (budget_tokens) conflicts with prefill <thinking> tags
+            // and causes format drops on Gemini 2.5p. Always use prefill instead.
 
-            // 3.0 Prefill injection — force CoT <thinking> start (always-on)
+            // 3.0 Thinking Chain Lock — force model to close </thinking> and output content
+            // Inspired by SillyTavern preset format enforcement.
+            fullMessages.push({ role: 'system', content: `[思考链格式锁定]
+请严格遵循以下输出流程：
+1. 先在 <thinking>...</thinking> 中完成全部思考
+2. 思考完毕后，必须输出 </thinking> 闭合标签
+3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）
+4. 正文中不得包含任何 <thinking> 标签或思考过程
+
+格式：
+<thinking>
+（你的思考过程）
+</thinking>
+（角色正文回复）
+
+严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。
+
+━━━━━━━━━━━━━━━
+<!--
+if 首段不是<thinking>标签 then
+    立即回滚本轮并重写，直至首段为<thinking>…</thinking>
+end if
+-->
+━━━━━━━━━━━━━━━` });
+
+            // 3.0a Prefill injection — force CoT <thinking> start (always-on)
             const usePrefill = true;
             if (usePrefill) {
                 fullMessages.push({ role: 'assistant', content: '<thinking>\n' });
@@ -293,11 +317,7 @@ mode 可选值：
                 temperature: 0.85,
                 stream: false,
             };
-            if (wantNativeThinking && !usePrefill) {
-                // Gemini 2.5+ native thinking: tokens budget (8k gives decent CoT depth)
-                // Skip when prefill is active — prefill forces text-embedded thinking instead
-                requestBody.thinking = { type: 'enabled', budget_tokens: 8000 };
-            }
+            // Native thinking completely disabled — prefill CoT handles reasoning
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
                 body: JSON.stringify(requestBody)
@@ -335,7 +355,7 @@ mode 可选值：
                 console.log('🧩 [Prefill] Reconstructed <thinking> tag onto response (Fallback mode)');
             }
 
-            console.log(`🧠 [ThinkingDebug] useGeminiJailbreak=${apiConfig.useGeminiJailbreak} wantNativeThinking=${wantNativeThinking} | raw length=${aiContent.length} | nativeThinking length=${nativeThinking.length} | has <thinking>=${aiContent.includes('<thinking>')} | has <think>=${aiContent.includes('<think>')}`);
+            console.log(`🧠 [ThinkingDebug] useGeminiJailbreak=${apiConfig.useGeminiJailbreak} | raw length=${aiContent.length} | nativeThinking length=${nativeThinking.length} | has <thinking>=${aiContent.includes('<thinking>')} | has <think>=${aiContent.includes('<think>')}`);
             console.log(`🧠 [ThinkingDebug] RAW AI OUTPUT (first 500 chars):`, aiContent.substring(0, 500));
 
             // Extract embedded text thinking if present
@@ -346,6 +366,40 @@ mode 可选值：
             // ALWAYS use the extracted content, which safely strips all thinking tags.
             // This prevents the tag leak when nativeThinking is true, and fixes unclosed tag leaks.
             aiContent = extracted.content;
+
+            // 4.1 FORMAT VALIDATION — Thinking Chain Lock enforcement
+            // If we got thinking but NO actual content, the model "dropped" the format.
+            // Auto-retry once without prefill to recover.
+            if (thinkingContent && !aiContent.trim()) {
+                console.warn('🔒 [ChainLock] Format drop detected! Got thinking but no content. Retrying without prefill...');
+                try {
+                    // Remove the prefill assistant message and thinking chain lock for retry
+                    const retryMessages = fullMessages.filter(m => 
+                        !(m.role === 'assistant' && m.content === '<thinking>\n') &&
+                        !(m.role === 'system' && typeof m.content === 'string' && m.content.includes('思考链格式锁定'))
+                    );
+                    // Add a direct instruction instead
+                    retryMessages.push({ role: 'system', content: '[系统: 请直接输出角色的回复正文，不需要 <thinking> 标签。]' });
+                    const retryBody = { model: apiConfig.model, messages: retryMessages, temperature: 0.85, stream: false };
+                    const retryData = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(retryBody)
+                    });
+                    updateTokenUsage(retryData, historyMsgCount, 'chainlock-retry');
+                    const retryContent = retryData.choices?.[0]?.message?.content || '';
+                    if (retryContent.trim()) {
+                        const retryExtracted = extractThinking(retryContent);
+                        aiContent = retryExtracted.content || retryContent;
+                        console.log('🔒 [ChainLock] Retry succeeded, recovered content length:', aiContent.length);
+                    } else {
+                        console.warn('🔒 [ChainLock] Retry also returned empty. Using thinking as fallback.');
+                        aiContent = thinkingContent; // Last resort: show thinking as content
+                    }
+                } catch (retryErr) {
+                    console.error('🔒 [ChainLock] Retry failed:', retryErr);
+                    aiContent = thinkingContent; // Fallback
+                }
+            }
 
             // CLEAN UP prefixes and timestamps LAST, so the regex anchors correctly
             // at the start of the string (now that <thinking> is gone!)

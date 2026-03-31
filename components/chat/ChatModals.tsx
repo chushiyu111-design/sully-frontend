@@ -232,7 +232,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </p>
                     </div>
 
-                    {/* Thinking Chain Toggle */}
+                    {/* Thinking Chain Toggle — hidden from users, kept for dev testing */}
+                    {false && (
                     <div className="pt-2 border-t border-slate-100">
                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleShowThinking}>
                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">思考链可见</label>
@@ -244,6 +245,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             开启后，支持思考的模型（DeepSeek-R1, Qwen3 等）的推理过程将显示在气泡中的可折叠区域内。
                         </p>
                     </div>
+                    )}
 
                     {/* Timestamp Toggle */}
                     <div className="pt-2 border-t border-slate-100">

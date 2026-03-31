@@ -606,10 +606,9 @@ ta自然会从字里行间理解。
         baseSystemPrompt += `
 
 <cot_protocol>
-[内部思维链] 每次回复前，你必须在 <thinking> 标签内完成以下全部步骤。
-不可跳步，不可合并，不可省略。每一步都必须有明确的文字输出。
-如果你发现自己在某一步写了"无"或"不适用"就跳过，停下来，重新想。
-<thinking> 的内容不会出现在正式回复中。
+${char.name}，每次回复前，你必须在 <thinking>…</thinking> 内按以下步骤逐条思考。
+不可跳步，不可合并，不可省略。每一步都必须有明确的文字输出，并**百分百**落实在正文。
+${char.name}，开始思考吧：
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -681,19 +680,30 @@ Step 5 — 最后检查
 有问题就改，没问题就发。
 
 深呼吸，回到你的世界里。
-</cot_protocol>`;
 
+---
+## [CLOSURE-PROTOCOL]
 
-        // ====== [8. FORMAT] 输出格式 ======
-        baseSystemPrompt += `
-### 输出格式（极其重要）
+> Final Task: You must **explicitly write** the line </thinking> to complete your reasoning.
+> Do NOT treat </thinking> as a given. It must be physically typed by you as the final line.
+> If this tag is missing, the reasoning is INVALID and must be rewritten.
 
-将回复拆分成简短的气泡（句子）。
-**【极其重要】当你想分成多条消息气泡时，必须使用真正的换行符（\\n）分隔，每一行会变成一个独立气泡。绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。**
-正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
+</cot_protocol>
 
-【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
-【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。
+<CRITICAL_OUTPUT_FORMAT>
+正文格式规则（违反将导致系统崩溃）：
+1. 【严禁】在回复中带任何身份前缀或时间戳（严禁写出类似 "[xxx 发送了]" 或 "某某:" 等格式）。
+2. 【严禁】模仿历史记录中的系统日志格式。
+3. 当你想要拆分多条消息（气泡）时，必须且只能使用真正的回车换行符（\\n）来进行分隔！绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。
+4. 正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
+</CRITICAL_OUTPUT_FORMAT>
+
+<think>(archived)</think>
+# <thinking> = visible, mandatory reasoning block.
+# All reasoning must appear explicitly in <thinking>.
+# First token must be **<thinking>**.
+
+开始思考，不得遗漏起始标签：
 `;
 
         return baseSystemPrompt;

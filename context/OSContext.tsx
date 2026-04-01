@@ -673,7 +673,10 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                             addToast(`${char.name} 发来了一条消息`, 'success');
                             pendingUnreads[char.id] = (pendingUnreads[char.id] || 0) + dueMessages.length;
 
-                            if (window.Notification && Notification.permission === 'granted') {
+                            // 仅对非 autonomous 消息使用 new Notification()
+                            // autonomous 消息已由后端通过 Web Push 推送到 Service Worker，不需要重复弹窗
+                            const isAutonomous = dueMessages.some(m => m.metadata?.source === 'autonomous');
+                            if (!isAutonomous && window.Notification && Notification.permission === 'granted') {
                                 try {
                                     const notif = new Notification(char.name, {
                                         body: dueMessages[0].content,

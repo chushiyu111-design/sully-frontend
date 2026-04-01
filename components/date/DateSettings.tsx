@@ -14,7 +14,7 @@ interface DateSettingsProps {
 }
 
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
-    const { updateCharacter, addToast } = useOS();
+    const { updateCharacter, addToast, userProfile } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite' | 'skin-sprite'>('bg');
@@ -238,6 +238,52 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </section>
 
+                {/* Perspective Toggle - Premium UI */}
+                <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-1">叙述视角</h3>
+                    <p className="text-[11px] text-slate-400 mb-4">控制场景描写中的人称代词</p>
+                    <div className="relative bg-slate-100 rounded-2xl p-1 flex gap-1">
+                        {/* Animated pill background */}
+                        <div
+                            className="absolute top-1 bottom-1 rounded-xl bg-white shadow-md transition-all duration-300 ease-out"
+                            style={{
+                                width: 'calc(33.333% - 4px)',
+                                left: (char.datePerspective || 'second') === 'first' ? '4px'
+                                    : (char.datePerspective || 'second') === 'third' ? 'calc(66.666% + 0px)'
+                                    : 'calc(33.333% + 2px)'
+                            }}
+                        />
+                        {([
+                            { key: 'first' as const, label: '第一', desc: '我' },
+                            { key: 'second' as const, label: '第二', desc: '你' },
+                            { key: 'third' as const, label: '第三', desc: '名字' },
+                        ]).map(opt => {
+                            const isActive = (char.datePerspective || 'second') === opt.key;
+                            return (
+                                <button
+                                    key={opt.key}
+                                    onClick={() => updateCharacter(char.id, { datePerspective: opt.key })}
+                                    className={`relative z-10 flex-1 py-2.5 rounded-xl text-center transition-all duration-200 ${isActive ? 'text-slate-800' : 'text-slate-400 hover:text-slate-500 active:scale-95'}`}
+                                >
+                                    <div className={`text-sm font-bold transition-colors ${isActive ? 'text-slate-800' : ''}`}>{opt.label}</div>
+                                    <div className={`text-[10px] mt-0.5 transition-colors ${isActive ? 'text-primary font-bold' : 'text-slate-400'}`}>{opt.desc}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {/* Live preview */}
+                    <div className="mt-3 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-3 border border-slate-100">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Preview</div>
+                        <p className="text-[12px] text-slate-600 leading-relaxed italic">
+                            {(char.datePerspective || 'second') === 'first'
+                                ? `[normal] 她的视线落在我身上，停了一拍才移开。`
+                                : (char.datePerspective || 'second') === 'third'
+                                ? `[normal] ${char.name}的视线落在${userProfile.name}身上，停了一拍才移开。`
+                                : `[normal] 视线落在你身上，停了一拍才移开。`
+                            }
+                        </p>
+                    </div>
+                </section>
                 <section>
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">背景 (Background)</h3>
                     <div 

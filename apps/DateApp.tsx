@@ -9,6 +9,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
+import { buildDatePreamble, buildTheaterScene, buildTheaterSceneCompact, buildDateTail, STYLE_BLOCK } from '../utils/datePrompts';
 
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, userProfile } = useOS();
@@ -165,9 +166,13 @@ const DateApp: React.FC = () => {
             }).join('\n');
 
             const timeStr = `${virtualTime.day} ${formatTime()}`;
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
 
-            // 强制分隔符，让 AI 意识到这是新的一场戏
+            // Build system prompt: dreamweaver + identity intro + core context + style
+            let peekSystemPrompt = buildDatePreamble(c.name, userProfile.name);
+            peekSystemPrompt += ContextBuilder.buildCoreContext(c, userProfile, false);
+            peekSystemPrompt += STYLE_BLOCK;
+
+            // Force separator to signal new scene
             const contextSeparator = gapHint ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n` : `\n\n--- [NEW SCENE START] ---\n\n`;
 
             const peekInstructions = `
@@ -176,14 +181,14 @@ const DateApp: React.FC = () => {
 时间上下文: ${gapHint}
 
 ### 任务
-你现在并不在和用户直接对话。用户正在悄悄靠近你所在的地点。
+你现在并不在和${userProfile.name}直接对话。${userProfile.name}正在悄悄靠近你所在的地点。
 请用**第三人称**描写一段话。
 描述：${c.name} 此时此刻正在做什么？周围环境是怎样的？状态如何？
 
 ### 逻辑检查
 1. **上下文连贯性**: 参考 [最近记录]，但**必须**注意 [TIME SKIP]。如果是很久没见，不要接着上一次的话题聊，而是开启新场景。
 2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据之前的聊天状态决定。'}
-3. **描写风格**: 电影感，沉浸式，细节丰富。不要输出任何前缀，直接输出描写内容。`;
+3. **描写风格**: 严格遵循 <style> 中的电影级文风要求。不要输出任何前缀，直接输出描写内容。`;
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -191,7 +196,7 @@ const DateApp: React.FC = () => {
                 body: JSON.stringify({
                     model: apiConfig.model,
                     messages: [
-                        { role: "system", content: baseContext },
+                        { role: "system", content: peekSystemPrompt },
                         { role: "user", content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` }
                     ],
                     temperature: 0.85
@@ -237,44 +242,14 @@ const DateApp: React.FC = () => {
             content: m.type === 'image' ? '[User sent an image]' : m.content
         }));
 
-        let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
+        // ====== Build full immersive theater system prompt ======
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
-
-        // Explicitly tell AI about the scene
-        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
-你正在与用户进行**面对面**的互动。这不是聊天，是一场真实的见面。
-
-### 核心规则：一行一念 (One Line per Beat)
-前端解析器基于**换行符**来分割气泡。
-1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**不要整段只用一个情绪，要逐行根据语境切换。** 仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
-3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
-
-### ⭐ 动作与叙述行的写法
-你不是在列清单，你是在写一个正在发生的场景。每一行动作/叙述都应该让人感受到**此时此刻的空气**。
-
-**具体要求**：
-- 写出**感官**：光线怎么落的、空气什么味道、皮肤什么触感、周围什么声音
-- 写出**节奏**：动作之间有停顿、有犹豫、有呼吸，不要一口气做完三个动作
-- 写出**情绪的痕迹**：不要说"他很紧张"，而是写他的手指在桌面上画了一道看不见的线
-- 让每一行都有**画面**，像电影里的一个镜头
-
-❌ **不要这样写**（只用一个情绪 + 干巴巴的动作罗列）：
-[normal] 把手放下，看向你。
-走到你身边，坐下来。
-拿起杯子，喝了一口水。
-
-✅ **要这样写**（每行标注情绪 + 有呼吸感的叙述）：
-[normal] 指尖从发梢滑落，垂在身侧。视线转过来的时候并不急，像是刚好、又像是故意。
-[shy] "……你一直在看我吗？"
-[happy] 嘴角的弧度藏不住，像是被戳中了什么小心思。
-[normal] 脚步踩在木地板上的声音很轻。在你旁边坐下来，衣料带过一缕还没散尽的冷风。
-
-### 场景上下文
-1. **Location**: 你们现在**面对面**。
-2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
-`;
+        const perspective = char.datePerspective || 'second';
+        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, perspective);
+        systemPrompt += buildDateTail(char.name, userProfile.name, perspective);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
@@ -284,7 +259,7 @@ const DateApp: React.FC = () => {
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写出场景的呼吸感，不要罗列动作。)` }
+                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述行遵循 <style> 文风要求。叙述人称严格遵守当前视角设定。)` }
                 ],
                 temperature: 0.85
             })
@@ -327,21 +302,14 @@ const DateApp: React.FC = () => {
             content: m.type === 'image' ? '[User sent an image]' : m.content
         }));
 
-        let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
+        // ====== Build full immersive theater system prompt (reroll) ======
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
-        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
-你正在与用户进行**面对面**的互动。
-
-### 格式规则
-1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: \`[emotion]\` (放在行首)。**仅限使用以下情绪**: ${dateEmotionsR.join(', ')}。不要使用不在列表中的标签。
-3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写。
-
-### ⭐ 动作与叙述行的写法
-不要罗列动作。写出感官细节、停顿和呼吸感，让每一行都像电影镜头——有画面、有空气、有温度。
-用细微的肢体语言暗示情绪，不要直接说"开心""紧张"。
-`;
+        const perspectiveR = char.datePerspective || 'second';
+        systemPrompt += buildTheaterSceneCompact(char.name, userProfile.name, dateEmotionsR, perspectiveR);
+        systemPrompt += buildDateTail(char.name, userProfile.name, perspectiveR);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
@@ -351,7 +319,7 @@ const DateApp: React.FC = () => {
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写，叙述行保持场景感。)` }
+                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、<style> 文风、当前叙述人称。)` }
                 ],
                 temperature: 0.9
             })

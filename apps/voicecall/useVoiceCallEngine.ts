@@ -29,6 +29,7 @@ import { VoiceCallLlm, VoiceCallLlmConfig } from './voiceCallLlm';
 import { VoiceCallAudioPlayer } from './voiceCallAudioPlayer';
 import type { VoiceCallMode } from './voiceCallTypes';
 import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
+import { pcmChunksToWavBlob } from './pcmToWav';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ export interface UseVoiceCallEngineReturn {
     /** 开闸：释放闸门期间缓冲的音频并开始播放 */
     releaseGate: () => void;
     /** 上次通话的对话历史（通话结束后由 stopEngine 填充） */
-    lastCallHistory: React.MutableRefObject<{ role: string; content: string }[]>;
+    lastCallHistory: React.MutableRefObject<{ role: string; content: string; audioBlob?: Blob }[]>;
     sendTextMessage: (text: string) => void;
     engineState: EngineState;
     isUserSpeaking: boolean;
@@ -211,6 +212,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
     // ── 闸门模式（响铃预热）──
     const gatedRef = useRef(false);
 
+    // ── 音频缓存：收集每轮 AI 的 TTS PCM 数据用于日后回听 ──
+    const turnAudioChunksRef = useRef<Uint8Array[]>([]);
+    const turnAudioBlobsRef = useRef<Blob[]>([]);
+
     // ── 语音拼接模式：缓冲用户连续语音段 + 去抖定时器 ──
     const pendingAudioSegmentsRef = useRef<Float32Array[]>([]);
     const sttDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -234,6 +239,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             setTranscript(text.startsWith('[系统：') ? '' : text);
             setAiResponse('');
             setTtsDegraded(false);
+            // ─── 清空本轮音频缓存 ───
+            turnAudioChunksRef.current = [];
             // ─── 外语模式 (Foreign Language): 重置翻译 ───
             setAiTranslation('');
 
@@ -292,6 +299,17 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             player.onPlaybackEnd = () => {
                 if (gen === generationRef.current && engineActiveRef.current) {
                     console.log('[Engine] AI finished speaking, back to listening');
+                    // ── 打包本轮 PCM → WAV Blob 存入缓存 ──
+                    if (turnAudioChunksRef.current.length > 0) {
+                        try {
+                            const wavBlob = pcmChunksToWavBlob(turnAudioChunksRef.current, VOICE_CALL_SAMPLE_RATE);
+                            turnAudioBlobsRef.current.push(wavBlob);
+                            console.log(`[Engine] Turn audio cached: ${(wavBlob.size / 1024).toFixed(1)}KB`);
+                        } catch (e) {
+                            console.warn('[Engine] Failed to cache turn audio:', e);
+                        }
+                        turnAudioChunksRef.current = [];
+                    }
                     opts.onAISpeakingChange(false);
                     setEngineState('listening');
                     engineStateRef.current = 'listening';
@@ -370,6 +388,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 if (gen !== generationRef.current) return;
                 if (chunk.audio.length > 0) {
                     playerRef.current?.enqueue(chunk.audio);
+                    // ── 收集原始 PCM 用于通话录音缓存 ──
+                    turnAudioChunksRef.current.push(new Uint8Array(chunk.audio));
                 }
                 if (chunk.isFinal) {
                     isFinalCount++;
@@ -888,13 +908,25 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
     // ─── 停止引擎 ──────────────────────────────────────────────────
 
-    /** 上次通话的对话历史（通话结束后由 stopEngine 填充） */
-    const lastCallHistoryRef = useRef<{ role: string; content: string }[]>([]);
+    /** 上次通话的对话历史（通话结束后由 stopEngine 填充，assistant 消息携带 audioBlob） */
+    const lastCallHistoryRef = useRef<{ role: string; content: string; audioBlob?: Blob }[]>([]);
 
     const stopEngine = useCallback(() => {
         console.log('[Engine] Stopping voice call engine...');
         engineActiveRef.current = false;
         generationRef.current++;
+
+        // ── 打包最后一轮未完成的 PCM（如果用户在 AI 说话中途挂断）──
+        if (turnAudioChunksRef.current.length > 0) {
+            try {
+                const wavBlob = pcmChunksToWavBlob(turnAudioChunksRef.current, VOICE_CALL_SAMPLE_RATE);
+                turnAudioBlobsRef.current.push(wavBlob);
+                console.log(`[Engine] Final turn audio cached: ${(wavBlob.size / 1024).toFixed(1)}KB`);
+            } catch (e) {
+                console.warn('[Engine] Failed to cache final turn audio:', e);
+            }
+            turnAudioChunksRef.current = [];
+        }
 
         // 清空语音拼接缓冲 + 取消去抖定时器
         pendingAudioSegmentsRef.current = [];
@@ -918,7 +950,19 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         ttsWsRef.current = null;
 
         // 提取对话历史（必须在 abort/清理 llm 之前）
-        lastCallHistoryRef.current = llmRef.current?.getHistory() ?? [];
+        const rawHistory = llmRef.current?.getHistory() ?? [];
+
+        // ── 将缓存的 WAV Blob 按顺序映射到 assistant 消息上 ──
+        const audioBlobs = turnAudioBlobsRef.current;
+        let blobIdx = 0;
+        lastCallHistoryRef.current = rawHistory.map(h => {
+            if (h.role === 'assistant' && blobIdx < audioBlobs.length) {
+                return { ...h, audioBlob: audioBlobs[blobIdx++] };
+            }
+            return { role: h.role, content: h.content };
+        });
+        turnAudioBlobsRef.current = [];
+        console.log(`[Engine] Call history: ${rawHistory.length} turns, ${blobIdx} audio blobs attached`);
 
         // 中止 LLM
         llmRef.current?.abort();

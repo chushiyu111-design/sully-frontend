@@ -128,6 +128,7 @@ export interface CharacterProfile {
     customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
     dateLightReading?: boolean;   // Light reading mode for novel/text view in date
     datePerspective?: 'second' | 'first' | 'third';  // Narrative POV in date mode (default: 'second')
+    dateCharPerspective?: 'first' | 'third';  // Char's narrative POV in date mode (default: 'third'). 'second' excluded when user is also 'second'
     dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
     activeSkinSetId?: string;     // Currently active skin set ID
 

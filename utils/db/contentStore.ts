@@ -208,11 +208,11 @@ export const clearXhsActivities = async (characterId: string): Promise<void> => 
 };
 
 // --- Voice Audio ---
-export const saveVoiceAudio = async (msgId: number, blob: Blob): Promise<void> => {
+export const saveVoiceAudio = async (msgId: number | string, blob: Blob): Promise<void> => {
     const db = await openDB();
     db.transaction(STORE_VOICE_AUDIO, 'readwrite').objectStore(STORE_VOICE_AUDIO).put({ msgId, blob, createdAt: Date.now() });
 };
-export const getVoiceAudio = async (msgId: number): Promise<Blob | null> => {
+export const getVoiceAudio = async (msgId: number | string): Promise<Blob | null> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const request = db.transaction(STORE_VOICE_AUDIO, 'readonly').objectStore(STORE_VOICE_AUDIO).get(msgId);
@@ -220,7 +220,7 @@ export const getVoiceAudio = async (msgId: number): Promise<Blob | null> => {
         request.onerror = () => reject(request.error);
     });
 };
-export const deleteVoiceAudio = async (msgId: number): Promise<void> => {
+export const deleteVoiceAudio = async (msgId: number | string): Promise<void> => {
     const db = await openDB();
     db.transaction(STORE_VOICE_AUDIO, 'readwrite').objectStore(STORE_VOICE_AUDIO).delete(msgId);
 };

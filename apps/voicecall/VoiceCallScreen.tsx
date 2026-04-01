@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DB } from '../../utils/db';
+import { saveVoiceAudio } from '../../utils/db/contentStore';
 import { VectorMemoryExtractor } from '../../utils/vectorMemoryExtractor';
 import { useVoiceCall, CallDirection } from './useVoiceCall';
 import { useVoiceCallEngine } from './useVoiceCallEngine';
@@ -218,9 +219,21 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
                         duration,
                         mode,
                         turns: history.length,
-                        conversation: history,
+                        // 剥离 audioBlob，防止擑爆主存
+                        conversation: history.map(h => ({ role: h.role, content: h.content })),
+                        hasCallAudio: history.some(h => !!h.audioBlob),
                     },
-                }).then(() => {
+                }).then(async (savedMsgId) => {
+                    // ── 将音频 Blob 存入专用的 STORE_VOICE_AUDIO ──
+                    for (let i = 0; i < history.length; i++) {
+                        if (history[i].audioBlob) {
+                            try {
+                                await saveVoiceAudio(`call_${savedMsgId}_${i}`, history[i].audioBlob!);
+                            } catch (e) {
+                                console.warn(`[VoiceCall] Failed to save audio for turn ${i}:`, e);
+                            }
+                        }
+                    }
                     addToast('通话记录已保存', 'info');
 
                     // 向量记忆提取 (fire-and-forget，不阻塞关闭)

@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Message } from '../../../types';
 import { formatDuration } from '../../../apps/voicecall/utils';
 import { MODE_LABELS } from '../../../apps/voicecall/voiceCallTypes';
 import type { VoiceCallMode } from '../../../apps/voicecall/voiceCallTypes';
+import { getVoiceAudio } from '../../../utils/db/contentStore';
 
 /**
  * VoiceCallSummaryCard — 通话记录可展开卡片
  * 
  * 折叠态: 📞 + 模式标签 + 通话时长
- * 展开态: 完整对话列表（按角色渲染）
+ * 展开态: 完整对话列表（按角色渲染）+ AI 消息可播放/下载
  */
 
 interface VoiceCallSummaryCardProps {
@@ -18,13 +19,104 @@ interface VoiceCallSummaryCardProps {
 const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) => {
     const [expanded, setExpanded] = useState(false);
 
+    // ── 音频播放状态 ──
+    const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+    const [loadingIndex, setLoadingIndex] = useState<number | null>(null);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const objectUrlRef = useRef<string | null>(null);
+
     const duration = message.metadata?.duration ?? 0;
     const mode = message.metadata?.mode as string | undefined;
     const conversation = message.metadata?.conversation as { role: string; content: string }[] | undefined;
+    const hasCallAudio = message.metadata?.hasCallAudio === true;
 
     const modeText = mode ? (MODE_LABELS[mode as VoiceCallMode] || mode) : '';
     const durationText = formatDuration(duration);
     const turnCount = conversation?.length ?? 0;
+
+    // ── 清理音频资源 ──
+    const cleanupAudio = useCallback(() => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.onended = null;
+            audioRef.current = null;
+        }
+        if (objectUrlRef.current) {
+            URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = null;
+        }
+        setPlayingIndex(null);
+    }, []);
+
+    // ── 播放指定 index 的音频 ──
+    const handlePlay = useCallback(async (index: number, e: React.MouseEvent) => {
+        e.stopPropagation(); // 阻止展开/折叠
+
+        // 如果正在播放同一条，停止
+        if (playingIndex === index) {
+            cleanupAudio();
+            return;
+        }
+
+        // 停止上一条
+        cleanupAudio();
+        setLoadingIndex(index);
+
+        try {
+            const key = `call_${message.id}_${index}`;
+            const blob = await getVoiceAudio(key);
+
+            if (!blob) {
+                console.warn(`[VoiceCallCard] No audio found for key: ${key}`);
+                setLoadingIndex(null);
+                return;
+            }
+
+            const url = URL.createObjectURL(blob);
+            objectUrlRef.current = url;
+
+            const audio = new Audio(url);
+            audioRef.current = audio;
+
+            audio.onended = () => {
+                cleanupAudio();
+            };
+            audio.onerror = () => {
+                console.error('[VoiceCallCard] Audio playback error');
+                cleanupAudio();
+            };
+
+            await audio.play();
+            setPlayingIndex(index);
+        } catch (err) {
+            console.error('[VoiceCallCard] Failed to play audio:', err);
+            cleanupAudio();
+        } finally {
+            setLoadingIndex(null);
+        }
+    }, [message.id, playingIndex, cleanupAudio]);
+
+    // ── 下载指定 index 的音频 ──
+    const handleDownload = useCallback(async (index: number, e: React.MouseEvent) => {
+        e.stopPropagation();
+
+        try {
+            const key = `call_${message.id}_${index}`;
+            const blob = await getVoiceAudio(key);
+            if (!blob) return;
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `通话录音_${index + 1}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('[VoiceCallCard] Failed to download audio:', err);
+        }
+    }, [message.id]);
 
     return (
         <div
@@ -62,22 +154,71 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
             {/* 展开态：对话列表 */}
             {expanded && conversation && conversation.length > 0 && (
                 <div className="border-t border-slate-100 px-3 py-2 max-h-[300px] overflow-y-auto space-y-1.5">
-                    {conversation.map((msg, i) => (
-                        <div
-                            key={i}
-                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
+                    {conversation.map((msg, i) => {
+                        const isAssistant = msg.role === 'assistant';
+                        const isPlaying = playingIndex === i;
+                        const isLoading = loadingIndex === i;
+                        const showAudioBtn = isAssistant && hasCallAudio;
+
+                        return (
                             <div
-                                className={`text-[11px] leading-relaxed px-2.5 py-1.5 rounded-xl max-w-[85%] ${
-                                    msg.role === 'user'
-                                        ? 'bg-emerald-50 text-emerald-800'
-                                        : 'bg-slate-50 text-slate-700'
-                                }`}
+                                key={i}
+                                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
-                                {msg.content}
+                                <div
+                                    className={`text-[11px] leading-relaxed px-2.5 py-1.5 rounded-xl max-w-[85%] ${
+                                        msg.role === 'user'
+                                            ? 'bg-emerald-50 text-emerald-800'
+                                            : 'bg-slate-50 text-slate-700'
+                                    }`}
+                                >
+                                    <div className="flex items-start gap-1.5">
+                                        <span className="flex-1">{msg.content}</span>
+                                        {showAudioBtn && (
+                                            <span className="flex items-center gap-0.5 shrink-0 ml-1 mt-0.5">
+                                                {/* 播放/停止按钮 */}
+                                                <button
+                                                    onClick={(e) => handlePlay(i, e)}
+                                                    className={`p-0.5 rounded-full transition-colors ${
+                                                        isPlaying
+                                                            ? 'text-emerald-600 bg-emerald-100'
+                                                            : 'text-slate-400 hover:text-emerald-500 active:text-emerald-600'
+                                                    }`}
+                                                    title={isPlaying ? '停止' : '播放'}
+                                                >
+                                                    {isLoading ? (
+                                                        <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 16 16" fill="none">
+                                                            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="20 10" />
+                                                        </svg>
+                                                    ) : isPlaying ? (
+                                                        <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                                                            <rect x="4" y="3" width="3" height="10" rx="1" />
+                                                            <rect x="9" y="3" width="3" height="10" rx="1" />
+                                                        </svg>
+                                                    ) : (
+                                                        <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                                                            <path d="M5 3.5a.5.5 0 0 1 .804-.394l7 5a.5.5 0 0 1 0 .788l-7 5A.5.5 0 0 1 5 13.5V3.5z" />
+                                                        </svg>
+                                                    )}
+                                                </button>
+                                                {/* 下载按钮 */}
+                                                <button
+                                                    onClick={(e) => handleDownload(i, e)}
+                                                    className="p-0.5 rounded-full text-slate-300 hover:text-slate-500 active:text-slate-600 transition-colors"
+                                                    title="下载音频"
+                                                >
+                                                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
+                                                        <path d="M8 1a.5.5 0 0 1 .5.5v8.793l2.146-2.147a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 1 1 .708-.708L7.5 10.293V1.5A.5.5 0 0 1 8 1z" />
+                                                        <path d="M2 13.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5z" />
+                                                    </svg>
+                                                </button>
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>

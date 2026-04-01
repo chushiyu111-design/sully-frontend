@@ -52,7 +52,10 @@ const CognitiveNetworkApp: React.FC = () => {
     const [backfilling, setBackfilling] = useState(false);
     const [semanticRunning, setSemanticRunning] = useState(false);
     const [showConfirm, setShowConfirm] = useState<'temporal' | 'semantic' | 'rescan' | 'distill' | 'chains' | null>(null);
-    const [queueStatus, setQueueStatus] = useState<{ total: number; done: number; errors: number; retrying: number; isCircuitBroken: boolean; lastError?: string } | null>(null);
+    const [queueStatus, setQueueStatus] = useState<{
+        total: number; done: number; errors: number; running: boolean;
+        lastError?: string; lastElapsed?: number;
+    } | null>(null);
     const [polling, setPolling] = useState(false);
 
     // Distillation & Chains state
@@ -212,18 +215,73 @@ const CognitiveNetworkApp: React.FC = () => {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const result: SemanticResult = await resp.json();
             setSemanticResult(result);
-            if (!dryRun && result.success) {
-                if (result.totalQueued === 0) {
-                    addToast(`✅ 所有记忆已关联完毕`, 'success');
-                    setShowConfirm('rescan');
-                } else {
-                    addToast(`🧠 已提交 ${result.totalQueued} 条记忆到关联分析队列`, 'success');
-                    setPolling(true);
-                }
+
+            if (dryRun) return;
+
+            if (result.totalQueued === 0) {
+                addToast(`✅ 所有记忆已关联完毕`, 'success');
+                setShowConfirm('rescan');
+                return;
             }
+
+            // 同步逐条处理：前端主动循环调用 semantic-process-one
+            const total = result.totalQueued;
+            let done = 0;
+            let errors = 0;
+            setQueueStatus({ total, done: 0, errors: 0, running: true });
+
+            for (let i = 0; i < total; i++) {
+                try {
+                    const processBody: any = {};
+                    if (selectedCharId) processBody.charId = selectedCharId;
+                    const r = await fetch(`${url}/api/graph/semantic-process-one`, {
+                        method: 'POST', headers: authHeaders(), body: JSON.stringify(processBody),
+                    });
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    const data = await r.json() as any;
+
+                    if (data.done) {
+                        // 全部处理完毕
+                        setQueueStatus(prev => prev ? { ...prev, done, running: false } : null);
+                        break;
+                    }
+
+                    if (data.processed) {
+                        done++;
+                        setQueueStatus({ total, done, errors, running: true, lastElapsed: data.elapsed });
+                    } else if (data.error) {
+                        errors++;
+                        setQueueStatus({ total, done, errors, running: true, lastError: data.error, lastElapsed: data.elapsed });
+                        // 连续错误太多就停
+                        if (errors >= 5) {
+                            addToast(`⚠️ 连续错误过多，已暂停`, 'error');
+                            setQueueStatus(prev => prev ? { ...prev, running: false, lastError: data.error } : null);
+                            break;
+                        }
+                    }
+                } catch (e: any) {
+                    errors++;
+                    setQueueStatus(prev => prev ? { ...prev, errors, running: true, lastError: e.message } : null);
+                    if (errors >= 5) {
+                        addToast(`⚠️ 网络错误过多，已暂停`, 'error');
+                        setQueueStatus(prev => prev ? { ...prev, running: false } : null);
+                        break;
+                    }
+                }
+
+                // 每条之间等 1 秒，防速率限制
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
+            // 处理完毕
+            setQueueStatus(prev => prev ? { ...prev, running: false } : null);
+            if (done > 0) {
+                addToast(`🧠 语义关联完成：${done} 条成功${errors > 0 ? `，${errors} 条失败` : ''}`, 'success');
+            }
+            fetchStats();
         } catch (e: any) { addToast(`操作失败: ${e.message}`, 'error'); }
         finally { setSemanticRunning(false); setShowConfirm(prev => prev === 'semantic' ? null : prev); }
-    }, [authHeaders, addToast, selectedCharId]);
+    }, [authHeaders, addToast, selectedCharId, fetchStats]);
 
     // ── Distillation ──
     const doDistill = useCallback(async () => {
@@ -330,34 +388,7 @@ const CognitiveNetworkApp: React.FC = () => {
         finally { setSaving(false); }
     }, [authHeaders, editDraft, addToast, fetchBrowserMemories]);
 
-    // 队列进度轮询
-    useEffect(() => {
-        if (!polling) return;
-        const url = getBackendUrl();
-        if (!url) return;
-
-        const interval = setInterval(async () => {
-            try {
-                const resp = await fetch(`${url}/api/graph/queue?charId=${selectedCharId || ''}`, { headers: authHeaders() });
-                if (!resp.ok) return;
-                const data = await resp.json();
-                setQueueStatus(data);
-                if (data.total > 0 && (data.done + data.errors >= data.total || data.isCircuitBroken)) {
-                    setPolling(false);
-                    fetchStats();
-                }
-            } catch { /* ignore */ }
-        }, 5000);
-
-        (async () => {
-            try {
-                const resp = await fetch(`${url}/api/graph/queue?charId=${selectedCharId || ''}`, { headers: authHeaders() });
-                if (resp.ok) setQueueStatus(await resp.json());
-            } catch {}
-        })();
-
-        return () => clearInterval(interval);
-    }, [polling, authHeaders, fetchStats]);
+    /* (旧的 polling 轮询已移除 — 改为前端同步循环) */
 
     /* ────────── Render ────────── */
     return (
@@ -749,13 +780,13 @@ const CognitiveNetworkApp: React.FC = () => {
                 {queueStatus && queueStatus.total > 0 && (
                     <section className="bg-white/70 backdrop-blur-sm rounded-[24px] p-5 shadow-sm border border-white/50">
                         <div className="flex items-center gap-2 mb-3">
-                            {polling ? (
+                            {queueStatus.running ? (
                                 <div className="w-5 h-5 border-2 border-violet-200 border-t-violet-500 rounded-full animate-spin" />
                             ) : (
-                                <span className="text-base">{queueStatus.isCircuitBroken ? '⚠️' : '✅'}</span>
+                                <span className="text-base">{queueStatus.errors > 0 && queueStatus.done === 0 ? '⚠️' : '✅'}</span>
                             )}
                             <h3 className="text-[13px] font-bold text-slate-700 flex-1">
-                                {polling ? '关联分析进行中...' : queueStatus.isCircuitBroken ? 'API 连接异常' : '关联分析完成'}
+                                {queueStatus.running ? '关联分析进行中...' : queueStatus.done > 0 ? '关联分析完成' : 'API 连接异常'}
                             </h3>
                             <span className="text-[11px] font-bold text-violet-600">
                                 {queueStatus.done}/{queueStatus.total}
@@ -768,29 +799,15 @@ const CognitiveNetworkApp: React.FC = () => {
                             />
                         </div>
                         <div className="flex justify-between text-[9px] text-slate-300">
-                            <span>已完成 {queueStatus.done} · 失败 {queueStatus.errors}{(queueStatus as any).retrying > 0 && ` · 重试中 ${(queueStatus as any).retrying}`}</span>
+                            <span>已完成 {queueStatus.done} · 失败 {queueStatus.errors}{queueStatus.lastElapsed ? ` · 最近耗时 ${(queueStatus.lastElapsed / 1000).toFixed(1)}s` : ''}</span>
                             <span>{Math.round((queueStatus.done / Math.max(1, queueStatus.total)) * 100)}%</span>
                         </div>
-                        {queueStatus.isCircuitBroken && (
+                        {queueStatus.lastError && (
                             <div className="mt-3 p-2.5 bg-amber-50 rounded-xl border border-amber-100">
                                 <p className="text-[11px] font-bold text-amber-700 mb-1 flex items-center gap-1">
-                                    <span className="text-[13px]">⚠️</span> 连续失败次数过多，已自动暂停
+                                    <span className="text-[13px]">⚠️</span> {queueStatus.running ? '最近一次错误' : '错误信息'}
                                 </p>
-                                <p className="text-[10px] text-amber-600 mb-2 leading-relaxed">
-                                    可能是副 API（如硅基流动、Groq等）遇到限制，或是模型上下文超长。
-                                </p>
-                                {queueStatus.lastError && (
-                                    <div className="bg-white/60 p-2 rounded-md border border-amber-200/50">
-                                        <p className="text-[9px] text-amber-700/80 font-medium mb-1">最近一次报错信息：</p>
-                                        <p className="text-[9px] text-amber-900 font-mono break-all">{queueStatus.lastError}</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {!queueStatus.isCircuitBroken && queueStatus.lastError && (queueStatus as any).retrying > 0 && (
-                            <div className="mt-2 text-[10px] text-amber-600 bg-amber-50/50 px-2.5 py-1.5 rounded-lg border border-amber-100/50">
-                                <span className="font-semibold block mb-0.5">⚠️ 发生错误，正在重试：</span>
-                                <span className="font-mono text-[9px] break-all line-clamp-1 opacity-80" title={queueStatus.lastError}>{queueStatus.lastError}</span>
+                                <p className="text-[9px] text-amber-900 font-mono break-all">{queueStatus.lastError}</p>
                             </div>
                         )}
                     </section>

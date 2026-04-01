@@ -88,6 +88,16 @@ function getHeaders(): Record<string, string> {
     };
 }
 
+/**
+ * 按路由区分超时时间：
+ *   /api/agent/start  → 45s（有多次 D1 写入 + 大请求体）
+ *   其它              → 15s
+ */
+function getTimeoutMs(path: string): number {
+    if (path.startsWith('/api/agent/start')) return 45000;
+    return 15000;
+}
+
 async function agentFetch(path: string, options: RequestInit = {}): Promise<any> {
     const baseUrl = getBackendUrl();
     if (!baseUrl) throw new Error('Backend URL not configured');
@@ -95,7 +105,7 @@ async function agentFetch(path: string, options: RequestInit = {}): Promise<any>
     const resp = await fetch(`${baseUrl}${path}`, {
         ...options,
         headers: { ...getHeaders(), ...(options.headers || {}) },
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(getTimeoutMs(path)),
     });
 
     if (!resp.ok) {
@@ -104,6 +114,31 @@ async function agentFetch(path: string, options: RequestInit = {}): Promise<any>
     }
 
     return resp.json();
+}
+
+/**
+ * 带重试的 agentFetch：最多重试 maxRetries 次，失败间隔指数增长。
+ * 专用于重要的写入操作（如 start）。
+ */
+async function agentFetchWithRetry(
+    path: string,
+    options: RequestInit = {},
+    maxRetries = 2,
+): Promise<any> {
+    let lastErr: any;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await agentFetch(path, options);
+        } catch (err: any) {
+            lastErr = err;
+            if (attempt < maxRetries) {
+                const delay = 1000 * Math.pow(2, attempt); // 1s, 2s
+                console.warn(`🤖 [Agent] ${path} failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+    }
+    throw lastErr;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -261,8 +296,8 @@ export class BackendAgentManager {
                     console.warn('🤖 [Agent] No primary API config, agent will not generate messages');
                 }
 
-                // 3. Start agent on backend
-                await agentFetch('/api/agent/start', {
+                // 3. Start agent on backend（最多重试 2 次）
+                await agentFetchWithRetry('/api/agent/start', {
                     method: 'POST',
                     body: JSON.stringify({
                         charId,
@@ -312,12 +347,33 @@ export class BackendAgentManager {
         if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
         if (this.contextTimer) { clearInterval(this.contextTimer); this.contextTimer = null; }
 
-        // Stop agent on backend (fire and forget)
+        // Stop agent on backend
+        // 用 sendBeacon 代替 fetch：页面卸载时浏览器不会砍掉 sendBeacon 请求
         if (this.charId) {
-            agentFetch('/api/agent/stop', {
-                method: 'POST',
-                body: JSON.stringify({ charId: this.charId }),
-            }).catch(() => {});
+            const baseUrl = getBackendUrl();
+            if (baseUrl && navigator.sendBeacon) {
+                const blob = new Blob(
+                    [JSON.stringify({ charId: this.charId })],
+                    { type: 'application/json' },
+                );
+                // sendBeacon 无法带自定义 Header，用 query 参数传 userId 和 token
+                const userId = getUserId();
+                const url = `${baseUrl}/api/agent/stop?_token=change-me-to-a-random-string&_userId=${encodeURIComponent(userId)}`;
+                const sent = navigator.sendBeacon(url, blob);
+                if (!sent) {
+                    // sendBeacon 队列满时回退到 fetch
+                    agentFetch('/api/agent/stop', {
+                        method: 'POST',
+                        body: JSON.stringify({ charId: this.charId }),
+                    }).catch(() => {});
+                }
+            } else {
+                // 不支持 sendBeacon 时回退
+                agentFetch('/api/agent/stop', {
+                    method: 'POST',
+                    body: JSON.stringify({ charId: this.charId }),
+                }).catch(() => {});
+            }
         }
 
         console.log('🤖 [Agent] Stopped');

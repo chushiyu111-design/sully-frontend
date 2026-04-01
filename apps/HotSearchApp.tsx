@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { CaretLeft, ArrowsClockwise, Fire, TrendUp, ArrowSquareOut } from '@phosphor-icons/react';
+import { CaretLeft, ArrowsClockwise, ArrowLineUp } from '@phosphor-icons/react';
 
 interface HotItem {
     index: number;
@@ -22,8 +22,7 @@ interface HotlistResponse {
 }
 
 const HotSearchApp: React.FC = () => {
-    const { closeApp, theme } = useOS();
-    const contentColor = theme.contentColor || '#ffffff';
+    const { closeApp } = useOS();
     
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -36,9 +35,7 @@ const HotSearchApp: React.FC = () => {
         setError(null);
         
         try {
-            // Fetch directly from our Cloudflare Proxy
-            // Append timestamp to prevent aggressive browser caching on refresh
-            const url = `https://sully-n.sully-tts-proxy.workers.dev/hotlist?type=wbHot${isRefresh ? '&t=' + Date.now() : ''}`;
+            const url = `https://chushiyu.de5.net/api/public/hotlist?type=wbHot${isRefresh ? '&t=' + Date.now() : ''}`;
             const res = await fetch(url);
             
             if (!res.ok) {
@@ -49,7 +46,6 @@ const HotSearchApp: React.FC = () => {
             if (!json.success) {
                 throw new Error(json.error || '获取数据失败');
             }
-            // Sort by index to ensure correct rank order
             if (json.data) {
                 json.data.sort((a, b) => a.index - b.index);
             }
@@ -66,22 +62,22 @@ const HotSearchApp: React.FC = () => {
         fetchHotlist();
     }, [fetchHotlist]);
 
-    const formatHotValue = (num: number) => {
-        if (num >= 10000) return (num / 10000).toFixed(1) + '万';
-        return num.toString();
-    };
-
-    const formatTime = (isoString?: string) => {
-        if (!isoString) return '';
-        const date = new Date(isoString);
-        return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-    };
-
     const getRankStyle = (index: number) => {
-        if (index === 1) return 'bg-red-500 text-white shadow-red-500/40 shadow-lg scale-110';
-        if (index === 2) return 'bg-orange-500 text-white shadow-orange-500/30 shadow-md scale-105';
-        if (index === 3) return 'bg-amber-500 text-white shadow-amber-500/20 shadow-md scale-100';
-        return 'bg-white/10 text-white/70 font-semibold';
+        // Handle Top Item (置顶) - index usually 1 but has no hot value, or we assume first item if hot is 0
+        if (index === 1) return 'text-[#ff3b30] font-bold italic text-lg';
+        if (index === 2) return 'text-[#ff5500] font-bold italic text-lg';
+        if (index === 3) return 'text-[#ff9500] font-bold italic text-lg';
+        return 'text-[#ff9500] font-bold italic text-base';
+    };
+
+    const getTagStyle = (tag: string) => {
+        if (!tag) return null;
+        if (tag === '热') return 'bg-[#ff9500] text-white';
+        if (tag === '新') return 'bg-[#ff3b30] text-white';
+        if (tag === '沸') return 'bg-[#e14c3c] text-white';
+        if (tag === '爆') return 'bg-[#8b0000] text-white';
+        if (tag === '荐') return 'bg-[#ffcc00] text-white';
+        return 'bg-gray-400 text-white';
     };
 
     const handleOpenLink = (url: string) => {
@@ -89,110 +85,117 @@ const HotSearchApp: React.FC = () => {
     };
 
     return (
-        <div className="h-full w-full flex flex-col font-sans animate-fade-in relative overflow-hidden bg-slate-900 absolute inset-0 text-white pb-[env(safe-area-inset-bottom)]">
-            {/* Background Decorations */}
-            <div className="absolute top-0 right-0 w-96 h-96 bg-red-500/10 rounded-full blur-[100px] pointer-events-none -translate-y-1/2 translate-x-1/2"></div>
-            <div className="absolute bottom-0 left-0 w-80 h-80 bg-orange-500/10 rounded-full blur-[80px] pointer-events-none translate-y-1/2 -translate-x-1/4"></div>
-
-            {/* Header */}
-            <div className="flex-none pt-12 pb-4 px-4 bg-slate-900/80 backdrop-blur-2xl border-b border-white/5 z-20 sticky top-0">
-                <div className="flex items-center justify-between">
+        <div className="h-full w-full flex flex-col font-sans animate-fade-in relative overflow-hidden bg-white absolute inset-0 text-black pb-[env(safe-area-inset-bottom)]">
+            {/* Header - Weibo Orange Gradient */}
+            <div className="flex-none bg-gradient-to-tr from-[#fe8c00] via-[#f83600] to-[#fe8c00] pt-12 shadow-sm z-20 sticky top-0">
+                <div className="flex items-center justify-between pb-4 px-3">
                     <button
                         onClick={closeApp}
-                        className="p-2 rounded-full hover:bg-white/10 active:bg-white/20 transition-all text-white/80 shrink-0"
+                        className="p-1.5 rounded-full hover:bg-white/20 active:bg-white/30 transition-all text-white shrink-0"
                     >
-                        <CaretLeft className="w-6 h-6" />
+                        <CaretLeft className="w-7 h-7" />
                     </button>
                     
-                    <div className="flex flex-col items-center justify-center min-w-0 px-4">
-                        <div className="flex items-center gap-2">
-                            <TrendUp weight="bold" className="text-orange-400 w-5 h-5" />
-                            <h2 className="text-lg font-bold tracking-wider text-white truncate">
-                                实时热搜
-                            </h2>
-                        </div>
-                        <div className="text-[10px] font-medium opacity-50 tracking-widest uppercase flex items-center gap-1">
-                            {refreshing ? 'Updating...' : data?._cached ? 'Cached' : 'Live'}
-                            {data?.update_time && !loading && !refreshing && (
-                                <> • {formatTime(data.update_time)}</>
-                            )}
+                    <div className="flex flex-col items-center justify-center flex-1">
+                        <h2 className="text-2xl font-black italic tracking-wider text-white drop-shadow-md">
+                            微博热搜
+                        </h2>
+                        <div className="text-[9px] font-medium tracking-widest text-[#f83600] bg-white px-2 py-0.5 mt-1 rounded-sm shadow-sm opacity-90">
+                            新鲜 · 热门 · 有料
                         </div>
                     </div>
                     
-                    <button
-                        onClick={() => fetchHotlist(true)}
-                        disabled={loading || refreshing}
-                        className={`p-2 rounded-full transition-all shrink-0 ${loading || refreshing ? 'opacity-50' : 'hover:bg-white/10 active:bg-white/20 text-white/80'}`}
-                    >
-                        <ArrowsClockwise className={`w-5 h-5 ${(loading || refreshing) ? 'animate-spin text-orange-400' : ''}`} />
-                    </button>
+                    <div className="w-10 shrink-0 flex justify-end">
+                        {/* Right Top Action Placeholder */}
+                    </div>
+                </div>
+
+                {/* Tab Bar Container */}
+                <div className="flex text-white font-medium text-[15px] overflow-x-auto no-scrollbar gap-5 px-4">
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer">我的</div>
+                    <div className="whitespace-nowrap pb-2 font-bold border-b-[3px] border-white cursor-pointer px-1">热搜</div>
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer" onClick={() => fetchHotlist(true)}>文娱</div>
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer">生活</div>
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer">社会</div>
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer">同城</div>
+                    <div className="whitespace-nowrap pb-2 opacity-80 cursor-pointer pr-4">体育</div>
                 </div>
             </div>
 
-            {/* Content List */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pb-32 z-10">
+            {/* Sub-header (Status Bar) */}
+            <div className="bg-[#f0f0f0] text-[#888888] text-[12px] py-1.5 px-4 flex items-center justify-between border-b border-gray-200 shrink-0">
+                <span>实时热点，每分钟更新一次</span>
+                <button 
+                    onClick={() => fetchHotlist(true)}
+                    disabled={loading || refreshing}
+                    className="flex items-center gap-1 opacity-80 active:opacity-40 transition-opacity disabled:opacity-40"
+                >
+                    <ArrowsClockwise className={`w-3.5 h-3.5 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
+                </button>
+            </div>
+
+            {/* List Content */}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden pb-32 z-10 overscroll-y-auto">
                 {loading && !data ? (
-                    <div className="flex flex-col items-center justify-center p-12 h-[60vh] text-center opacity-60">
-                        <div className="w-12 h-12 border-4 border-white/20 border-t-orange-500 rounded-full animate-spin mb-4"></div>
-                        <p className="text-sm font-medium tracking-widest">Loading Trends...</p>
+                    <div className="flex flex-col items-center justify-center h-[50vh] text-center opacity-50 text-gray-400">
+                        <div className="w-8 h-8 border-4 border-gray-200 border-t-[#fe8c00] rounded-full animate-spin mb-3"></div>
+                        <p className="text-xs">正在加载热搜数据...</p>
                     </div>
                 ) : error ? (
-                    <div className="flex flex-col items-center justify-center p-8 h-[60vh] text-center">
-                        <div className="w-16 h-16 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mb-4">
-                            <Fire weight="fill" className="w-8 h-8 opacity-50" />
-                        </div>
-                        <p className="text-red-300 font-medium mb-4">{error}</p>
+                    <div className="flex flex-col items-center justify-center p-8 h-[50vh] text-center">
+                        <p className="text-gray-500 text-sm mb-4">{error}</p>
                         <button 
                             onClick={() => fetchHotlist(true)}
-                            className="px-6 py-2 bg-white/10 hover:bg-white/20 rounded-full text-sm font-bold tracking-widest transition-all active:scale-95"
+                            className="px-6 py-2 bg-[#f0f0f0] rounded-full text-sm font-medium text-gray-700 active:scale-95"
                         >
-                            RETRY
+                            点击重试
                         </button>
                     </div>
                 ) : (
-                    <div className="px-4 py-4 space-y-3">
-                        {data?.data?.map((item) => (
-                            <div 
-                                key={item.index}
-                                onClick={() => handleOpenLink(item.url)}
-                                className="group relative flex items-center p-4 bg-white/[0.03] hover:bg-white/[0.06] active:bg-white/[0.08] backdrop-blur-md rounded-2xl border border-white/[0.05] transition-all cursor-pointer overflow-hidden"
-                            >
-                                {/* Rank Number */}
-                                <div className="w-12 shrink-0 flex justify-center items-center">
-                                    <div className={`w-7 h-7 flex items-center justify-center rounded-lg text-sm transition-all ${getRankStyle(item.index)}`}>
-                                        {item.index}
+                    <div className="flex flex-col">
+                        {data?.data?.map((item, idx) => {
+                            // Identify top item (often lacks hot value or is just the very first entry with a specific icon)
+                            const isTop = idx === 0 && item.hot === 0;
+                            const displayIndex = isTop ? 0 : (item.hot === 0 ? item.index : idx + (data.data![0].hot === 0 ? 0 : 1));
+
+                            return (
+                                <div 
+                                    key={`${item.index}-${idx}`}
+                                    onClick={() => handleOpenLink(item.url)}
+                                    className="flex items-start py-3.5 px-4 border-b border-[#f5f5f5] active:bg-[#f9f9f9] cursor-pointer transition-colors"
+                                >
+                                    {/* Rank Column */}
+                                    <div className={`w-8 shrink-0 text-center mr-1 flex items-center justify-center pt-0.5`}>
+                                        {isTop ? (
+                                            <ArrowLineUp className="w-5 h-5 text-[#ff3b30]" weight="bold" />
+                                        ) : (
+                                            <span className={getRankStyle(displayIndex)}>{displayIndex}</span>
+                                        )}
                                     </div>
-                                </div>
-                                
-                                {/* Content */}
-                                <div className="flex-1 min-w-0 pl-3 pr-2 flex flex-col justify-center">
-                                    <div className="flex items-start gap-2 mb-1.5">
-                                        <span className="text-[15px] font-medium text-white/90 leading-snug group-hover:text-white transition-colors">
+                                    
+                                    {/* Title & Hot Value Container */}
+                                    <div className="flex-1 min-w-0 pr-2">
+                                        <span className="text-[16px] text-[#222222] font-normal leading-snug mr-2">
                                             {item.title}
                                         </span>
-                                        {item.desc && (
-                                            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold leading-none mt-0.5 ${
-                                                item.desc === '新' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 
-                                                item.desc === '沸' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 
-                                                item.desc === '爆' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 
-                                                'bg-white/10 text-white/50 border border-white/10'
-                                            }`}>
-                                                {item.desc}
+                                        {item.hot > 0 && (
+                                            <span className="text-[12px] text-[#aaaaaa] font-sans relative -top-[1px]">
+                                                {item.hot}
                                             </span>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-1.5 text-xs text-white/40 font-medium">
-                                        <Fire weight="fill" className={`w-3.5 h-3.5 ${item.index <= 3 ? 'text-orange-400/80' : 'opacity-60'}`} />
-                                        {formatHotValue(item.hot)}
-                                    </div>
+
+                                    {/* Right Tag */}
+                                    {item.desc && (
+                                        <div className="shrink-0 flex pt-1">
+                                            <span className={`text-[10px] px-[3px] py-[0.5px] rounded-[3px] font-medium leading-tight ${getTagStyle(item.desc)}`}>
+                                                {item.desc}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
-                                
-                                {/* Right Arrow */}
-                                <div className="w-8 shrink-0 flex justify-end opacity-0 group-hover:opacity-40 transition-opacity">
-                                    <ArrowSquareOut className="w-4 h-4" />
-                                </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>

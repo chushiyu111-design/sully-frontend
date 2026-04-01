@@ -239,11 +239,11 @@ export const RealtimeContextManager = {
         }
 
         try {
-            const res = await fetch('https://sully-n.sully-tts-proxy.workers.dev/hotlist?type=wbHot');
+            const res = await fetch('https://chushiyu.de5.net/api/public/hotlist?type=wbHot');
             if (res.ok) {
                 const json = await res.json() as any;
                 if (json.success && json.data) {
-                    const sortedData = json.data.sort((a: any, b: any) => a.index - b.index).slice(0, 8);
+                    const sortedData = json.data.sort((a: any, b: any) => a.index - b.index).slice(0, 30);
                     hotSearchCache = { data: sortedData, timestamp: now };
                     return sortedData;
                 }
@@ -433,28 +433,14 @@ export const RealtimeContextManager = {
             }
         }
 
-        // 4.5 实时热搜
-        if (config.hotSearchEnabled) {
-            const hots = await RealtimeContextManager.fetchHotSearch(config);
-            if (hots.length > 0) {
-                parts.push('');
-                parts.push(`🔥 【实时微博热搜 TOP 8】`);
-                parts.push(`（这些是当下互联网网友正在热议的话题，你可以偶尔引用或吐槽）`);
-                hots.forEach((h: any, i: number) => {
-                    const desc = h.desc ? ` [${h.desc}]` : '';
-                    let hotval = h.hot;
-                    if (hotval >= 10000) hotval = (hotval / 10000).toFixed(1) + '万';
-                    parts.push(`${i + 1}. ${h.title}${desc} - 热度:${hotval}`);
-                });
-            }
-        }
+        // 4.5 热搜已解耦到 hotSearchContext.ts，由 chatPrompts.ts 独立注入
 
         // 5. 行为指令（强调）
         parts.push('');
         parts.push(`### 【如何使用这些信息】`);
         parts.push(`1. 这些信息是真实的，你可以直接引用（比如"我看到今天热搜有xxx"）`);
         parts.push(`2. 天气是真实的，可以主动关心用户（"外面在下雨，你带伞了吗？"）`);
-        parts.push(`3. 新闻是真实的，可以主动聊起（"诶你看到xxx的新闻了吗？我觉得..."）`);
+        parts.push(`3. 新闻和热搜是真实的，可以主动聊起（"诶你看到xxx的新闻了吗？我觉得..."）`);
         parts.push(`4. 如果用户问你"你怎么知道的"，可以说你刚刷到的/刚看到的`);
         parts.push(`5. 不要假装不知道这些信息，这是你真的能感知到的外部世界`);
 

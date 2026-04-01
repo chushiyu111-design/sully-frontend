@@ -1475,6 +1475,68 @@ export default {
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
     }
 
+    // ========== 热搜代理 (原生微博直连) ==========
+    if (url.pathname === '/hotlist' && request.method === 'GET') {
+      const type = url.searchParams.get('type') || 'wbHot';
+
+      // 目前仅支持微博热搜
+      if (type !== 'wbHot') {
+        return jsonResponse({ success: false, error: 'Currently only wbHot is supported' }, { status: 400, origin });
+      }
+
+      // 5分钟内存缓存
+      const CACHE_MS = 5 * 60 * 1000;
+      if (!globalThis._hotlistCache) globalThis._hotlistCache = {};
+      const cached = globalThis._hotlistCache[type];
+      if (cached && (Date.now() - cached.timestamp) < CACHE_MS) {
+        return jsonResponse({ success: true, ...cached.data, _cached: true }, { origin });
+      }
+
+      try {
+        // 直接请求微博前端官方无鉴权接口
+        const res = await fetch('https://weibo.com/ajax/side/hotSearch', {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://s.weibo.com/top/summary'
+          }
+        });
+
+        if (!res.ok) {
+          return jsonResponse({ success: false, error: `Weibo API returned ${res.status}` }, { status: 502, origin });
+        }
+
+        const raw = await res.json();
+
+        if (raw.ok === 1 && raw.data && Array.isArray(raw.data.realtime)) {
+          // 剔除置顶（is_ad / is_t / icon_desc 为 荐/顶），或者保留？这里直接把全部提取，通过 realpos 判断
+          const validItems = raw.data.realtime.filter(item => item.word);
+          
+          const result = {
+            title: '微博热搜',
+            subtitle: '全网热点实时追踪',
+            update_time: new Date().toISOString(),
+            type: 'wbHot',
+            data: validItems.slice(0, 50).map((item, i) => ({
+              index: item.realpos || (i + 1),
+              title: item.word || item.note || '',
+              hot: item.num || item.raw_hot || 0,
+              url: `https://s.weibo.com/weibo?q=${encodeURIComponent(item.word)}`,
+              desc: item.icon_desc || ''
+            }))
+          };
+
+          // 写入缓存
+          globalThis._hotlistCache[type] = { data: result, timestamp: Date.now() };
+          return jsonResponse({ success: true, ...result }, { origin });
+        }
+
+        return jsonResponse({ success: false, error: 'Unexpected Weibo response format' }, { status: 502, origin });
+      } catch (e) {
+        return jsonResponse({ success: false, error: `Fetch failed: ${e.message}` }, { status: 502, origin });
+      }
+    }
+
     // ========== Brave Search 代理 ==========
     if (request.method !== "GET") {
       return jsonResponse({ error: "Method not allowed. Use GET." }, { status: 405, origin });
@@ -1482,7 +1544,7 @@ export default {
 
     const r = route(url);
     if (!r) {
-      return jsonResponse({ error: "Not found.", hint: "Use /search, /news, /videos, /notion/*, /feishu/*, or /xhs/*" }, { status: 404, origin });
+      return jsonResponse({ error: "Not found.", hint: "Use /search, /news, /videos, /hotlist, /notion/*, /feishu/*, or /xhs/*" }, { status: 404, origin });
     }
 
     const q = url.searchParams.get("q")?.trim();

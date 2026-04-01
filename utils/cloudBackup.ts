@@ -27,7 +27,7 @@ export interface CloudBackupListResponse {
 function getBackendConfig(): { url: string; token: string } | null {
     // Hardcoded to match backendClient.ts deployment
     return {
-        url: 'https://csyos-backend.sully-tts-proxy.workers.dev',
+        url: 'https://chushiyu.de5.net',
         token: 'change-me-to-a-random-string'
     };
 }

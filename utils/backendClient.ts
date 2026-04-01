@@ -27,7 +27,7 @@ const DEFAULT_BACKEND_URL = 'http://43.134.141.80:6677';
  * Returns null if no token is set (user hasn't enabled the backend).
  */
 export function getBackendUrl(): string | null {
-    return 'https://csyos-backend.sully-tts-proxy.workers.dev';
+    return 'https://chushiyu.de5.net';
 }
 
 /** Set the backend URL (called from Settings UI). */

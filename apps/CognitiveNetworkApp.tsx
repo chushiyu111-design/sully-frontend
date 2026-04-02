@@ -169,7 +169,7 @@ const CognitiveNetworkApp: React.FC = () => {
         try {
             const resp = await fetch(`${url}/api/graph/stats-by-char`, {
                 headers: authHeaders(),
-                signal: AbortSignal.timeout(5000), // 5s timeout
+                signal: AbortSignal.timeout(60000), // 60s timeout
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
@@ -248,7 +248,12 @@ const CognitiveNetworkApp: React.FC = () => {
 
                     if (data.processed) {
                         done++;
-                        setQueueStatus({ total, done, errors, running: true, lastElapsed: data.elapsed, lastRelations: data.relationsFound });
+                        setQueueStatus({ 
+                            total, done, errors, running: true, 
+                            lastElapsed: data.elapsed, 
+                            lastRelations: data.relationsFound,
+                            lastSnippet: data.debug?.llmSnippet
+                        });
                     } else if (data.error) {
                         errors++;
                         setQueueStatus({ total, done, errors, running: true, lastError: data.error, lastElapsed: data.elapsed });
@@ -816,6 +821,11 @@ const CognitiveNetworkApp: React.FC = () => {
                             <span>已完成 {queueStatus.done} · 失败 {queueStatus.errors}{(queueStatus as any).lastRelations !== undefined ? ` · 最近发现 ${(queueStatus as any).lastRelations} 个关联` : ''}{queueStatus.lastElapsed ? ` · ${(queueStatus.lastElapsed / 1000).toFixed(1)}s` : ''}</span>
                             <span>{Math.round((queueStatus.done / Math.max(1, queueStatus.total)) * 100)}%</span>
                         </div>
+                        {(queueStatus as any).lastSnippet && (
+                            <div className="mt-1 text-[9px] text-slate-400 font-mono truncate">
+                                LLM返回: {(queueStatus as any).lastSnippet.slice(0, 40)}...
+                            </div>
+                        )}
                         {queueStatus.lastError && (
                             <div className="mt-3 p-2.5 bg-amber-50 rounded-xl border border-amber-100">
                                 <p className="text-[11px] font-bold text-amber-700 mb-1 flex items-center gap-1">

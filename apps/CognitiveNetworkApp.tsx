@@ -248,7 +248,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
                     if (data.processed) {
                         done++;
-                        setQueueStatus({ total, done, errors, running: true, lastElapsed: data.elapsed });
+                        setQueueStatus({ total, done, errors, running: true, lastElapsed: data.elapsed, lastRelations: data.relationsFound });
                     } else if (data.error) {
                         errors++;
                         setQueueStatus({ total, done, errors, running: true, lastError: data.error, lastElapsed: data.elapsed });
@@ -813,7 +813,7 @@ const CognitiveNetworkApp: React.FC = () => {
                             />
                         </div>
                         <div className="flex justify-between text-[9px] text-slate-300">
-                            <span>已完成 {queueStatus.done} · 失败 {queueStatus.errors}{queueStatus.lastElapsed ? ` · 最近耗时 ${(queueStatus.lastElapsed / 1000).toFixed(1)}s` : ''}</span>
+                            <span>已完成 {queueStatus.done} · 失败 {queueStatus.errors}{(queueStatus as any).lastRelations !== undefined ? ` · 最近发现 ${(queueStatus as any).lastRelations} 个关联` : ''}{queueStatus.lastElapsed ? ` · ${(queueStatus.lastElapsed / 1000).toFixed(1)}s` : ''}</span>
                             <span>{Math.round((queueStatus.done / Math.max(1, queueStatus.total)) * 100)}%</span>
                         </div>
                         {queueStatus.lastError && (

@@ -5,6 +5,18 @@ import App from './App';
 import { initSystemInterceptor } from './utils/systemInterceptor';
 import { preloadLocalAssets, scheduleIdlePreload } from './utils/preloadResources';
 
+// ── Production Log Suppression ──────────────────────────────────
+// 生产环境下隐藏 console.log / console.warn，只保留 console.error
+// 开发时 (vite dev) 不受影响，所有日志正常输出
+if (!import.meta.env.DEV) {
+  const noop = () => {};
+  console.log = noop;
+  console.warn = noop;
+  console.debug = noop;
+  console.info = noop;
+  // console.error 保留 → 用户能看到真正的报错
+}
+
 // Initialize global interceptors BEFORE React mounts
 initSystemInterceptor();
 

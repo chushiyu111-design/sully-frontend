@@ -83,7 +83,7 @@ export function saveAgentConfig(config: Partial<AgentConfig>): void {
 function getHeaders(): Record<string, string> {
     return {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer change-me-to-a-random-string`,
+        'Authorization': `Bearer csyos_k7m2x9f4p1w8v3`,
         'X-User-Id': getUserId(),
     };
 }
@@ -358,7 +358,7 @@ export class BackendAgentManager {
                 );
                 // sendBeacon 无法带自定义 Header，用 query 参数传 userId 和 token
                 const userId = getUserId();
-                const url = `${baseUrl}/api/agent/stop?_token=change-me-to-a-random-string&_userId=${encodeURIComponent(userId)}`;
+                const url = `${baseUrl}/api/agent/stop?_token=csyos_k7m2x9f4p1w8v3&_userId=${encodeURIComponent(userId)}`;
                 const sent = navigator.sendBeacon(url, blob);
                 if (!sent) {
                     // sendBeacon 队列满时回退到 fetch
@@ -395,7 +395,7 @@ export class BackendAgentManager {
         }
 
         // Build URL with query-param auth (EventSource can't set headers)
-        const token = 'change-me-to-a-random-string';
+        const token = 'csyos_k7m2x9f4p1w8v3';
         const userId = getUserId();
         const sseUrl = `${baseUrl}/api/agent/stream?charId=${encodeURIComponent(this.charId)}&token=${encodeURIComponent(token)}&userId=${encodeURIComponent(userId)}`;
 

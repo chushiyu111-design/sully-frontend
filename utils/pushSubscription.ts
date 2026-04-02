@@ -15,7 +15,7 @@
 
 import { getBackendUrl, getUserId } from './backendClient';
 
-const API_TOKEN = 'change-me-to-a-random-string';
+const API_TOKEN = 'csyos_k7m2x9f4p1w8v3';
 
 // ─── 可视化状态（在设置页面可以查看）───────────────────
 let _pushStatus: string = '未初始化';

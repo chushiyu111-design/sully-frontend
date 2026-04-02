@@ -214,7 +214,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
     // ── 音频缓存：收集每轮 AI 的 TTS PCM 数据用于日后回听 ──
     const turnAudioChunksRef = useRef<Uint8Array[]>([]);
-    const turnAudioBlobsRef = useRef<Blob[]>([]);
+    const turnAudioBlobsRef = useRef<Map<number, Blob>>(new Map());
 
     // ── 语音拼接模式：缓冲用户连续语音段 + 去抖定时器 ──
     const pendingAudioSegmentsRef = useRef<Float32Array[]>([]);
@@ -264,7 +264,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }));
                 // fire-and-forget：与 LLM 并行执行，结果到达后注入（影响后续句子）
                 VectorMemoryRetriever.retrieve(
-                    opts.char.id, msgs, opts.embeddingApiKey, opts.apiConfig, opts.char.moodState as any,
+                    opts.char.id, opts.char.name, opts.userProfile.name, msgs, opts.embeddingApiKey, opts.apiConfig, opts.char.moodState as any,
                 ).then(memBlock => {
                     if (memBlock && gen === generationRef.current && llmRef.current) {
                         llmRef.current.setVectorMemoryBlock(memBlock);
@@ -299,12 +299,12 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             player.onPlaybackEnd = () => {
                 if (gen === generationRef.current && engineActiveRef.current) {
                     console.log('[Engine] AI finished speaking, back to listening');
-                    // ── 打包本轮 PCM → WAV Blob 存入缓存 ──
+                    // ── 打包本轮 PCM → WAV Blob 存入缓存（以 gen 作为精确 key）──
                     if (turnAudioChunksRef.current.length > 0) {
                         try {
                             const wavBlob = pcmChunksToWavBlob(turnAudioChunksRef.current, VOICE_CALL_SAMPLE_RATE);
-                            turnAudioBlobsRef.current.push(wavBlob);
-                            console.log(`[Engine] Turn audio cached: ${(wavBlob.size / 1024).toFixed(1)}KB`);
+                            turnAudioBlobsRef.current.set(gen, wavBlob);
+                            console.log(`[Engine] Turn audio cached (gen=${gen}): ${(wavBlob.size / 1024).toFixed(1)}KB`);
                         } catch (e) {
                             console.warn('[Engine] Failed to cache turn audio:', e);
                         }
@@ -512,8 +512,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     if (foreignLangMatch) {
                         translationText = foreignLangMatch[1].trim();
                         ttsText = sentence.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim();
-                        setAiTranslation(translationText);
                     }
+                    // 始终同步翻译状态（无标记时清空，防止残留上一句的翻译）
+                    setAiTranslation(translationText);
                     // ─── /外语模式 ───
 
                     console.log(`[Engine] LLM sentence: "${ttsText}"${translationText ? ` (翻译: ${translationText})` : ''}`);
@@ -574,7 +575,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     console.log('[Engine] LLM retrying...');
                     opts.onRetrying?.();
                 },
-            });
+            }, { turnId: gen });
         } catch (err: any) {
             if (gen !== generationRef.current) return;
             console.error('[Engine] Pipeline error:', err);
@@ -879,6 +880,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         });
                         const memBlock = await VectorMemoryRetriever.retrieve(
                             opts.char.id,
+                            opts.char.name,
+                            opts.userProfile.name,
                             msgs,
                             opts.embeddingApiKey,
                             opts.apiConfig,
@@ -914,14 +917,16 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
     const stopEngine = useCallback(() => {
         console.log('[Engine] Stopping voice call engine...');
         engineActiveRef.current = false;
+        // 保存当前 gen（最后一轮的 turnId），再递增
+        const lastGen = generationRef.current;
         generationRef.current++;
 
         // ── 打包最后一轮未完成的 PCM（如果用户在 AI 说话中途挂断）──
         if (turnAudioChunksRef.current.length > 0) {
             try {
                 const wavBlob = pcmChunksToWavBlob(turnAudioChunksRef.current, VOICE_CALL_SAMPLE_RATE);
-                turnAudioBlobsRef.current.push(wavBlob);
-                console.log(`[Engine] Final turn audio cached: ${(wavBlob.size / 1024).toFixed(1)}KB`);
+                turnAudioBlobsRef.current.set(lastGen, wavBlob);
+                console.log(`[Engine] Final turn audio cached (gen=${lastGen}): ${(wavBlob.size / 1024).toFixed(1)}KB`);
             } catch (e) {
                 console.warn('[Engine] Failed to cache final turn audio:', e);
             }
@@ -952,17 +957,19 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         // 提取对话历史（必须在 abort/清理 llm 之前）
         const rawHistory = llmRef.current?.getHistory() ?? [];
 
-        // ── 将缓存的 WAV Blob 按顺序映射到 assistant 消息上 ──
-        const audioBlobs = turnAudioBlobsRef.current;
-        let blobIdx = 0;
+        // ── 将缓存的 WAV Blob 按 turnId 精确映射到 assistant 消息上 ──
+        const audioBlobMap = turnAudioBlobsRef.current;
+        let blobCount = 0;
         lastCallHistoryRef.current = rawHistory.map(h => {
-            if (h.role === 'assistant' && blobIdx < audioBlobs.length) {
-                return { ...h, audioBlob: audioBlobs[blobIdx++] };
+            if (h.role === 'assistant' && h.turnId !== undefined) {
+                const blob = audioBlobMap.get(h.turnId);
+                if (blob) blobCount++;
+                return { role: h.role, content: h.content, audioBlob: blob };
             }
             return { role: h.role, content: h.content };
         });
-        turnAudioBlobsRef.current = [];
-        console.log(`[Engine] Call history: ${rawHistory.length} turns, ${blobIdx} audio blobs attached`);
+        turnAudioBlobsRef.current = new Map();
+        console.log(`[Engine] Call history: ${rawHistory.length} turns, ${blobCount} audio blobs attached (map size was ${audioBlobMap.size})`);
 
         // 中止 LLM
         llmRef.current?.abort();

@@ -28,7 +28,7 @@ function getBackendConfig(): { url: string; token: string } | null {
     // Hardcoded to match backendClient.ts deployment
     return {
         url: 'https://chushiyu.de5.net',
-        token: 'change-me-to-a-random-string'
+        token: 'csyos_k7m2x9f4p1w8v3'
     };
 }
 

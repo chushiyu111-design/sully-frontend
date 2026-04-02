@@ -16,15 +16,7 @@ const HEALTH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const USER_ID_KEY = 'csyos_user_id';
 
 /**
- * Default backend URL — hardcoded for convenience.
- * Change this when deploying to production VPS.
- */
-const DEFAULT_BACKEND_URL = 'http://43.134.141.80:6677';
-
-/**
  * Get the configured backend URL.
- * Returns the default URL if a backend token is set (indicates user wants to use the backend).
- * Returns null if no token is set (user hasn't enabled the backend).
  */
 export function getBackendUrl(): string | null {
     return 'https://chushiyu.de5.net';
@@ -105,7 +97,7 @@ async function isBackendAlive(): Promise<boolean> {
     }
 
     try {
-        const token = 'change-me-to-a-random-string';
+        const token = 'csyos_k7m2x9f4p1w8v3';
         const resp = await fetch(`${url}/health`, {
             headers: { 'Authorization': `Bearer ${token}` },
             signal: AbortSignal.timeout(3000)
@@ -124,7 +116,7 @@ async function isBackendAlive(): Promise<boolean> {
 function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer change-me-to-a-random-string`,
+        'Authorization': `Bearer csyos_k7m2x9f4p1w8v3`,
         'X-User-Id': getUserId(),
     };
 
@@ -368,6 +360,38 @@ export async function pullMemories(charId: string): Promise<any[] | null> {
         return memories;
     } catch (err: any) {
         console.error('☁️ [CloudSync] Pull failed:', err.message);
+        localStorage.removeItem(HEALTH_CACHE_KEY);
+        return null;
+    }
+}
+
+/**
+ * List all character IDs that have cloud memories for the current user.
+ * Used for multi-device sync when the new device has no local characters.
+ */
+export async function listCloudChars(): Promise<{ charId: string; memoryCount: number }[] | null> {
+    if (!await isBackendAlive()) return null;
+
+    const url = getBackendUrl()!;
+    const headers = buildHeaders();
+
+    try {
+        const resp = await fetch(`${url}/api/memories/chars`, {
+            headers,
+            signal: AbortSignal.timeout(10000),
+        });
+
+        if (!resp.ok) {
+            console.error(`☁️ [CloudSync] ListChars error ${resp.status}`);
+            return null;
+        }
+
+        const data = await resp.json();
+        const chars = data.chars || [];
+        console.log(`☁️ [CloudSync] Cloud has ${chars.length} character(s) with memories`);
+        return chars;
+    } catch (err: any) {
+        console.error('☁️ [CloudSync] ListChars failed:', err.message);
         localStorage.removeItem(HEALTH_CACHE_KEY);
         return null;
     }

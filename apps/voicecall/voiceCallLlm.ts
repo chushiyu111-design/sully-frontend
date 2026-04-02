@@ -46,6 +46,7 @@ export interface VoiceCallLlmCallbacks {
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
     content: string;
+    turnId?: number;
 }
 
 // ─── 标点截断 ────────────────────────────────────────────────────────
@@ -1116,7 +1117,7 @@ export class VoiceCallLlm {
     }
 
     /** 发送用户文字，流式获取 AI 回复并按标点截断（带自动重试） */
-    async chat(userText: string, callbacks: VoiceCallLlmCallbacks): Promise<void> {
+    async chat(userText: string, callbacks: VoiceCallLlmCallbacks, options?: { turnId?: number }): Promise<void> {
         // 加入用户消息（不再截断历史，通话全程保留完整上下文）
         this.history.push({ role: 'user', content: userText });
 
@@ -1234,8 +1235,9 @@ export class VoiceCallLlm {
                 callbacks.onSentence(sentence.trim());
             }
 
-            // 保存助手回复到历史
-            this.history.push({ role: 'assistant', content: fullText });
+            // 保存助手回复到历史（剥离 [[翻译:...]] 标记，保持历史干净）
+            const cleanText = fullText.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim();
+            this.history.push({ role: 'assistant', content: cleanText, turnId: options?.turnId });
 
             callbacks.onComplete(fullText);
         };
@@ -1273,10 +1275,10 @@ export class VoiceCallLlm {
     }
 
     /** 获取对话历史副本（通话结束时用于持久化，过滤 ACK 消息） */
-    getHistory(): { role: string; content: string }[] {
+    getHistory(): { role: string; content: string; turnId?: number }[] {
         return this.history
             .filter(m => m.role !== 'system' && m.content !== SOMNIA_JAILBREAK_ACK)
-            .map(m => ({ role: m.role, content: m.content }));
+            .map(m => ({ role: m.role, content: m.content, turnId: m.turnId }));
     }
 
     /** 打断：中止当前请求 */

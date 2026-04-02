@@ -201,7 +201,7 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
 
                 // 拼接给模型读 + 卡片展示的文本版
                 const lines = history.map(h =>
-                    `${h.role === 'user' ? userProfile.name : name}: ${h.content}`
+                    `${h.role === 'user' ? userProfile.name : name}: ${h.content.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim()}`
                 );
                 const content = [
                     `[电话记录 | ${modeText} | ${formatDuration(duration)}]`,

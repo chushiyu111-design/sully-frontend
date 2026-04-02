@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Message } from '../../../types';
 import { formatDuration } from '../../../apps/voicecall/utils';
 import { MODE_LABELS } from '../../../apps/voicecall/voiceCallTypes';
@@ -12,6 +12,10 @@ import { getVoiceAudio } from '../../../utils/db/contentStore';
  * 展开态: 完整对话列表（按角色渲染）+ AI 消息可播放/下载
  */
 
+/** 剥离外语模式 [[翻译:...]] 标记（兼容旧数据） */
+const stripTranslationTags = (text: string) =>
+    text.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim();
+
 interface VoiceCallSummaryCardProps {
     message: Message;
 }
@@ -24,6 +28,8 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
     const [loadingIndex, setLoadingIndex] = useState<number | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const objectUrlRef = useRef<string | null>(null);
+    // 版本号：防止快速连点导致的竞态（旧的 async 回调不再生效）
+    const playVersionRef = useRef(0);
 
     const duration = message.metadata?.duration ?? 0;
     const mode = message.metadata?.mode as string | undefined;
@@ -36,9 +42,11 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
 
     // ── 清理音频资源 ──
     const cleanupAudio = useCallback(() => {
+        playVersionRef.current++; // 使所有正在 await 的旧 handlePlay 失效
         if (audioRef.current) {
             audioRef.current.pause();
             audioRef.current.onended = null;
+            audioRef.current.onerror = null;
             audioRef.current = null;
         }
         if (objectUrlRef.current) {
@@ -46,7 +54,13 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
             objectUrlRef.current = null;
         }
         setPlayingIndex(null);
+        setLoadingIndex(null);
     }, []);
+
+    // ── 组件卸载时清理（防止 Audio 泄漏继续播放）──
+    useEffect(() => {
+        return () => { cleanupAudio(); };
+    }, [cleanupAudio]);
 
     // ── 播放指定 index 的音频 ──
     const handlePlay = useCallback(async (index: number, e: React.MouseEvent) => {
@@ -58,13 +72,17 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
             return;
         }
 
-        // 停止上一条
+        // 停止上一条 & 记录本次版本
         cleanupAudio();
+        const version = playVersionRef.current;
         setLoadingIndex(index);
 
         try {
             const key = `call_${message.id}_${index}`;
             const blob = await getVoiceAudio(key);
+
+            // 版本已变（用户点了别的按钮或组件卸载），放弃本次
+            if (version !== playVersionRef.current) return;
 
             if (!blob) {
                 console.warn(`[VoiceCallCard] No audio found for key: ${key}`);
@@ -87,12 +105,17 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
             };
 
             await audio.play();
+
+            // 再次检查版本（play() 也是异步的）
+            if (version !== playVersionRef.current) return;
+
             setPlayingIndex(index);
+            setLoadingIndex(null);
         } catch (err) {
             console.error('[VoiceCallCard] Failed to play audio:', err);
-            cleanupAudio();
-        } finally {
-            setLoadingIndex(null);
+            if (version === playVersionRef.current) {
+                cleanupAudio();
+            }
         }
     }, [message.id, playingIndex, cleanupAudio]);
 
@@ -159,6 +182,8 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
                         const isPlaying = playingIndex === i;
                         const isLoading = loadingIndex === i;
                         const showAudioBtn = isAssistant && hasCallAudio;
+                        // 防御性剥离翻译标记（兼容旧数据）
+                        const displayContent = stripTranslationTags(msg.content);
 
                         return (
                             <div
@@ -173,7 +198,7 @@ const VoiceCallSummaryCard: React.FC<VoiceCallSummaryCardProps> = ({ message }) 
                                     }`}
                                 >
                                     <div className="flex items-start gap-1.5">
-                                        <span className="flex-1">{msg.content}</span>
+                                        <span className="flex-1">{displayContent}</span>
                                         {showAudioBtn && (
                                             <span className="flex items-center gap-0.5 shrink-0 ml-1 mt-0.5">
                                                 {/* 播放/停止按钮 */}

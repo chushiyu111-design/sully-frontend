@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { getBackendUrl, getUserId, setUserId, pushMemories, pullMemories } from '../utils/backendClient';
+import { getBackendUrl, getUserId, setUserId, pushMemories, pullMemories, listCloudChars } from '../utils/backendClient';
 import { DB } from '../utils/db';
 import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
@@ -95,7 +95,7 @@ const CognitiveNetworkApp: React.FC = () => {
     const authHeaders = useCallback(() => {
         const h: Record<string, string> = {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer change-me-to-a-random-string`,
+            'Authorization': `Bearer csyos_k7m2x9f4p1w8v3`,
             'X-User-Id': getUserId(),
         };
         const subKey = localStorage.getItem('sub_api_key') || '';
@@ -535,16 +535,30 @@ const CognitiveNetworkApp: React.FC = () => {
                                 setSyncResult(null);
                                 haptic.medium();
                                 try {
+                                    // 先获取云端角色列表，再与本地角色合并（去重）
+                                    const cloudChars = await listCloudChars();
+                                    const localCharIds = new Set(characters.map(c => c.id));
+                                    const allCharIds = new Set(localCharIds);
+                                    if (cloudChars) {
+                                        for (const cc of cloudChars) allCharIds.add(cc.charId);
+                                    }
+
+                                    if (allCharIds.size === 0) {
+                                        addToast('云端暂无记忆数据', 'info');
+                                        setSyncing(false);
+                                        return;
+                                    }
+
                                     let totalPulled = 0;
-                                    for (const char of characters) {
-                                        const cloudMems = await pullMemories(char.id);
+                                    for (const charId of allCharIds) {
+                                        const cloudMems = await pullMemories(charId);
                                         if (!cloudMems || cloudMems.length === 0) continue;
                                         for (const mem of cloudMems) {
                                             const existing = await DB.getVectorMemoryById(mem.id);
                                             if (!existing) {
                                                 await DB.saveVectorMemory({
                                                     id: mem.id,
-                                                    charId: mem.char_id || char.id,
+                                                    charId: mem.char_id || charId,
                                                     title: mem.title,
                                                     content: mem.content,
                                                     emotionalJourney: mem.emotional_journey || '',

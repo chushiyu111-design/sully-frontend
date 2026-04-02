@@ -113,11 +113,15 @@ async function isBackendAlive(): Promise<boolean> {
 
 // ====== Header Builder ======
 
+function sanitizeHeader(val: string): string {
+    return val ? val.replace(/[^\x20-\x7E]/g, '') : '';
+}
+
 function buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer csyos_k7m2x9f4p1w8v3`,
-        'X-User-Id': getUserId(),
+        'X-User-Id': sanitizeHeader(getUserId()),
     };
 
     // Embedding keys
@@ -126,15 +130,15 @@ function buildHeaders(): Record<string, string> {
     const embeddingBaseUrl = localStorage.getItem('embedding_base_url') || '';
     const embeddingModel = localStorage.getItem('embedding_model') || '';
 
-    if (embeddingKey) headers['X-Embedding-Key'] = embeddingKey;
-    if (embeddingProvider) headers['X-Embedding-Provider'] = embeddingProvider;
-    if (embeddingBaseUrl) headers['X-Embedding-Base-URL'] = embeddingBaseUrl;
-    if (embeddingModel) headers['X-Embedding-Model'] = embeddingModel;
+    if (embeddingKey) headers['X-Embedding-Key'] = sanitizeHeader(embeddingKey);
+    if (embeddingProvider) headers['X-Embedding-Provider'] = sanitizeHeader(embeddingProvider);
+    if (embeddingBaseUrl) headers['X-Embedding-Base-URL'] = sanitizeHeader(embeddingBaseUrl);
+    if (embeddingModel) headers['X-Embedding-Model'] = sanitizeHeader(embeddingModel);
 
     // Rerank key (Cohere Trial)
     const rerankKey = localStorage.getItem('cohere_rerank_api_key') || '';
     const rerankUsePaid = localStorage.getItem('cohere_rerank_use_paid') === 'true';
-    if (rerankKey) headers['X-Rerank-Key'] = rerankKey;
+    if (rerankKey) headers['X-Rerank-Key'] = sanitizeHeader(rerankKey);
     if (rerankUsePaid) headers['X-Rerank-Use-Paid'] = 'true';
 
     // STT keys (for Cohere users' Query Rewrite)
@@ -142,8 +146,8 @@ function buildHeaders(): Record<string, string> {
         const sttRaw = localStorage.getItem('os_stt_config');
         if (sttRaw) {
             const sttCfg = JSON.parse(sttRaw);
-            if (sttCfg.siliconflowApiKey) headers['X-STT-Silicon-Key'] = sttCfg.siliconflowApiKey;
-            if (sttCfg.groqApiKey) headers['X-STT-Groq-Key'] = sttCfg.groqApiKey;
+            if (sttCfg.siliconflowApiKey) headers['X-STT-Silicon-Key'] = sanitizeHeader(sttCfg.siliconflowApiKey);
+            if (sttCfg.groqApiKey) headers['X-STT-Groq-Key'] = sanitizeHeader(sttCfg.groqApiKey);
         }
     } catch { /* ignore parse errors */ }
 
@@ -159,11 +163,12 @@ function addLlmHeaders(
     subApiConfig?: { baseUrl: string; model: string; apiKey: string },
 ): void {
     if (subApiConfig) {
-        headers['X-LLM-Key'] = subApiConfig.apiKey;
-        headers['X-LLM-Base-URL'] = subApiConfig.baseUrl;
-        headers['X-LLM-Model'] = subApiConfig.model;
+        headers['X-LLM-Key'] = sanitizeHeader(subApiConfig.apiKey);
+        headers['X-LLM-Base-URL'] = sanitizeHeader(subApiConfig.baseUrl);
+        headers['X-LLM-Model'] = sanitizeHeader(subApiConfig.model);
     }
 }
+
 
 // ====== API Methods ======
 

@@ -33,7 +33,7 @@
 | 样式 | **TailwindCSS v4** + PostCSS |
 | 本地存储 | **IndexedDB** (原生 API, 无 ORM) |
 | 移动端 | **Capacitor 6** (Android 打包) |
-| 部署 | **Vercel** (`vercel.json`, `deploy-prod.ps1`) |
+| 部署 | **Cloudflare Pages** (`deploy-prod.ps1`) |
 | 测试 | **Vitest** + **Testing Library** |
 | 包名 | `aetheros-simulator` |
 
@@ -496,13 +496,13 @@ MiniMax TTS WebSocket 代理，解决跨域问题。
 ```mermaid
 graph TB
     User[用户浏览器/PWA]
-    Vercel[Vercel<br/>前端静态托管]
+    Pages[Cloudflare Pages<br/>前端静态托管]
     Workers[Cloudflare Workers<br/>后端 API]
     D1[(D1 数据库)]
     R2[(R2 对象存储)]
     Cron[Cron Trigger<br/>每5分钟]
 
-    User -->|HTTPS| Vercel
+    User -->|HTTPS| Pages
     User -->|API 请求| Workers
     Workers --> D1
     Workers --> R2
@@ -512,7 +512,7 @@ graph TB
 
 | 组件 | 部署位置 | 域名 |
 |---|---|---|
-| 前端 | Vercel | (自定义域名) |
+| 前端 | Cloudflare Pages | (自定义域名) |
 | 后端 | Cloudflare Workers | `chushiyu.de5.net` |
 | 数据库 | Cloudflare D1 | `csyos-db` |
 | 备份存储 | Cloudflare R2 | `csyos-backups` |

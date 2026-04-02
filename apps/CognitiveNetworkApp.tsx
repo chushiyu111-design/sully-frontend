@@ -93,18 +93,20 @@ const CognitiveNetworkApp: React.FC = () => {
         return found?.avatar || '';
     }, [characters]);
 
+    const sanitizeHeader = (val: string) => val ? val.replace(/[^\x20-\x7E]/g, '') : '';
+
     const authHeaders = useCallback(() => {
         const h: Record<string, string> = {
             'Content-Type': 'application/json',
             'Authorization': `Bearer csyos_k7m2x9f4p1w8v3`,
-            'X-User-Id': getUserId(),
+            'X-User-Id': sanitizeHeader(getUserId()),
         };
         const subKey = localStorage.getItem('sub_api_key') || '';
         const subUrl = localStorage.getItem('sub_api_base_url') || '';
         const subModel = localStorage.getItem('sub_api_model') || '';
-        if (subKey) h['X-LLM-Key'] = subKey;
-        if (subUrl) h['X-LLM-Base-URL'] = subUrl;
-        if (subModel) h['X-LLM-Model'] = subModel;
+        if (subKey) h['X-LLM-Key'] = sanitizeHeader(subKey);
+        if (subUrl) h['X-LLM-Base-URL'] = sanitizeHeader(subUrl);
+        if (subModel) h['X-LLM-Model'] = sanitizeHeader(subModel);
         return h;
     }, []);
 
@@ -120,10 +122,10 @@ const CognitiveNetworkApp: React.FC = () => {
         const ep = localStorage.getItem('embedding_provider') || 'openai';
         const eu = localStorage.getItem('embedding_base_url') || '';
         const em = localStorage.getItem('embedding_model') || '';
-        if (ek) h['X-Embedding-Key'] = ek;
-        if (ep) h['X-Embedding-Provider'] = ep;
-        if (eu) h['X-Embedding-Base-URL'] = eu;
-        if (em) h['X-Embedding-Model'] = em;
+        if (ek) h['X-Embedding-Key'] = sanitizeHeader(ek);
+        if (ep) h['X-Embedding-Provider'] = sanitizeHeader(ep);
+        if (eu) h['X-Embedding-Base-URL'] = sanitizeHeader(eu);
+        if (em) h['X-Embedding-Model'] = sanitizeHeader(em);
         return h;
     }, [authHeaders]);
 

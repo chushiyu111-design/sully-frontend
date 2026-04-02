@@ -199,8 +199,11 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
                 const duration = callDurationRef.current;
                 const modeText = MODE_LABELS[mode] || mode;
 
+                // 过滤掉系统自动发送的开场白提示词，避免出现在通话记录卡片中
+                const filteredHistory = history.filter(h => h.content !== '[系统：电话接通，请说开场白]');
+
                 // 拼接给模型读 + 卡片展示的文本版
-                const lines = history.map(h =>
+                const lines = filteredHistory.map(h =>
                     `${h.role === 'user' ? userProfile.name : name}: ${h.content.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim()}`
                 );
                 const content = [
@@ -218,10 +221,10 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
                         source: 'voicecall',
                         duration,
                         mode,
-                        turns: history.length,
-                        // 剥离 audioBlob，防止擑爆主存
-                        conversation: history.map(h => ({ role: h.role, content: h.content })),
-                        hasCallAudio: history.some(h => !!h.audioBlob),
+                        turns: filteredHistory.length,
+                        // 剥离 audioBlob，防止撑爆主存
+                        conversation: filteredHistory.map(h => ({ role: h.role, content: h.content })),
+                        hasCallAudio: filteredHistory.some(h => !!h.audioBlob),
                     },
                 }).then(async (savedMsgId) => {
                     // ── 将音频 Blob 存入专用的 STORE_VOICE_AUDIO ──

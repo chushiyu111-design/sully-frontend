@@ -92,6 +92,7 @@ export interface APIConfig {
     apiKey: string;
     model: string;
     useGeminiJailbreak?: boolean;
+    disablePrefill?: boolean;
 }
 
 export interface ApiPreset {

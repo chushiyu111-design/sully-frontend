@@ -287,10 +287,12 @@ mode 可选值：
             }
 
             // 3.0a Prefill injection — force CoT <thinking> start
-            // Try with prefill first; auto-fallback if proxy rejects it (400 error)
-            let usePrefill = true;
-            fullMessages.push({ role: 'assistant', content: '<thinking>' });
-            console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');
+            // Controlled via settings to support buggy proxies that block prefill (and eat tokens)
+            const usePrefill = !apiConfig.disablePrefill;
+            if (usePrefill) {
+                fullMessages.push({ role: 'assistant', content: '<thinking>' });
+                console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');
+            }
 
             // Claude API 兼容：确保最后一条 assistant 消息无尾部空白
             const sanitizeLast = () => {
@@ -308,41 +310,10 @@ mode 可选值：
                 stream: false,
             };
 
-            let data: any;
-            try {
-                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                    method: 'POST', headers,
-                    body: JSON.stringify(requestBody)
-                });
-            } catch (prefillErr: any) {
-                // Auto-fallback: if proxy/model rejects prefill, retry without it
-                const errMsg = (prefillErr.message || '').toLowerCase();
-                const isPrefillError = errMsg.includes('prefill')
-                    || errMsg.includes('trailing whitespace')
-                    || errMsg.includes('must end with a user message')
-                    || errMsg.includes('must be from a user')
-                    || errMsg.includes('last message');
-                if (!isPrefillError) throw prefillErr; // Not a prefill error, rethrow
-
-                console.warn('🧩 [Prefill] Proxy rejected prefill, retrying without it:', prefillErr.message?.slice(0, 120));
-                usePrefill = false;
-                // Remove the injected assistant prefill message
-                let prefillIdx = -1;
-                for (let i = fullMessages.length - 1; i >= 0; i--) {
-                    if (fullMessages[i].role === 'assistant' && fullMessages[i].content === '<thinking>') {
-                        prefillIdx = i; break;
-                    }
-                }
-                if (prefillIdx >= 0) fullMessages.splice(prefillIdx, 1);
-
-                // Re-sanitize & rebuild request body
-                sanitizeLast();
-                requestBody = { model: apiConfig.model, messages: fullMessages, temperature: 0.85, stream: false };
-                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                    method: 'POST', headers,
-                    body: JSON.stringify(requestBody)
-                });
-            }
+            let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                method: 'POST', headers,
+                body: JSON.stringify(requestBody)
+            });
             updateTokenUsage(data, historyMsgCount, 'initial');
 
             // 3.5 Check for empty API responses (e.g. content filters, max context limits)

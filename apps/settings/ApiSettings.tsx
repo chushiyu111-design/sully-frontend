@@ -10,6 +10,7 @@ const ApiSettings: React.FC = () => {
     const [localKey, setLocalKey] = useState(apiConfig.apiKey);
     const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
     const [localModel, setLocalModel] = useState(apiConfig.model);
+    const [localDisablePrefill, setLocalDisablePrefill] = useState(apiConfig.disablePrefill || false);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [isTestingConnection, setIsTestingConnection] = useState(false);
     const [testConnectionStatus, setTestConnectionStatus] = useState<'idle' | 'success' | 'error' | 'testing'>('idle');
@@ -22,25 +23,27 @@ const ApiSettings: React.FC = () => {
         setLocalUrl(apiConfig.baseUrl);
         setLocalKey(apiConfig.apiKey);
         setLocalModel(apiConfig.model);
+        setLocalDisablePrefill(apiConfig.disablePrefill || false);
     }, [apiConfig]);
 
     const loadPreset = (preset: typeof apiPresets[0]) => {
         setLocalUrl(preset.config.baseUrl);
         setLocalKey(preset.config.apiKey);
         setLocalModel(preset.config.model);
+        setLocalDisablePrefill(preset.config.disablePrefill || false);
         addToast(`已加载配置: ${preset.name}`, 'info');
     };
 
     const handleSavePreset = () => {
         if (!newPresetName.trim()) { addToast('请输入预设名称', 'error'); return; }
-        addApiPreset(newPresetName, { baseUrl: localUrl, apiKey: localKey, model: localModel });
+        addApiPreset(newPresetName, { baseUrl: localUrl, apiKey: localKey, model: localModel, disablePrefill: localDisablePrefill });
         setNewPresetName('');
         setShowPresetModal(false);
         addToast('预设已保存', 'success');
     };
 
     const handleSaveApi = () => {
-        updateApiConfig({ apiKey: localKey, baseUrl: localUrl, model: localModel });
+        updateApiConfig({ apiKey: localKey, baseUrl: localUrl, model: localModel, disablePrefill: localDisablePrefill });
         setStatusMsg('配置已保存');
         setTimeout(() => setStatusMsg(''), 2000);
         setTestConnectionStatus('idle');
@@ -135,6 +138,14 @@ const ApiSettings: React.FC = () => {
                     <div className="group">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
                         <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    </div>
+                    
+                    <div className="group flex items-center gap-3 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3">
+                        <input type="checkbox" id="disablePrefill" checked={localDisablePrefill} onChange={(e) => setLocalDisablePrefill(e.target.checked)} className="w-4 h-4 text-primary bg-slate-100 border-slate-300 rounded focus:ring-primary" />
+                        <label htmlFor="disablePrefill" className="text-xs font-semibold text-slate-600 flex-1 cursor-pointer">
+                            关闭助手预填充 (Disable Prefill)
+                            <span className="block text-[10px] font-normal text-slate-400 mt-0.5">如果中转站报错 400 且频繁吞字数扣费，请务必勾选此项。官方接口无需勾选。</span>
+                        </label>
                     </div>
 
                     <div className="pt-2">

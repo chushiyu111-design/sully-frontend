@@ -580,20 +580,42 @@ export class BackendAgentManager {
 
             if (localStorage.getItem('autonomous_debug') === 'true') {
                 console.log('🤖 [Agent] Context pushed to backend');
+            }
 
-                // LifeStream 调试：拉取最新片段并打印
-                try {
-                    const lsData = await agentFetch(`/api/agent/lifestream?charId=${this.charId}`);
-                    if (lsData.fragments && lsData.fragments.length > 0) {
-                        console.log(`🌊 [LifeStream] ${lsData.fragments.length} fragment(s) today:`);
-                        for (const f of lsData.fragments.slice(-5)) {
-                            console.log(`  ${f.time_label} — ${f.fragment}`);
+            // LifeStream: 拉取最新片段并保存为本地消息（去重）
+            try {
+                const lsData = await agentFetch(`/api/agent/lifestream?charId=${this.charId}`);
+                if (lsData.fragments && lsData.fragments.length > 0) {
+                    // 获取已保存的 lifestream 消息用于去重（按 created_at 比对）
+                    const existingMsgs = await DB.getRecentMessagesByCharId(this.charId!, 200);
+                    const existingTimestamps = new Set(
+                        existingMsgs
+                            .filter(m => (m.type as string) === 'lifestream')
+                            .map(m => m.timestamp)
+                    );
+
+                    let saved = 0;
+                    for (const f of lsData.fragments) {
+                        // 用 created_at 作为 timestamp 去重
+                        if (!existingTimestamps.has(f.created_at)) {
+                            await DB.saveMessage({
+                                charId: this.charId!,
+                                role: 'assistant',
+                                type: 'lifestream' as any,
+                                content: `${f.time_label} · ${f.fragment}`,
+                                timestamp: f.created_at,
+                            });
+                            saved++;
                         }
-                    } else {
-                        console.log(`🌊 [LifeStream] no fragments yet`);
                     }
-                } catch (e: any) {
-                    console.log(`🌊 [LifeStream] fetch error: ${e.message}`);
+
+                    if (saved > 0 && localStorage.getItem('autonomous_debug') === 'true') {
+                        console.log(`🌊 [LifeStream] Saved ${saved} new fragment(s) as local messages`);
+                    }
+                }
+            } catch (e: any) {
+                if (localStorage.getItem('autonomous_debug') === 'true') {
+                    console.log(`🌊 [LifeStream] fetch/save error: ${e.message}`);
                 }
             }
         } catch (err: any) {

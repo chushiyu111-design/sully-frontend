@@ -328,6 +328,50 @@ const MessageItem = React.memo(({
         );
     }
 
+    // ═══ LifeStream Fragment — iOS minimal timeline card ═══
+    if ((m.type as string) === 'lifestream') {
+        return (
+            <>
+                {timestampSeparator}
+                <div className={`flex justify-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
+                    {selectionMode && <SelectionCheckbox isSelected={isSelected} onToggle={() => onToggleSelect(m.id)} />}
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '8px',
+                            maxWidth: '75%',
+                            padding: '8px 14px',
+                            borderRadius: '10px',
+                            background: 'rgba(120, 120, 128, 0.06)',
+                            border: '0.5px solid rgba(120, 120, 128, 0.12)',
+                        }}
+                        {...interactionProps}
+                    >
+                        {/* Left accent line */}
+                        <div style={{
+                            width: '2px',
+                            minHeight: '100%',
+                            borderRadius: '1px',
+                            background: 'rgba(120, 120, 128, 0.2)',
+                            flexShrink: 0,
+                            marginTop: '2px',
+                        }} />
+                        <div style={{
+                            fontSize: '12px',
+                            lineHeight: '1.5',
+                            color: 'rgba(142, 142, 147, 0.9)',
+                            fontWeight: 400,
+                            letterSpacing: '0.01em',
+                        }}>
+                            {m.content}
+                        </div>
+                    </div>
+                </div>
+            </>
+        );
+    }
+
     const commonLayout = (content: React.ReactNode) => (
         <>
             {timestampSeparator}

@@ -308,7 +308,7 @@ end if
             // 3.0a Prefill injection — force CoT <thinking> start (always-on)
             const usePrefill = true;
             if (usePrefill) {
-                fullMessages.push({ role: 'assistant', content: '<thinking>\n' });
+                fullMessages.push({ role: 'assistant', content: '<thinking>' });
                 console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');
             }
 

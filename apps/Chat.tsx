@@ -1066,6 +1066,7 @@ const Chat: React.FC = () => {
 
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date')
+        .filter(m => (m.type as string) !== 'lifestream')
         .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => { if (char.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false; return true; })
         .slice(-visibleCount),

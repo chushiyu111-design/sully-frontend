@@ -252,16 +252,14 @@ mode 可选值：
 
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
 
-            // 2.55 Inject STT tolerance prompt if last user message is a voice recording
-            // Voice messages are now properly formatted by buildMessageHistory with [🎤用户语音] prefix
+            // Find the true last user message to attach strict instructions to
             const lastUserIdx = fullMessages.map(m => m.role).lastIndexOf('user');
+            
+            // 2.55 Inject STT tolerance prompt if last user message is a voice recording
             if (lastUserIdx >= 0) {
                 const lastUserMsg = fullMessages[lastUserIdx];
                 if (typeof lastUserMsg.content === 'string' && lastUserMsg.content.includes('[🎤用户语音]')) {
-                    fullMessages.splice(lastUserIdx + 1, 0, {
-                        role: 'system',
-                        content: '[系统提示：用户刚才发送了一条语音消息。以下文字由设备语音识别自动转换，可能存在同音字错误或漏字，请结合上下文理解原意，并按照原意进行回复]'
-                    });
+                    lastUserMsg.content += '\n\n[系统提示：你刚才听到的语音消息部分文字由设备自动识别，可能存在同音字或漏字，请结合上下文理解原意包容回复]';
                 }
             }
 
@@ -271,39 +269,22 @@ mode 可选值：
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
-            // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
+            // 2.6 & 3.0: Attach mandatory format instructions directly to the last user message
+            // This prevents "messages must end with user" validation errors on strict proxies
+            // when the assistant prefill is disabled or removed during fallback.
+            let trailingInstructions = '';
+            
             if (bilingualActive) {
-                fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
+                trailingInstructions += `\n\n[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`;
             }
 
-            // 3. API Call — prefill-based CoT only, native thinking disabled.
-            // Native thinking (budget_tokens) conflicts with prefill <thinking> tags
-            // and causes format drops on Gemini 2.5p. Always use prefill instead.
+            trailingInstructions += `\n\n[思考链格式锁定]\n请严格遵循以下输出流程：\n1. 先在 <thinking>...</thinking> 中完成全部思考\n2. 思考完毕后，必须输出 </thinking> 闭合标签\n3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）\n4. 正文中不得包含任何 <thinking> 标签或思考过程\n\n格式：\n<thinking>\n（你的思考过程）\n</thinking>\n（角色正文回复）\n\n严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。\n\n━━━━━━━━━━━━━━━\n<!--\nif 首段不是<thinking>标签 then\n    立即回滚本轮并重写，直至首段为<thinking>…</thinking>\nend if\n-->\n━━━━━━━━━━━━━━━`;
 
-            // 3.0 Thinking Chain Lock — force model to close </thinking> and output content
-            // Inspired by SillyTavern preset format enforcement.
-            fullMessages.push({ role: 'system', content: `[思考链格式锁定]
-请严格遵循以下输出流程：
-1. 先在 <thinking>...</thinking> 中完成全部思考
-2. 思考完毕后，必须输出 </thinking> 闭合标签
-3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）
-4. 正文中不得包含任何 <thinking> 标签或思考过程
-
-格式：
-<thinking>
-（你的思考过程）
-</thinking>
-（角色正文回复）
-
-严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。
-
-━━━━━━━━━━━━━━━
-<!--
-if 首段不是<thinking>标签 then
-    立即回滚本轮并重写，直至首段为<thinking>…</thinking>
-end if
--->
-━━━━━━━━━━━━━━━` });
+            if (lastUserIdx >= 0 && typeof fullMessages[lastUserIdx].content === 'string') {
+                fullMessages[lastUserIdx].content += trailingInstructions;
+            } else {
+                fullMessages.push({ role: 'user', content: `[系统执行指令]${trailingInstructions}` });
+            }
 
             // 3.0a Prefill injection — force CoT <thinking> start
             // Try with prefill first; auto-fallback if proxy rejects it (400 error)
@@ -415,11 +396,19 @@ end if
                 try {
                     // Remove the prefill assistant message and thinking chain lock for retry
                     const retryMessages = fullMessages.filter(m => 
-                        !(m.role === 'assistant' && typeof m.content === 'string' && m.content.startsWith('<thinking>')) &&
-                        !(m.role === 'system' && typeof m.content === 'string' && m.content.includes('思考链格式锁定'))
+                        !(m.role === 'assistant' && typeof m.content === 'string' && m.content.startsWith('<thinking>'))
                     );
-                    // Add a direct instruction instead
-                    retryMessages.push({ role: 'system', content: '[系统: 请直接输出角色的回复正文，不需要 <thinking> 标签。]' });
+                    
+                    // The thinking chain lock was injected into the last user message, we need to remove it
+                    const rLastUserIdx = retryMessages.map(m => m.role).lastIndexOf('user');
+                    if (rLastUserIdx >= 0 && typeof retryMessages[rLastUserIdx].content === 'string') {
+                        retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考链格式锁定\][\s\S]*?━━━━━━━━━━━━━━━/, '');
+                        // Add a direct instruction instead
+                        retryMessages[rLastUserIdx].content += '\n\n[系统: 请直接输出角色的回复正文，不需要 <thinking> 标签。]';
+                    } else {
+                        retryMessages.push({ role: 'user', content: '[系统: 请直接输出角色的回复正文，不需要 <thinking> 标签。]' });
+                    }
+                    
                     const retryBody = { model: apiConfig.model, messages: retryMessages, temperature: 0.85, stream: false };
                     const retryData = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,

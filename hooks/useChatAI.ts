@@ -305,31 +305,63 @@ end if
 -->
 ━━━━━━━━━━━━━━━` });
 
-            // 3.0a Prefill injection — force CoT <thinking> start (always-on)
-            const usePrefill = true;
-            if (usePrefill) {
-                fullMessages.push({ role: 'assistant', content: '<thinking>' });
-                console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');
-            }
+            // 3.0a Prefill injection — force CoT <thinking> start
+            // Try with prefill first; auto-fallback if proxy rejects it (400 error)
+            let usePrefill = true;
+            fullMessages.push({ role: 'assistant', content: '<thinking>' });
+            console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');
 
             // Claude API 兼容：确保最后一条 assistant 消息无尾部空白
-            // (防止中转站转发到 Claude 时触发 "final assistant content cannot end with trailing whitespace" 报错)
-            const lastFullMsg = fullMessages[fullMessages.length - 1];
-            if (lastFullMsg?.role === 'assistant' && typeof lastFullMsg.content === 'string') {
-                lastFullMsg.content = lastFullMsg.content.trimEnd();
-            }
+            const sanitizeLast = () => {
+                const last = fullMessages[fullMessages.length - 1];
+                if (last?.role === 'assistant' && typeof last.content === 'string') {
+                    last.content = last.content.trimEnd();
+                }
+            };
+            sanitizeLast();
 
-            const requestBody: Record<string, any> = {
+            let requestBody: Record<string, any> = {
                 model: apiConfig.model,
                 messages: fullMessages,
                 temperature: 0.85,
                 stream: false,
             };
-            // Native thinking completely disabled — prefill CoT handles reasoning
-            let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                body: JSON.stringify(requestBody)
-            });
+
+            let data: any;
+            try {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(requestBody)
+                });
+            } catch (prefillErr: any) {
+                // Auto-fallback: if proxy/model rejects prefill, retry without it
+                const errMsg = (prefillErr.message || '').toLowerCase();
+                const isPrefillError = errMsg.includes('prefill')
+                    || errMsg.includes('trailing whitespace')
+                    || errMsg.includes('must end with a user message')
+                    || errMsg.includes('must be from a user')
+                    || errMsg.includes('last message');
+                if (!isPrefillError) throw prefillErr; // Not a prefill error, rethrow
+
+                console.warn('🧩 [Prefill] Proxy rejected prefill, retrying without it:', prefillErr.message?.slice(0, 120));
+                usePrefill = false;
+                // Remove the injected assistant prefill message
+                let prefillIdx = -1;
+                for (let i = fullMessages.length - 1; i >= 0; i--) {
+                    if (fullMessages[i].role === 'assistant' && fullMessages[i].content === '<thinking>') {
+                        prefillIdx = i; break;
+                    }
+                }
+                if (prefillIdx >= 0) fullMessages.splice(prefillIdx, 1);
+
+                // Re-sanitize & rebuild request body
+                sanitizeLast();
+                requestBody = { model: apiConfig.model, messages: fullMessages, temperature: 0.85, stream: false };
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(requestBody)
+                });
+            }
             updateTokenUsage(data, historyMsgCount, 'initial');
 
             // 3.5 Check for empty API responses (e.g. content filters, max context limits)
@@ -383,7 +415,7 @@ end if
                 try {
                     // Remove the prefill assistant message and thinking chain lock for retry
                     const retryMessages = fullMessages.filter(m => 
-                        !(m.role === 'assistant' && m.content === '<thinking>\n') &&
+                        !(m.role === 'assistant' && typeof m.content === 'string' && m.content.startsWith('<thinking>')) &&
                         !(m.role === 'system' && typeof m.content === 'string' && m.content.includes('思考链格式锁定'))
                     );
                     // Add a direct instruction instead

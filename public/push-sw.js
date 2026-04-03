@@ -28,8 +28,15 @@ self.addEventListener('push', function(event) {
             renotify: true,
         };
 
+        // Show notification, then notify open tabs to fetch pending messages immediately
         event.waitUntil(
             self.registration.showNotification(data.title || 'CSY-Sully OS', options)
+                .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+                .then(function(clients) {
+                    clients.forEach(function(client) {
+                        client.postMessage({ type: 'PUSH_RECEIVED', charId: charId });
+                    });
+                })
         );
     } catch (err) {
         // Fallback: payload 不是 JSON

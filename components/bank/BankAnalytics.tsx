@@ -1,6 +1,6 @@
 
-import React, { useMemo, useState, useEffect } from 'react';
-import { BankTransaction, SavingsGoal, APIConfig } from '../../types';
+import React,{ useMemo,useState } from 'react';
+import { BankTransaction,SavingsGoal,APIConfig } from '../../types';
 import { safeResponseJson } from '../../utils/safeApi';
 
 interface Props {

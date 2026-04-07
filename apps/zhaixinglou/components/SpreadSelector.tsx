@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import type { SpreadDef } from '../tarotData';
-import { GothicDivider, DECOR } from './GothicDecorations';
+import { GothicDivider,DECOR } from './GothicDecorations';
 
 interface SpreadSelectorProps {
     spreads: SpreadDef[];

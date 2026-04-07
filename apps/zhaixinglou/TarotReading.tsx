@@ -10,14 +10,14 @@
  * - 三段式布局：Header / MessageList / InputBar，每段有语义化容器
  * - 所有视觉样式通过 className 管理，方便后续统一美化
  */
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React,{ useState,useRef,useEffect,useCallback } from 'react';
 import { SecondaryAPIConfig } from './zhaixinglouStore';
 import { fetchSecondaryApi } from './zhaixinglouApi';
-import { TarotMode, buildTarotReadingPrompt, ReadingMode } from './divinationPrompts';
+import { TarotMode,buildTarotReadingPrompt } from './divinationPrompts';
 import { CharacterProfile } from '../../types';
 import MemoryDestinyModal from './MemoryDestinyModal';
-import ChatMessageBubble, { type MessageAction } from './components/ChatMessageBubble';
-import ShareCardModal, { type ShareContext } from './ShareCardModal';
+import ChatMessageBubble,{ type MessageAction } from './components/ChatMessageBubble';
+import ShareCardModal,{ type ShareContext } from './ShareCardModal';
 import { truncateMessages } from './chatUtils';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -78,7 +78,7 @@ const TarotReading: React.FC<TarotReadingProps> = ({
     const systemPromptRef = useRef<string>('');
     const [showModal, setShowModal] = useState(false);
     const [shareVisible, setShareVisible] = useState(false);
-    const [shareContent, setShareContent] = useState('');
+    const shareContent = '';
     const [shareParagraphs, setShareParagraphs] = useState<string[]>([]);
     // 多选模式
     const [isSelectionMode, setIsSelectionMode] = useState(false);

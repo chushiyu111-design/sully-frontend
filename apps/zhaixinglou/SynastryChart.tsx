@@ -18,16 +18,13 @@
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  */
 import React from 'react';
-import type { SynastryResult, BirthChart } from './astroCalc';
+import type { SynastryResult,BirthChart } from './astroCalc';
 
 // ─── 常量 ───
 const CX = 400, CY = 400;                 // 圆心
 const R_OUTER = 370;                        // 外圈星座环
 const R_OUTER_INNER = 340;                  // 刻度环外侧
 const R_SIGNS = 355;                        // 星座符号位置
-const R_TICK_OUTER = 340;                   // 刻度外边
-const R_TICK_INNER_LONG = 330;              // 长刻度内边
-const R_TICK_INNER_SHORT = 335;             // 短刻度内边
 const R_HOUSE_LINE_INNER = 220;             // 宫位线内侧终点
 const R_PLANET_A = 290;                     // Person A 行星环
 const R_PLANET_B = 250;                     // Person B 行星环
@@ -63,14 +60,6 @@ function lonToXY(lon: number, r: number): { x: number; y: number } {
     };
 }
 
-/** 角度 → SVG 坐标 (普通几何角度) */
-function degToXY(deg: number, r: number): { x: number; y: number } {
-    const rad = (deg - 90) * Math.PI / 180; // -90 让 0° 在顶部
-    return {
-        x: CX + r * Math.cos(rad),
-        y: CY + r * Math.sin(rad),
-    };
-}
 
 // ─── Props ───
 interface SynastryChartProps {
@@ -318,7 +307,6 @@ function renderPlanets(
         const symPt = lonToXY(p.adjustedLon, rSymbol);
         const dotPt = lonToXY(p.longitude, rDot);
         // 度数标注位置（符号外侧一点）
-        const degPt = lonToXY(p.adjustedLon, rSymbol + (rSymbol > CX ? 14 : -14));
 
         return (
             <g key={`planet-${_label}-${i}`}>

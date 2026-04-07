@@ -8,14 +8,14 @@
  *
  * 对话消息用组件内 useState 管理，退出即结算，不持久化到 store。
  */
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React,{ useState,useRef,useEffect,useCallback } from 'react';
 import { SecondaryAPIConfig } from './zhaixinglouStore';
 import { fetchSecondaryApi } from './zhaixinglouApi';
-import { ReadingMode, buildChartReadingSystemPrompt } from './divinationPrompts';
-import { CharacterProfile, UserProfile } from '../../types';
+import { ReadingMode,buildChartReadingSystemPrompt } from './divinationPrompts';
+import { CharacterProfile } from '../../types';
 import MemoryDestinyModal from './MemoryDestinyModal';
-import ChatMessageBubble, { type MessageAction } from './components/ChatMessageBubble';
-import ShareCardModal, { type ShareContext } from './ShareCardModal';
+import ChatMessageBubble,{ type MessageAction } from './components/ChatMessageBubble';
+import ShareCardModal,{ type ShareContext } from './ShareCardModal';
 import { truncateMessages } from './chatUtils';
 
 interface ChatMessage {
@@ -53,7 +53,7 @@ const ChartReading: React.FC<ChartReadingProps> = ({
     const systemPromptRef = useRef<string>('');
     const [showModal, setShowModal] = useState(false);
     const [shareVisible, setShareVisible] = useState(false);
-    const [shareContent, setShareContent] = useState('');
+    const shareContent = '';
     const [shareParagraphs, setShareParagraphs] = useState<string[]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());

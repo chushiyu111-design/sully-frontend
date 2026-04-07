@@ -6,14 +6,14 @@
  *   Phase 2: Visual novel dialog — random background, Uranus' text fades in, abyss-style input panel
  *   Phase 3: Exit — fade-to-dark animation back to menu
  */
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React,{ useState,useRef,useEffect,useCallback,useMemo } from 'react';
 import { SecondaryAPIConfig } from './zhaixinglouStore';
 import { fetchSecondaryApi } from './zhaixinglouApi';
-import { buildAkashicShadowsPrompt, URANUS_GREETINGS } from './divinationPrompts';
-import { calcCelestialEvents, formatEphemerisForPrompt } from './astroCalc';
+import { buildAkashicShadowsPrompt,URANUS_GREETINGS } from './divinationPrompts';
+import { calcCelestialEvents,formatEphemerisForPrompt } from './astroCalc';
 import { CharacterProfile } from '../../types';
 import { SelectedCard } from './zhaixinglouStore';
-import ShareCardModal, { type ShareContext } from './ShareCardModal';
+import ShareCardModal,{ type ShareContext } from './ShareCardModal';
 import { truncateMessages } from './chatUtils';
 
 
@@ -110,7 +110,7 @@ function generateFloatingTexts(count: number): FloatingText[] {
 
 const AkashicShadows: React.FC<Props> = ({
     onBack, isApiConfigured, onOpenSettings, apiConfig,
-    messages, onAddMessage, onSetMessages, isLoading, setLoading,
+    messages, onAddMessage, isLoading, setLoading,
     selectedCard, characters, userName,
 }) => {
     const [phase, setPhase] = useState<Phase>('entrance');

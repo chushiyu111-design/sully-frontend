@@ -4,19 +4,19 @@
  * View state machine: select → menu → (starMirror | starOrbit | starCalendar | akashicShadows)
  * Features: card carousel (user first), 4-option menu, golden particles, secondary API settings.
  */
-import React, { useState, useCallback, useEffect, Suspense } from 'react';
+import React,{ useState,useCallback,useEffect,Suspense } from 'react';
 import './zhaixinglou.css'; // Self-contained keyframes — independent from index.css
 import { useOS } from '../../context/OSContext';
-import { useZhaixinglouStore, SelectedCard } from './zhaixinglouStore';
+import { useZhaixinglouStore,SelectedCard } from './zhaixinglouStore';
 import GoldenParticles from './GoldenParticles';
-import { GothicHeader, GothicDivider, GothicCornerDecor, GothicBackgroundDecor, DECOR } from './components/GothicDecorations';
+import { GothicHeader,GothicDivider,GothicCornerDecor,GothicBackgroundDecor,DECOR } from './components/GothicDecorations';
 import SecondaryApiSettingsModal from './SecondaryApiSettingsModal';
+import { useTarotPreloader } from './AssetPreloader';
 // --- Lazy-loaded sub-pages (progressively prefetched by viewState) ---
 const StarMirror = React.lazy(() => import('./StarMirror'));
 const StarOrbit = React.lazy(() => import('./StarOrbit'));
 const StarCalendar = React.lazy(() => import('./StarCalendar'));
 const AkashicShadows = React.lazy(() => import('./AkashicShadows'));
-import { useTarotPreloader } from './AssetPreloader';
 
 const TAROT_BACK_IMAGE = 'https://i.postimg.cc/jS3qsYhB/MEITU-20260225-013328235.jpg';
 

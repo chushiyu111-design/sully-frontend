@@ -5,8 +5,8 @@
  * 折叠态：仅显示「太阳：双鱼座，6.8°」极简文本。
  * 展开态：缓缓浮现旋转六芒星法阵 SVG 背景 + 星谕判词。
  */
-import React, { useState, useCallback } from 'react';
-import type { BirthChart, PlanetPosition } from './astroCalc';
+import React,{ useState,useCallback } from 'react';
+import type { BirthChart,PlanetPosition } from './astroCalc';
 
 // ─── 星谕判词模板 ───
 const ORACLE_TEXTS: Record<string, (sign: string, degree: number) => string> = {
@@ -37,16 +37,6 @@ function getOracleText(planet: PlanetPosition): string {
 }
 
 // ─── 行星图标色彩 ───
-const PLANET_GLOW: Record<string, string> = {
-    '太阳': '#FFD700',
-    '月亮': '#C0C0FF',
-    '水星': '#64C8FF',
-    '金星': '#FFB6C1',
-    '火星': '#FF503C',
-    '木星': '#FFC864',
-    '土星': '#A0A0B4',
-    '上升点': '#D4AF37',
-};
 
 // ─── 六芒星法阵 SVG ───
 const HexagramSVG: React.FC = () => (
@@ -142,7 +132,6 @@ const StarOracleCards: React.FC<Props> = ({ chart }) => {
             {/* ── 纵向卡片列表 ── */}
             {chart.planets.map((planet, index) => {
                 const isExpanded = expandedIndex === index;
-                const glowColor = PLANET_GLOW[planet.name] || '#d4af37';
 
                 return (
                     <div

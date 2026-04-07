@@ -17,7 +17,7 @@
  * - 底层 messages[] 数据不变，分享/编辑/删除作用于整条消息
  * - 多选状态由父组件持有，通过 isSelectionMode / selectedParagraphKeys / onToggleSelect 控制
  */
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React,{ useState,useRef,useCallback,useMemo } from 'react';
 import { splitParagraphs } from '../shareUtils';
 
 export interface MessageAction {

@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import {
-    BankShopState, DollhouseState, DollhouseRoom, DollhouseSticker,
-    ShopStaff, CharacterProfile, UserProfile, APIConfig, RoomLayout
+  BankShopState,DollhouseState,DollhouseRoom,DollhouseSticker,
+  ShopStaff,CharacterProfile,UserProfile,APIConfig,RoomLayout
 } from '../../types';
 import {
-    ROOM_LAYOUTS, WALLPAPER_PRESETS, FLOOR_PRESETS, STICKER_LIBRARY, INITIAL_DOLLHOUSE
+  ROOM_LAYOUTS,WALLPAPER_PRESETS,FLOOR_PRESETS,STICKER_LIBRARY
 } from './BankGameConstants';
 import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
@@ -434,7 +434,7 @@ const BankDollhouse: React.FC<Props> = ({
         }, 280);
     };
 
-    const handleStickerPointerMove = (roomId: string, surface: 'floor' | 'leftWall' | 'rightWall', e: React.PointerEvent<HTMLDivElement>) => {
+    const handleStickerPointerMove = (roomId: string, _surface: 'floor' | 'leftWall' | 'rightWall', e: React.PointerEvent<HTMLDivElement>) => {
         if (!draggingStickerInfo || draggingStickerInfo.roomId !== roomId) return;
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         const xPct = ((e.clientX - rect.left) / rect.width) * 100;

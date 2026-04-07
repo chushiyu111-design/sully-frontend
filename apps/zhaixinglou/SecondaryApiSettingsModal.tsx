@@ -3,9 +3,9 @@
  * 
  * Replicates the main Settings API functionality for the divination module.
  */
-import React, { useState } from 'react';
-import { SecondaryAPIConfig, SecondaryApiPreset } from './zhaixinglouStore';
-import { fetchSecondaryModels, testSecondaryConnection } from './zhaixinglouApi';
+import React,{ useState } from 'react';
+import { SecondaryAPIConfig,SecondaryApiPreset } from './zhaixinglouStore';
+import { fetchSecondaryModels,testSecondaryConnection } from './zhaixinglouApi';
 
 interface Props {
     isOpen: boolean;

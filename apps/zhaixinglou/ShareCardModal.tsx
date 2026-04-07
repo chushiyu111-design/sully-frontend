@@ -3,8 +3,8 @@
  *   - Gold (tarot / chart): dark red + bright gold
  *   - Akashic: deep-abyss dark blue/black + cold silver with Latin letter borders
  */
-import React, { useRef, useState, useEffect } from 'react';
-import { exportShareCard, shareOrDownload } from './shareUtils';
+import React,{ useRef,useState,useEffect } from 'react';
+import { exportShareCard,shareOrDownload } from './shareUtils';
 
 export interface ShareContext {
     source: 'tarot' | 'chart' | 'akashic';

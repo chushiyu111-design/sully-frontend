@@ -1,6 +1,5 @@
 
-import React from 'react';
-import { ShopRecipe, ShopStaff, RoomLayout, DollhouseRoom, DollhouseState } from '../../types';
+import { ShopRecipe,ShopStaff,RoomLayout,DollhouseState } from '../../types';
 
 // Pixel Art Assets (Using Emojis styled as pixel or URLs)
 export const BANK_ASSETS = {

@@ -8,7 +8,7 @@
  * - 螺旋上升轨迹，呼吸式透明度脉动
  * - 高分辨率 Procedural Texture（128px Canvas 生成）
  */
-import React, { useRef, useEffect } from 'react';
+import React,{ useRef,useEffect } from 'react';
 import * as THREE from 'three';
 
 const DUST_COUNT = 200;  // 微尘星点

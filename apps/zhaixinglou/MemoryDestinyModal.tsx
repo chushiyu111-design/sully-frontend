@@ -7,10 +7,10 @@
  *
  * User 卡模式下，星痕铭刻会弹出角色多选器。
  */
-import React, { useState, useCallback } from 'react';
+import React,{ useState,useCallback } from 'react';
 import { SecondaryAPIConfig } from './zhaixinglouStore';
 import { fetchSecondaryApi } from './zhaixinglouApi';
-import { SUMMARY_PROMPT, ReadingMode } from './divinationPrompts';
+import { SUMMARY_PROMPT,ReadingMode } from './divinationPrompts';
 import { CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
 import BurnParticles from './BurnParticles';

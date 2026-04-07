@@ -17,7 +17,7 @@
  * 使用方式：
  *   <BurnParticles active={isBurning} onComplete={() => { ... }} />
  */
-import React, { useRef, useEffect } from 'react';
+import React,{ useRef,useEffect } from 'react';
 import * as THREE from 'three';
 
 // ── Particle counts ──

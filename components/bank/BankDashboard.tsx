@@ -1,6 +1,5 @@
-import React, { useRef } from 'react';
-import { BankFullState, CharacterProfile } from '../../types';
-import { processImage } from '../../utils/file';
+import React,{ useRef } from 'react';
+import { BankFullState,CharacterProfile } from '../../types';
 
 interface Props {
     state: BankFullState;
@@ -15,7 +14,7 @@ interface Props {
 }
 
 const BankDashboard: React.FC<Props> = ({ 
-    state, onOpenAddTx, onFeedPet, onRefreshVisitor, onUpdatePet, onUpdateConfig, 
+    state, onFeedPet, onRefreshVisitor, onUpdateConfig, 
     onOpenAddGoal, onDeleteGoal, characters 
 }) => {
     const petImageInputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +40,6 @@ const BankDashboard: React.FC<Props> = ({
         const file = e.target.files?.[0];
         if (file) {
             try {
-                const base64 = await processImage(file);
                 // Assuming updating the manager's avatar if this component were fully functional
                 // onUpdatePet({ image: base64 }); 
                 // Since this might be legacy, we just log or ignore, or try to map it.

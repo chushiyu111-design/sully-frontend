@@ -10,9 +10,9 @@
  * This component is a pure UI layer — all state is managed by the parent.
  */
 import React from 'react';
-import type { SpreadDef, TarotCardDef } from '../tarotData';
+import type { SpreadDef,TarotCardDef } from '../tarotData';
 import TarotCard from './TarotCard';
-import { GothicHeader, GothicDivider, GothicCornerDecor, DECOR } from './GothicDecorations';
+import { GothicHeader,GothicCornerDecor,DECOR } from './GothicDecorations';
 
 // ─── Shared drawn-card type (used by StarMirror, StarCalendar, HistoryDrawer) ───
 export interface DrawnCardState {
@@ -40,7 +40,6 @@ interface TarotSpreadBoardProps {
 }
 
 // ─── Style tokens ───
-const themeFontTitle = { fontFamily: 'ZhaixinglouTitle, serif', textShadow: '0 0 10px rgba(212,175,55,0.5)' } as const;
 const themeFontSub = { fontFamily: 'ZhaixinglouFont, serif' } as const;
 
 const TarotSpreadBoard: React.FC<TarotSpreadBoardProps> = ({

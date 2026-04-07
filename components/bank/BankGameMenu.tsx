@@ -1,7 +1,7 @@
 
-import React, { useState, useRef } from 'react';
-import { BankFullState, ShopStaff, CharacterProfile } from '../../types';
-import { SHOP_RECIPES, AVAILABLE_STAFF } from './BankGameConstants';
+import React,{ useState,useRef } from 'react';
+import { BankFullState,ShopStaff,CharacterProfile } from '../../types';
+import { AVAILABLE_STAFF } from './BankGameConstants';
 import { processImage } from '../../utils/file';
 
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
 }
 
 const BankGameMenu: React.FC<Props> = ({
-    state, characters = [], onUnlockRecipe, onHireStaff, onStaffRest, onFireStaff, onRehireStaff, onDeleteFiredStaff, onUpdateConfig,
+    state, characters = [], onHireStaff, onStaffRest, onFireStaff, onRehireStaff, onDeleteFiredStaff, 
     onAddGoal, onDeleteGoal, onEditStaff
 }) => {
     const [tab, setTab] = useState<'staff' | 'goals'>('staff');

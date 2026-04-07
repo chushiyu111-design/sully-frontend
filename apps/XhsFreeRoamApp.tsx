@@ -1,9 +1,9 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React,{ useState,useEffect,useCallback,useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { XhsActivityRecord, CharacterProfile } from '../types';
-import { XhsFreeRoamEngine, FreeRoamCallbacks } from '../utils/xhsFreeRoam';
+import { XhsActivityRecord } from '../types';
+import { XhsFreeRoamEngine,FreeRoamCallbacks } from '../utils/xhsFreeRoam';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 

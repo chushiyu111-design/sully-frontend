@@ -10,7 +10,7 @@
  *
  * When reversed, the ENTIRE front face (including border) is rotated 180°.
  */
-import React, { useMemo } from 'react';
+import React,{ useMemo } from 'react';
 import type { TarotCardDef } from '../tarotData';
 import { CARD_BACK_USER } from '../tarotData';
 

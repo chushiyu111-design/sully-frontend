@@ -16,15 +16,15 @@
  *    过渡到完全显示，模拟"缓缓浮现"的神秘感。
  * ─────────────────────────────────
  */
-import React, { useState, useCallback, useMemo } from 'react';
-import { SelectedCard, SecondaryAPIConfig } from './zhaixinglouStore';
-import { calcBirthChart, calcSynastry, BirthChart, PlanetPosition, SynastryResult, formatChartForPrompt, formatSynastryForPrompt } from './astroCalc';
+import React,{ useState,useCallback,useMemo } from 'react';
+import { SelectedCard,SecondaryAPIConfig } from './zhaixinglouStore';
+import { calcBirthChart,calcSynastry,BirthChart,SynastryResult,formatChartForPrompt,formatSynastryForPrompt } from './astroCalc';
 import SynastryChart from './SynastryChart';
 import ChartReading from './ChartReading';
 import { ReadingMode } from './divinationPrompts';
-import { CharacterProfile, UserProfile } from '../../types';
+import { CharacterProfile,UserProfile } from '../../types';
 import StarOracleCards from './StarOracleCards';
-import { GothicHeader, GothicDivider, GothicCornerDecor, DECOR } from './components/GothicDecorations';
+import { GothicHeader,GothicDivider,GothicCornerDecor,DECOR } from './components/GothicDecorations';
 
 interface Props {
     onBack: () => void;
@@ -265,7 +265,7 @@ const StarOrbit: React.FC<Props> = ({ onBack, selectedCard, userName, userProfil
                         { key: 'user' as AstroMode, label: 'My Chart', sub: '我的星盘', icon: DECOR.moon },
                         { key: 'char' as AstroMode, label: `${charName}'s`, sub: `${charName}的星盘`, icon: DECOR.priestess },
                         { key: 'synastry' as AstroMode, label: 'Synastry', sub: '合盘', icon: DECOR.lovers },
-                    ] as const).map((tab, idx) => (
+                    ] as const).map((tab) => (
                         <button
                             key={tab.key}
                             onClick={() => handleModeSwitch(tab.key)}

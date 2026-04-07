@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { BankShopState, CharacterProfile, UserProfile, APIConfig, ShopStaff } from '../../types';
+import React,{ useState,useEffect,useRef } from 'react';
+import { BankShopState,CharacterProfile,UserProfile,APIConfig,ShopStaff } from '../../types';
 import { SHOP_RECIPES } from './BankGameConstants';
 import { ContextBuilder } from '../../utils/context';
 import { useOS } from '../../context/OSContext';

@@ -10,10 +10,10 @@
  *   - Transit talisman section (user only)
  */
 import React from 'react';
-import type { CelestialEvents, TransitHit } from '../astroCalc';
+import type { CelestialEvents,TransitHit } from '../astroCalc';
 import type { SpreadDef } from '../tarotData';
 import { SPREADS } from '../tarotData';
-import { GothicDivider, DECOR } from './GothicDecorations';
+import { GothicDivider,DECOR } from './GothicDecorations';
 
 interface CelestialDashboardProps {
     events: CelestialEvents;

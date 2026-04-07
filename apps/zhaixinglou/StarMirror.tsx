@@ -7,19 +7,19 @@
  *   - HistoryDrawer — bottom drawer with position list
  *   - TarotReading — AI reading chat (post-reveal)
  */
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React,{ useState,useCallback,useMemo,useEffect } from 'react';
 import {
-    drawCards,
-    CARD_BACK_USER,
-    CARD_BACK_CHAR,
-    SPREADS,
+  drawCards,
+  CARD_BACK_USER,
+  CARD_BACK_CHAR,
+  SPREADS,
 } from './tarotData';
-import TarotReading, { type TarotDrawnCard } from './TarotReading';
+import TarotReading,{ type TarotDrawnCard } from './TarotReading';
 import { SecondaryAPIConfig } from './zhaixinglouStore';
-import { CharacterProfile, UserProfile } from '../../types';
+import { CharacterProfile,UserProfile } from '../../types';
 import { SelectedCard } from './zhaixinglouStore';
-import { GothicHeader, GothicCornerDecor, DECOR } from './components/GothicDecorations';
-import TarotSpreadBoard, { type DrawnCardState } from './components/TarotSpreadBoard';
+import { GothicHeader,GothicCornerDecor,DECOR } from './components/GothicDecorations';
+import TarotSpreadBoard,{ type DrawnCardState } from './components/TarotSpreadBoard';
 import SpreadSelector from './components/SpreadSelector';
 import HistoryDrawer from './components/HistoryDrawer';
 

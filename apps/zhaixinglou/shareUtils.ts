@@ -10,7 +10,7 @@
  * Tailwind CSS v4 使用这些函数。开发环境下 CSS 以 <style> 标签形式存在，
  * 生产构建下 CSS 被打包为外部 <link> 文件。两种情况都需要处理。
  */
-import html2canvas from 'html2canvas';
+import { loadHtml2Canvas } from '../../utils/lazyThirdParty';
 
 // ─── 段落拆分 ───
 
@@ -78,6 +78,7 @@ export async function exportShareCard(cardElement: HTMLElement): Promise<Blob> {
     await document.fonts.ready;
     // 等一帧让布局稳定（getBoundingClientRect 准确）
     await new Promise(r => requestAnimationFrame(() => setTimeout(r, 100)));
+    const html2canvas = await loadHtml2Canvas();
 
     const elW = cardElement.scrollWidth;
     const elH = cardElement.scrollHeight;

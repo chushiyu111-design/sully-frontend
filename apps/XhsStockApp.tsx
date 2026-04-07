@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React,{ useState,useEffect,useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { XhsStockImage } from '../types';

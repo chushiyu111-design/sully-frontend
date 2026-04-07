@@ -7,17 +7,17 @@
  *   - TarotSpreadBoard — card layout + oracle (shared with StarMirror)
  *   - TarotReading — AI reading chat (post-reveal)
  */
-import React, { useMemo, useState, useCallback } from 'react';
-import { calcCelestialEvents, formatEphemerisForPrompt } from './astroCalc';
-import type { CelestialEvents, TransitHit } from './astroCalc';
-import { SPREADS, drawCards, CARD_BACK_USER } from './tarotData';
+import React,{ useMemo,useState,useCallback } from 'react';
+import { calcCelestialEvents,formatEphemerisForPrompt } from './astroCalc';
+import type { CelestialEvents,TransitHit } from './astroCalc';
+import { SPREADS,drawCards,CARD_BACK_USER } from './tarotData';
 import type { SpreadDef } from './tarotData';
 import { buildEphemerisReadingPrompt } from './divinationPrompts';
 import type { DrawnCardInfo } from './divinationPrompts';
-import type { SecondaryAPIConfig, SelectedCard } from './zhaixinglouStore';
-import TarotReading, { type TarotDrawnCard } from './TarotReading';
-import { GothicHeader, GothicDivider, GothicCornerDecor, DECOR } from './components/GothicDecorations';
-import TarotSpreadBoard, { type DrawnCardState } from './components/TarotSpreadBoard';
+import type { SecondaryAPIConfig,SelectedCard } from './zhaixinglouStore';
+import TarotReading,{ type TarotDrawnCard } from './TarotReading';
+import { GothicHeader,GothicDivider,GothicCornerDecor,DECOR } from './components/GothicDecorations';
+import TarotSpreadBoard,{ type DrawnCardState } from './components/TarotSpreadBoard';
 import MoonPhaseHero from './components/MoonPhaseHero';
 import CelestialDashboard from './components/CelestialDashboard';
 

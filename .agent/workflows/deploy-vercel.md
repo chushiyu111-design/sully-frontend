@@ -1,34 +1,33 @@
 ---
-description: 强制发布项目到 Vercel (含 Beta 和 正式服) 的标准流程
+description: 已弃用的 Vercel 部署历史说明
 ---
 
-由于本项目配置了特殊的 `vercel.json`，且很容易被 Vercel 的 "Ignored Build Step" 或缓存拦截，**所有 AI 助手（包括你在内）在完成代码修改后，如果用户要求“推送更新”或“发版”，请严格按照以下步骤使用 Vercel CLI 强制发布**，不要仅依赖 `git push`。
+# 已弃用：不要再用 Vercel 发布当前前端
 
-### 1. 发布到 Beta 测试环境
-（Beta 环境使用独立的 `project.json.beta` 配置别名）
-如果当前位于 `feature/voice-input-beta` 分支，请直接运行以下命令强制发布：
+本文件只作为历史说明保留，避免把旧的 Vercel 配置误认为现行部署入口。
 
-```powershell
-// turbo-all
-Copy-Item .vercel\project.json .vercel\project.json.bak -Force
-Copy-Item .vercel\project.json.beta .vercel\project.json -Force
-npx vercel --prod --force --yes
-Copy-Item .vercel\project.json.bak .vercel\project.json -Force
-```
+## 当前事实
 
-### 2. 发布到 Production 正式环境
-发布正式环境需要将代码合并至 `main` 分支。请依次运行以下命令：
+- 当前前端测试/正式环境都部署到 **Cloudflare Pages**
+- 当前后端部署到 **Cloudflare Workers**
+- 当前测试链接是固定别名 `https://beta.sully-frontend.pages.dev`
+- 当前生产链接是 `https://sully-frontend.pages.dev`
 
-```powershell
-// turbo-all
-git checkout main
-git merge feature/voice-input-beta
-npx vercel --prod --force --yes
-git push origin main
-git checkout feature/voice-input-beta
-```
+## 不要再做的事
 
-**⚠️ 助手须知的强制准则：**
-1. **不要省略 `--force`**：绕过缓存的核心。
-2. **不要省略 `--yes`**：避免命令行弹出任何需要用户手动点击的确认选项。
-3. 请优先使用这个工作流（Workflow）执行发布操作！
+- 不要使用 `npx vercel`
+- 不要使用 `.vercel/project.json` 判断当前测试链接
+- 不要把旧的 Vercel Beta/Production workflow 当成发布标准流程
+
+## 现行入口
+
+- 测试环境：`.\deploy-beta.ps1`
+- 测试环境只做预检：`.\deploy-beta.ps1 -PrecheckOnly`
+- 正式环境：`.\deploy-prod.ps1`
+- 详细说明：查看 `.agents/workflows/deploy.md`
+
+## 为什么还保留本文件
+
+- 仓库里仍可能存在 `.vercel/` 本地残留
+- 旧对话、旧截图或旧工作记录可能仍会提到 Vercel
+- 保留一个明确的“已弃用”说明，比继续保留旧发布命令更不容易误导后续排查

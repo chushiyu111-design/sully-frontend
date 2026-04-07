@@ -1,6 +1,6 @@
 # 糯米机二改 — 项目架构文档
 
-> 最后更新：2026-04-02 · 本文档供 AI 助手和开发者参考，避免对项目结构产生错误假设。
+> 最后更新：2026-04-07 · 本文档供 AI 助手和开发者参考，避免对项目结构产生错误假设。
 
 ---
 
@@ -12,7 +12,6 @@
 糯米机二改/
 ├── SULLYTEST2/           ← 前端主工程 (PWA)
 ├── csyos-workers/        ← 后端 (Cloudflare Workers)
-├── memory-vectorizer/    ← 记忆向量化可视化工具 (独立 Vite 应用)
 ├── cloudflare-ws-proxy/  ← WebSocket 代理 (用于 MiniMax TTS)
 └── Acsus-Paws-Puffs-analyzer/  ← 独立分析工具
 ```
@@ -124,7 +123,7 @@ SULLYTEST2/
 │
 ├── components/                # 共享 UI 组件
 │   ├── PhoneShell.tsx         # 手机壳 (状态栏+导航+App路由)
-│   ├── ValentineEvent.tsx     # 情人节活动
+│   ├── ValentineEvent.tsx     # 特别时光 / 限时活动入口
 │   │
 │   ├── chat/                  # 聊天相关组件
 │   │   ├── ChatBubble.tsx         # 气泡渲染
@@ -242,7 +241,7 @@ SULLYTEST2/
 ├── public/                    # 公共文件
 ├── icons/                     # 应用图标
 │
-├── api/                       # Vercel Serverless 函数 (TTS 代理)
+├── api/                       # 历史 Vercel 代理残留（当前 Cloudflare Pages/Workers 部署不再依赖）
 │   ├── tts-proxy.ts
 │   └── tts-ws-proxy.ts
 │
@@ -330,6 +329,8 @@ graph LR
 | 运行时 | **Cloudflare Workers** |
 | 路由 | **itty-router v5** |
 | 数据库 | **Cloudflare D1** (SQLite) |
+| 向量数据库 | **Cloudflare Vectorize** (`csyos-memory-index`, BGE-M3) |
+| 消息队列 | **Cloudflare Queues** (`csyos-semantic-jobs` + `csyos-index-jobs`) |
 | 对象存储 | **Cloudflare R2** (云备份) |
 | 推送 | **Web Push** (web-push 库) |
 | 定时任务 | **Cron Triggers** (每5分钟) |
@@ -345,14 +346,17 @@ csyos-workers/
 │   │
 │   ├── routes/            # API 路由处理器
 │   │   ├── health.ts          # GET /health
-│   │   ├── memory.ts          # /api/memories — 记忆 CRUD (create/list/update/delete/stats/browse/headers)
+│   │   ├── memory.ts          # /api/memories — 记忆 CRUD + retired hormone backfill tombstone
 │   │   ├── retrieval.ts       # /api/retrieval/search — 向量检索 + Rerank
 │   │   ├── extraction.ts      # /api/extraction/extract — LLM 记忆提取
 │   │   ├── graph.ts           # /api/graph — 关系图谱 (语义关联/backfill/导入导出)
 │   │   ├── sync.ts            # /api/sync — 双向同步 (push/pull)
 │   │   ├── agent.ts           # /api/agent — 自主体 (start/stop/status/config/stream)
 │   │   ├── distillation.ts    # /api/distillation — 记忆蒸馏 (L0→L1 聚合)
-│   │   ├── chains.ts          # /api/chains — 记忆链 (rebuild/list)
+│   │   ├── hormoneJobs.ts     # /api/memories/backfill-hormones/jobs — 激素回填异步任务
+│   │   ├── semanticJobs.ts    # /api/semantic/jobs — 语义任务状态 / 取消
+│   │   ├── semanticRebuild.ts # /api/semantic/rebuild — 语义重建入口
+│   │   ├── jobRouteErrors.ts  # 任务路由错误响应辅助
 │   │   ├── push.ts            # /api/push — Web Push (subscribe/unsubscribe/test)
 │   │   ├── backup.ts          # /api/backup — 云备份 (R2 上传/下载/列表/删除)
 │   │   ├── hotlist.ts         # /api/public/hotlist — 公共热搜 (无鉴权)
@@ -360,11 +364,20 @@ csyos-workers/
 │   │
 │   ├── services/          # 业务逻辑
 │   │   ├── agentEngine.ts     # Agent 引擎 (Cron tick + LLM 决策 + 消息生成)
-│   │   ├── embedding.ts       # Embedding 服务 (代理调用用户API)
-│   │   └── pushService.ts     # 推送通知服务
+│   │   ├── embedding.ts       # Embedding 服务 (代理调用用户API + IDF/keyword/rerank)
+│   │   ├── hormoneMemory.ts   # 激素-记忆关联服务
+│   │   ├── lifeStreamService.ts # LifeStream 碎片生成
+│   │   ├── pushService.ts     # 推送通知服务
+│   │   ├── semanticInvalidation.ts # 语义失效检测
+│   │   └── vectorIndex.ts     # Vectorize 索引管理 (D1↔Vectorize 同步)
+│   │
+│   ├── consumers/         # Queue 消费者
+│   │   ├── semanticConsumer.ts # 语义任务处理 (semantic-rebuild)
+│   │   ├── indexConsumer.ts    # 向量索引任务处理 (index-memory)
+│   │   └── hormoneConsumer.ts  # 激素回填任务处理 (hormone-memory-item)
 │   │
 │   └── db/
-│       └── schema.sql         # D1 建表语句
+│       └── schema.sql         # D1 建表语句 (7 核心表 + 2 语义任务表)
 │
 ├── wrangler.toml          # Workers 配置 (bindings/cron/secrets)
 └── package.json
@@ -389,7 +402,12 @@ csyos-workers/
 |---|---|---|
 | `DB` | D1 | `csyos-db` |
 | `BACKUP_BUCKET` | R2 | `csyos-backups` |
-| `API_SECRET` | Var | `csyos_k7m2x9f4p1w8v3` |
+| `LEGACY_VECTOR_INDEX` | Vectorize | `csyos-memory-index` |
+| `VECTOR_INDEX` | Vectorize | `csyos-memory-index-v2` |
+| `SEMANTIC_QUEUE` | Queue | `csyos-semantic-jobs` |
+| `INDEX_QUEUE` | Queue | `csyos-index-jobs` |
+| `HORMONE_QUEUE` | Queue | `csyos-hormone-jobs` |
+| `API_SECRET` | Secret | `set-via-wrangler-secret` |
 | `VAPID_*` | Var | Web Push 密钥对 |
 
 ### 3.5 鉴权机制
@@ -420,7 +438,7 @@ csyos-workers/
 ### 4.2 请求头结构 (buildHeaders)
 
 ```
-Authorization: Bearer csyos_k7m2x9f4p1w8v3
+Authorization: Bearer <set-via-env-or-local-override>
 X-User-Id: csy-{uuid}
 X-Embedding-Key: ...        ← 用户自有 API Key
 X-Embedding-Provider: ...
@@ -458,23 +476,40 @@ X-Rerank-Key: ...            ← Cohere Rerank
 
 ```
 对话结束 → vectorMemoryExtractor (LLM 提取摘要)
-         → Embedding 向量化
+         → Embedding 向量化 (BGE-M3)
          → 本地 IndexedDB 存储
          → backendClient.pushMemories → D1 云端存储
+         → INDEX_QUEUE → Vectorize 索引 (vectorIndex.ts)
          → graph.backfillSemantic → 语义关联图谱
-         → distillation.run → L1 蒸馏
+         → distillation.run → L1 蒸馏 (多条 L0 → 1 条 L1)
 ```
 
-### 5.3 检索流水线
+### 5.3 检索流水线 (后端 5 阶段)
 
 ```
-新消息 → backendClient.tryBackendRetrieval
-       → routes/retrieval.ts
-       → Embedding query 向量
-       → 余弦相似度排序
-       → Cohere Rerank (可选)
-       → 返回 Top-K 记忆
-       → 注入到 system prompt
+新消息 → backendClient.tryBackendRetrieval → routes/retrieval.ts
+
+  Stage 1: Keyword Pre-filter
+    → IDF 加权关键词匹配 → 筛选词法候选池 (30-50 条)
+
+  Stage 2: Dense Recall
+    → Vectorize.query(top-40) + 词法候选合并 (上限 120 条)
+    → 加载完整记忆数据 (含 vector/hormoneSnapshot)
+
+  Stage 3: Rerank
+    → Cohere cross-encoder 重排序 (top-15 候选)
+    → score = rerank×0.5 + weighted×0.5
+
+  Stage 4: DPP 多样性选择
+    → 行列式点过程选择 (去重阈值 0.92)
+    → 最多 12 条 L0 + 2 条 L1
+
+  Stage 5: Graph Expansion
+    → 1-hop 语义邻居 (memory_relations, 排除 temporal_adjacent)
+    → 低阈值 0.30 + 重新 DPP
+    → Lexical-only 回退补充 (最多 4 条)
+
+  → 格式化输出 → 注入到 system prompt
 ```
 
 ---
@@ -485,9 +520,9 @@ X-Rerank-Key: ...            ← Cohere Rerank
 
 MiniMax TTS WebSocket 代理，解决跨域问题。
 
-### 6.2 memory-vectorizer
+### 6.2 Acsus-Paws-Puffs-analyzer
 
-独立的 Vite+React 应用，用于可视化记忆向量分布和调试。
+独立分析/扩展项目，不在当前主产品运行链里。
 
 ---
 
@@ -525,6 +560,6 @@ graph TB
 2. **后端所有 SQL 必须带 `WHERE user_id = ?`** — 保证用户隔离
 3. **后端不存储 API Key** — 仅从 header 透传
 4. **类型定义在 `types/` 目录** — barrel 导出，`import { X } from '../types'`
-5. **前端入口是 `App.tsx`** — 不是 `src/App.tsx`（src 目录仅存放 memory-vectorizer 的遗留资产）
+5. **前端入口是 `App.tsx`** — 不是 `src/App.tsx`（`src/` 目录当前只剩 assets 残留，不是主源码树）
 6. **每个 App 对应 `apps/` 下的一个文件或子目录**
 7. **IndexedDB store 定义在 `utils/db/core.ts`** — 修改需要 bump `DB_VERSION`

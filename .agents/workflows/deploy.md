@@ -1,60 +1,75 @@
 ---
-description: 部署到正式/测试环境
+description: 部署到正式/测试环境 (Cloudflare Pages + Workers)
 ---
 
-# 部署链接与分支对应关系
+# 部署链接与环境
 
-| 环境 | 链接 | 部署方式 | Vercel 项目 |
-|------|------|----------|------------|
-| 🟢 正式环境 | https://sullytest-2-delta.vercel.app/ | Git 推送 `main` 分支（自动部署） | `sullytest-2` |
-| 🟡 测试环境 | https://sullytest-beta.vercel.app/ | CLI 手动部署（`vercel --prod`） | `sullytest-beta` |
+| 环境 | 前端 URL | 后端 URL | 部署方式 |
+|------|----------|----------|----------|
+| 🟢 正式 | `https://sully-frontend.pages.dev` | `https://chushiyu.de5.net` | `deploy-prod.ps1` (手动确认) |
+| 🟡 测试 | `https://beta.sully-frontend.pages.dev` | `https://csyos-backend-staging.sully-tts-proxy.workers.dev` | `deploy-beta.ps1` |
 
 > [!IMPORTANT]
-> - **正式环境**：只通过 Git 推送到 `main` 分支触发自动部署，**不要用 CLI 部署正式环境**
-> - **测试环境**：故意断开了 Git 连接，只通过 CLI 手动部署
-> - `.vercel/project.json` 必须始终指向 `sullytest-beta`（测试项目），确保 CLI 只能部署到测试环境
+> - 前端部署已从 Vercel 迁移到 **Cloudflare Pages**
+> - 后端部署通过 **Wrangler** 到 Cloudflare Workers
+> - 测试环境 URL 是固定的（`beta.` 前缀），不是随机生成的
+> - `beta.sully-frontend.pages.dev` 是唯一的测试链接；随机的 `*.sully-frontend.pages.dev` 仅用于确认最近一次 preview 部署
+> - `.vercel/` 和旧的 Vercel workflow 仅作历史残留保留，**不要**再把它们当成现行部署入口
 
-# 部署到测试环境（CLI）
-
-用户说"部署到测试/beta"时执行以下步骤：
-
-// turbo-all
-
-1. 确保代码已提交
-2. 本地构建
-```bash
-npx vite build
-```
-3. CLI 部署到测试环境
-```bash
-npx -y vercel --prod
-```
-4. 部署完成后验证：https://sullytest-beta.vercel.app/
-
-# 部署到正式环境（Git）
-
-用户说"部署到正式/上线"时执行以下步骤：
+# 部署到测试环境
 
 // turbo-all
 
-1. 确保代码已提交到当前分支
-2. 切换到 main 分支并合并
-```bash
-git checkout main
-git merge <当前分支> --no-edit
+1. 部署后端 staging Worker
+```powershell
+cd c:\Users\ASUS\Desktop\糯米机二改\csyos-workers
+npm run deploy:staging
 ```
-3. 推送到远程，Vercel 会自动构建并部署
-```bash
-git push origin main
+
+2. 部署前端 beta Pages
+```powershell
+cd c:\Users\ASUS\Desktop\糯米机二改\SULLYTEST2
+.\deploy-beta.ps1
 ```
-4. 切回开发分支
-```bash
-git checkout <开发分支>
+
+3. 如需只做诊断预检（不部署）
+```powershell
+cd c:\Users\ASUS\Desktop\糯米机二改\SULLYTEST2
+.\deploy-beta.ps1 -PrecheckOnly
 ```
-5. 部署完成后验证：https://sullytest-2-delta.vercel.app/
+
+4. 验证：打开 `https://beta.sully-frontend.pages.dev`
+   - 部署脚本成功后会同时打印固定 beta URL 和最近一次 preview URL
+   - 如果随机 preview URL 已更新而固定 beta URL 还没切换，稍等片刻后刷新即可
+
+# 部署到正式环境
+
+1. 确保 staging 已验证通过
+2. 部署后端 production Worker
+```powershell
+cd c:\Users\ASUS\Desktop\糯米机二改\csyos-workers
+npm run deploy:prod
+```
+
+3. 部署前端 production Pages（需输入 YES 确认）
+```powershell
+cd c:\Users\ASUS\Desktop\糯米机二改\SULLYTEST2
+.\deploy-prod.ps1
+```
+
+4. 验证：打开 `https://sully-frontend.pages.dev`
+
+# 环境变量文件
+
+| 文件 | 对应环境 | 构建命令 |
+|------|----------|----------|
+| `.env.staging.local` | staging/beta | `npm run build -- --mode staging` |
+| `.env.production.local` | production | `npm run build -- --mode production` |
+| `.env.local` | 本地 dev | `npm run dev` |
 
 # 注意事项
 
-- `.vercel/project.json` 指向 `sullytest-beta`（测试），**绝对不要改成 `sullytest-2`**
-- 正式环境不需要也不应该用 CLI 部署
-- 测试环境不连 Git，防止意外自动部署
+- 测试和正式环境各自有独立的 D1 / R2 / Queue / Vectorize 资源
+- `deploy-prod.ps1` 会在执行前要求手动输入 `YES` 确认
+- 后端 secrets (`API_SECRET` / `VAPID_PRIVATE_KEY`) 通过 `wrangler secret put` 管理
+- 如果命令显示“build failed”，先确认当前目录是 `SULLYTEST2`，再区分是预检阶段失败还是实际 deploy 阶段失败

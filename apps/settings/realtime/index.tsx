@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
+import React,{ useState } from 'react';
 import { useOS } from '../../../context/OSContext';
 import Modal from '../../../components/os/Modal';
-import { WeatherSection, NewsSection, HotSearchSection, NotionSection, FeishuSection, XhsMcpSection } from './sections';
+import { WeatherSection,NewsSection,HotSearchSection,NotionSection,FeishuSection,XhsMcpSection } from './sections';
 
 const RealtimeSettings: React.FC = () => {
     const { realtimeConfig, updateRealtimeConfig, addToast } = useOS();

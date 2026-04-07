@@ -1,14 +1,14 @@
 
-import React, { useState, useRef } from 'react';
+import React,{ useState,useRef } from 'react';
 import { useOS } from '../../context/OSContext';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Filesystem,Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import Modal from '../../components/os/Modal';
 import CloudBackupPanel from './CloudBackupPanel';
 
 const DataSettings: React.FC = () => {
-    const { exportSystem, importSystem, addToast, resetSystem, sysOperation } = useOS();
+    const { exportSystem, importSystem, addToast, resetSystem } = useOS();
 
     const [showExportModal, setShowExportModal] = useState(false);
     const [showResetConfirm, setShowResetConfirm] = useState(false);

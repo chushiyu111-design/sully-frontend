@@ -1,48 +1,19 @@
 /**
  * Embedding API Service (Multi-provider)
- * 
- * Supports two provider modes:
- *   1. OpenAI-compatible (default) — SiliconFlow, OpenAI, 智谱, Jina, etc.
- *   2. Cohere — embed-v4.0 with search_document/search_query input types
- * 
- * Config stored in localStorage:
- *   - embedding_provider   ('openai' | 'cohere', default: 'openai')
- *   - embedding_api_key
- *   - embedding_base_url   (default depends on provider)
- *   - embedding_model      (default depends on provider)
+ *
+ * Runtime config is normalized in runtimeConfig.ts so tools no longer read
+ * storage keys directly.
  */
 
-export type EmbeddingProvider = 'openai' | 'cohere';
+export {
+    EMBEDDING_ENGINES,
+    getEmbeddingConfig,
+    inferEmbeddingEngineId,
+    type EmbeddingEngineId,
+    type EmbeddingProvider,
+} from './runtimeConfig';
 
-const DEFAULTS: Record<EmbeddingProvider, { baseUrl: string; model: string; rerankModel: string }> = {
-    openai: {
-        baseUrl: 'https://api.siliconflow.cn/v1',
-        model: 'BAAI/bge-m3',
-        rerankModel: 'BAAI/bge-reranker-v2-m3',
-    },
-    cohere: {
-        baseUrl: 'https://api.cohere.com/v2',
-        model: 'embed-v4.0',
-        rerankModel: 'rerank-v3.5',
-    },
-};
-
-/** Read config from localStorage with provider-aware defaults */
-export function getEmbeddingConfig() {
-    const provider = (localStorage.getItem('embedding_provider') || 'openai') as EmbeddingProvider;
-    const defaults = DEFAULTS[provider] || DEFAULTS.openai;
-    return {
-        provider,
-        apiKey: localStorage.getItem('embedding_api_key') || '',
-        baseUrl: localStorage.getItem('embedding_base_url') || defaults.baseUrl,
-        model: localStorage.getItem('embedding_model') || defaults.model,
-        rerankModel: defaults.rerankModel,
-        // Cohere dual-key: Trial Key for rerank (free, limited)
-        rerankApiKey: localStorage.getItem('cohere_rerank_api_key') || '',
-        // Whether the user has confirmed switching to paid rerank
-        rerankUsePaid: localStorage.getItem('cohere_rerank_use_paid') === 'true',
-    };
-}
+import { getEmbeddingConfig } from './runtimeConfig';
 
 const MAX_RETRIES = 2;
 const RETRY_DELAYS = [5000, 10000]; // 5s, then 10s
@@ -163,6 +134,7 @@ export const EmbeddingService = {
             model: config.model,
             input: text,
             encoding_format: 'float',
+            ...(typeof config.dimensions === 'number' ? { dimensions: config.dimensions } : {}),
         });
 
         const data = await fetchWithRetry(`${baseUrl}/embeddings`, apiKey, body);
@@ -197,6 +169,7 @@ export const EmbeddingService = {
             model: config.model,
             input: texts,
             encoding_format: 'float',
+            ...(typeof config.dimensions === 'number' ? { dimensions: config.dimensions } : {}),
         });
 
         const data = await fetchWithRetry(`${baseUrl}/embeddings`, apiKey, body);

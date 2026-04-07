@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import type { TtsFormState } from '../tts/useTtsForm';
+import React,{ useState } from 'react';
+import { buildBackendUrl } from '../../../utils/backendClient';
 
 interface WeatherProps {
     enabled: boolean; apiKey: string; city: string;
@@ -71,7 +71,7 @@ export const HotSearchSection = React.memo<HotSearchProps>(({ enabled, set }) =>
     const testHotSearch = async () => {
         setTestStatus('正在测试...');
         try {
-            const res = await fetch('https://chushiyu.de5.net/api/public/hotlist?type=wbHot');
+            const res = await fetch(buildBackendUrl('/api/public/hotlist', { type: 'wbHot' }));
             if (res.ok) {
                 const json = await res.json() as any;
                 if (json.success && json.data?.length > 0) {

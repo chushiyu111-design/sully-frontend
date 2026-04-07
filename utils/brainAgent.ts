@@ -272,7 +272,7 @@ export class BrainAgent {
   /**
    * 生成即时反馈
    */
-  private generateAcknowledgment(task: BrainTask): string {
+  private generateAcknowledgment(_task: BrainTask): string {
     const acks = [
       '好嘞，我去搞定它~',
       '交给我吧！',

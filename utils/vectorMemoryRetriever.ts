@@ -1,20 +1,16 @@
 /**
  * Vector Memory Retriever — Hybrid Read Path (v2)
  * 
- * Improvements over v1:
- *   1. LLM Query Rewriting — uses Qwen3-8B (free, SiliconFlow) to distill
- *      conversational context into a focused retrieval query.
- *      Falls back to rule-based cleanup if LLM call fails/times out.
- *   2. Dynamic TOP_K — adjusts K based on top-1 similarity.
- *   3. IDF-weighted keywords — rare words (names, places) score higher.
- *   4. Tiered time window — candidates filtered by keyword strength × recency.
- *   5. Expanded temporal intent — absolute dates, frequency queries.
+ * Features:
+ *   1. Dynamic TOP_K — adjusts K based on top-1 similarity.
+ *   2. IDF-weighted keywords — rare words (names, places) score higher.
+ *   3. Tiered time window — candidates filtered by keyword strength × recency.
+ *   4. Expanded temporal intent — absolute dates, frequency queries.
  * 
  * Two-stage retrieval combining Dense (vector) + Sparse (keyword) signals:
  * 
- * Stage 0 — Query Rewriting (1 lightweight LLM call, 3s timeout):
- *   Rewrite raw conversation into a focused retrieval query.
- *   Fallback: rule-based cleanup (strip RP actions, user-only).
+ * Stage 0 — Query Building (rule-based):
+ *   Strip RP actions, keep user messages as retrieval query.
  * 
  * Stage 1 — Keyword Pre-filter (no API call, no vectors loaded):
  *   Load lightweight headers → IDF-weighted keyword score → tiered candidate selection
@@ -27,15 +23,14 @@
  *   rawSim >= 0.35 OR kwScore >= 0.5 → allows keyword-rescued memories
  */
 
-import { Message, VectorMemory, APIConfig, InternalState } from '../types';
-import { EmbeddingService, getEmbeddingConfig, segmentWords } from './embeddingService';
+import { Message,VectorMemory,APIConfig,InternalState } from '../types';
+import { EmbeddingService,segmentWords } from './embeddingService';
 import { DB } from './db';
 import { parseDateExpression } from './parseDateExpression';
-import { extractHormoneSnapshot, hormoneResonance as computeHormoneResonance } from './hormoneDynamics';
+import { extractHormoneSnapshot,hormoneResonance as computeHormoneResonance } from './hormoneDynamics';
 import { tryBackendRetrieval } from './backendClient';
 
-const QUERY_REWRITE_MODEL = 'Qwen/Qwen3-8B';
-const QUERY_REWRITE_TIMEOUT_MS = 5000;
+
 
 const MIN_RAW_SIMILARITY = 0.35;
 const MIN_KEYWORD_SCORE = 0.5;      // Keyword-only rescue threshold
@@ -62,154 +57,6 @@ function detectTemporalIntent(query: string): TemporalIntent {
     if (dateRange) return { type: 'absolute', start: dateRange.start, end: dateRange.end };
 
     return null;
-}
-
-// ====== LLM Query Rewriting ======
-
-const REWRITE_PROMPT_TEMPLATE = `你是一个记忆检索助手。根据以下对话上下文，提取用户当前最可能想了解或回忆的话题，生成一段精简的检索查询（30字以内）。
-
-【概念展开规则】
-对话中出现具体事物时，必须同时写出它的上位类别词，用空格分隔。这是为了让检索能命中更广泛的相关记忆。
-举例：
-- 用户提到"萨摩耶" → 查询写"萨摩耶 狗 宠物"
-- 用户提到"星巴克" → 查询写"星巴克 咖啡"
-- 用户提到"小米SU7" → 查询写"小米SU7 汽车 车"
-- 用户提到"三体" → 查询写"三体 小说 科幻"
-- 用户提到某人昵称 → 同时写出可能的全名或称呼
-- 用户提到"寿司" → 查询写"寿司 日料 吃饭"
-如果没有需要展开的具体事物，正常提取话题即可。
-
-只输出查询文本，不要加任何解释、引号或标点修饰。
-
-对话上下文：
-{context}`;
-
-/**
- * Rewrite conversational context into a focused retrieval query.
- * Uses a lightweight free LLM call with 3s timeout.
- * 
- * Provider routing:
- *   - OpenAI-compatible: uses embedding key + SiliconFlow endpoint (Qwen3-8B)
- *   - Cohere: embedding key can't call LLM, so fallback to:
- *       1. SiliconFlow STT key → Qwen3-8B (free, unlimited)
- *       2. Groq STT key → llama-3.3-70b-versatile (free, generous limits)
- *       3. null (rule-based fallback)
- * 
- * Returns null on failure (caller should fallback).
- */
-async function rewriteQueryWithLLM(
-    contextMsgs: Message[],
-    embeddingApiKey: string
-): Promise<string | null> {
-    const config = getEmbeddingConfig();
-
-    // Determine which LLM endpoint + key to use for query rewrite
-    let rewriteBaseUrl: string;
-    let rewriteApiKey: string;
-    let rewriteModel: string;
-
-    if (config.provider === 'cohere') {
-        // Cohere key can't call chat/completions — try STT keys instead
-        let sttSiliconKey = '';
-        let sttGroqKey = '';
-        try {
-            const sttRaw = localStorage.getItem('os_stt_config');
-            if (sttRaw) {
-                const sttCfg = JSON.parse(sttRaw);
-                sttSiliconKey = sttCfg.siliconflowApiKey || '';
-                sttGroqKey = sttCfg.groqApiKey || '';
-            }
-        } catch { /* silent */ }
-
-        if (sttSiliconKey) {
-            // Best: SiliconFlow Qwen3-8B — completely free, no monthly limit
-            rewriteBaseUrl = 'https://api.siliconflow.cn/v1';
-            rewriteApiKey = sttSiliconKey;
-            rewriteModel = QUERY_REWRITE_MODEL; // Qwen/Qwen3-8B
-            console.log('🧠 [VectorRetriever] Cohere mode: using SiliconFlow STT key for query rewrite');
-        } else if (sttGroqKey) {
-            // Fallback: Groq Llama — free with generous limits
-            rewriteBaseUrl = 'https://api.groq.com/openai/v1';
-            rewriteApiKey = sttGroqKey;
-            rewriteModel = 'llama-3.3-70b-versatile';
-            console.log('🧠 [VectorRetriever] Cohere mode: using Groq STT key for query rewrite');
-        } else {
-            // No free LLM key available — fall back to rule-based
-            console.log('🧠 [VectorRetriever] Cohere mode: no STT key found, using rule-based fallback');
-            return null;
-        }
-    } else {
-        // OpenAI-compatible: use embedding key + same base URL (SiliconFlow)
-        rewriteBaseUrl = config.baseUrl.replace(/\/+$/, '');
-        rewriteApiKey = embeddingApiKey;
-        rewriteModel = QUERY_REWRITE_MODEL;
-    }
-
-    // Build context: last 1 assistant + last 2 user messages
-    const contextLines: string[] = [];
-    const reversed = [...contextMsgs].reverse();
-    let userCount = 0;
-    let assistantCount = 0;
-    for (const m of reversed) {
-        if (m.role === 'user' && userCount < 2) {
-            contextLines.unshift(`用户: ${stripRPActions(m.content).slice(0, 200)}`);
-            userCount++;
-        } else if (m.role === 'assistant' && assistantCount < 1) {
-            contextLines.unshift(`角色: ${stripRPActions(m.content).slice(0, 150)}`);
-            assistantCount++;
-        }
-        if (userCount >= 2 && assistantCount >= 1) break;
-    }
-
-    if (contextLines.length === 0) return null;
-
-    const prompt = REWRITE_PROMPT_TEMPLATE.replace('{context}', contextLines.join('\n'));
-
-    // AbortController for timeout
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), QUERY_REWRITE_TIMEOUT_MS);
-
-    try {
-        const resp = await fetch(`${rewriteBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${rewriteApiKey}`,
-            },
-            body: JSON.stringify({
-                model: rewriteModel,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: 0.3,
-                max_tokens: 200,
-            }),
-            signal: controller.signal,
-        });
-
-        if (!resp.ok) {
-            console.warn(`🧠 [VectorRetriever] Query rewrite LLM error ${resp.status}, falling back`);
-            return null;
-        }
-
-        const data = await resp.json();
-        let rewritten = (data.choices?.[0]?.message?.content || '').trim();
-
-        // Strip any <think>...</think> tags from reasoning models
-        rewritten = rewritten.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-        if (!rewritten || rewritten.length < 2 || rewritten.length > 200) return null;
-
-        console.log(`🧠 [VectorRetriever] Rewritten query: "${rewritten}"`);
-        return rewritten;
-    } catch (err: any) {
-        if (err.name === 'AbortError') {
-            console.warn(`🧠 [VectorRetriever] Query rewrite timed out (${QUERY_REWRITE_TIMEOUT_MS}ms), falling back`);
-        } else {
-            console.warn('🧠 [VectorRetriever] Query rewrite failed, falling back:', err.message);
-        }
-        return null;
-    } finally {
-        clearTimeout(timer);
-    }
 }
 
 /**

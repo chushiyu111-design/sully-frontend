@@ -1,10 +1,32 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { MemoryFragment, CharacterProfile, VectorMemory, Message } from '../../types';
+import React,{ useState,useMemo,useRef,useEffect } from 'react';
+import { MemoryFragment,CharacterProfile,VectorMemory,Message } from '../../types';
 import Modal from '../os/Modal';
 import { DEFAULT_REFINE_PROMPTS } from '../../constants/archivePrompts';
 import { DB } from '../../utils/db';
 import { VectorMemoryExtractor } from '../../utils/vectorMemoryExtractor';
-import { EmbeddingService, getEmbeddingConfig } from '../../utils/embeddingService';
+import { EmbeddingService,getEmbeddingConfig } from '../../utils/embeddingService';
+import {
+  clearCloudMemories,
+  cancelHormoneBackfillJob,
+  createHormoneBackfillJob,
+  deleteCloudMemory,
+  getHormoneBackfillJob,
+  pullMemories,
+  pushMemories,
+  type CloudHormoneBackfillItem,
+} from '../../utils/backendClient';
+import {
+    getCharacterRefinePrompts,
+    getSecondaryApiConfig,
+    hasCloudSyncTarget,
+} from '../../utils/runtimeConfig';
+import { runHormoneBackfillJobFlow } from './memoryCenterBackfill';
+import {
+    clearVectorMemoriesManaged,
+    deleteVectorMemoryManaged,
+    refreshVectorMemoryCache,
+    upsertVectorMemoriesManaged,
+} from './memoryCenterActions';
 
 interface MemoryCenterProps {
     // Traditional Memory Props
@@ -120,13 +142,9 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
     // Initial Loads
     useEffect(() => {
-        const savedPrompts = localStorage.getItem('character_refine_prompts');
-        if (savedPrompts) {
-            try {
-                const parsed = JSON.parse(savedPrompts);
-                const merged = [...DEFAULT_REFINE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('refine_'))];
-                setArchivePrompts(merged);
-            } catch (e) { }
+        const savedPrompts = getCharacterRefinePrompts();
+        if (savedPrompts.length > 0) {
+            setArchivePrompts([...DEFAULT_REFINE_PROMPTS, ...savedPrompts]);
         }
     }, []);
 
@@ -141,11 +159,75 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
         }
     }, [formData?.id, formData?.vectorMemoryEnabled]);
 
-    const refreshVmList = async () => {
-        if (!formData?.id) return;
-        const mems = await DB.getAllVectorMemories(formData.id);
-        setVmList(mems);
-        setVmCount(mems.length);
+    const memoryActionDeps = {
+        pullCloudMemories: pullMemories,
+        replaceLocalMemories: DB.replaceVectorMemories,
+        listLocalMemories: DB.getAllVectorMemories,
+        saveLocalMemory: DB.saveVectorMemory,
+        deleteLocalMemory: DB.deleteVectorMemory,
+        clearLocalMemories: DB.clearVectorMemories,
+        deleteCloudMemory,
+        clearCloudMemories,
+        pushCloudMemories: pushMemories,
+    };
+
+    const refreshVmState = async (): Promise<{
+        memories: VectorMemory[];
+        source: 'cloud' | 'local';
+    }> => {
+        if (!formData?.id) {
+            return {
+                memories: [],
+                source: 'local',
+            };
+        }
+        const refreshed = await refreshVectorMemoryCache(formData.id, memoryActionDeps);
+        setVmList(refreshed.memories);
+        setVmCount(refreshed.memories.length);
+        return refreshed;
+    };
+
+    const refreshVmList = async (): Promise<VectorMemory[]> => {
+        const refreshed = await refreshVmState();
+        return refreshed.memories;
+    };
+
+    const listNeedHormoneBackfill = (memories: VectorMemory[]) => (
+        memories.filter(m => !m.hormoneSnapshot && m.sourceMessageIds && m.sourceMessageIds.length > 0)
+    );
+
+    const countHormoneSnapshots = (memories: VectorMemory[]): number => (
+        memories.filter((memory) => Boolean(memory.hormoneSnapshot)).length
+    );
+
+    const syncHormoneProgressFromCloud = async (): Promise<{
+        latestVmList: VectorMemory[];
+        syncedCount: number;
+        syncError?: string;
+    }> => {
+        if (!formData?.id) {
+            return { latestVmList: vmList, syncedCount: 0, syncError: 'missing_character_id' };
+        }
+
+        try {
+            const localBefore = await DB.getAllVectorMemories(formData.id).catch(() => vmList);
+            const refreshed = await refreshVmState();
+            return {
+                latestVmList: refreshed.memories,
+                syncedCount: Math.max(0, countHormoneSnapshots(refreshed.memories) - countHormoneSnapshots(localBefore)),
+                syncError: refreshed.source === 'local'
+                    ? 'Failed to refresh cloud hormone snapshots'
+                    : undefined,
+            };
+        } catch (err: any) {
+            console.warn('[HormoneBackfill] Failed to sync cloud progress before starting:', err);
+            const latestVmList = await refreshVmList().catch(() => vmList);
+            return {
+                latestVmList,
+                syncedCount: 0,
+                syncError: err?.message || 'Failed to sync cloud hormone snapshots',
+            };
+        }
     };
 
     // --- Timeline Handlers ---
@@ -219,23 +301,27 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
     // --- Vector Handlers ---
     const handleDeleteMemory = async (id: string) => {
-        await DB.deleteVectorMemory(id);
-        setVmList(prev => prev.filter(m => m.id !== id));
-        setVmCount(prev => prev - 1);
-        addToast('已删除', 'info');
+        if (!formData?.id) return;
+
+        const result = await deleteVectorMemoryManaged(formData.id, id, memoryActionDeps);
+        setVmList(result.memories);
+        setVmCount(result.memories.length);
+        addToast(
+            result.mode === 'cloud'
+                ? '已从云端删除并刷新本地缓存'
+                : result.reason === 'local_only'
+                    ? '云端未配置，已仅在本地删除'
+                    : '后端暂不可用，已先删除本地缓存',
+            'info',
+        );
     };
 
     const handleBatchChat = async () => {
-        const embKey = localStorage.getItem('embedding_api_key');
+        const embKey = getEmbeddingConfig().apiKey;
         if (!embKey) { addToast('请先在设置中配置 Embedding API Key', 'error'); return; }
 
         // Use secondary API if configured, otherwise fall back to main API
-        const subKey = localStorage.getItem('sub_api_key');
-        const subUrl = localStorage.getItem('sub_api_base_url');
-        const subModel = localStorage.getItem('sub_api_model');
-        const extractConfig = (subKey && subUrl && subModel)
-            ? { baseUrl: subUrl, apiKey: subKey, model: subModel }
-            : apiConfig;
+        const extractConfig = getSecondaryApiConfig() || apiConfig;
 
         if (!extractConfig?.apiKey) { addToast('请先在设置中配置 API（主 API 或副 API）', 'error'); return; }
 
@@ -285,15 +371,27 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                 }
 
                 setIsBatching(true);
-                let count = 0;
-                for (const mem of data.memories) {
-                    mem.charId = formData.id; // Map to current character
-                    await DB.saveVectorMemory(mem);
-                    count++;
-                }
-                
-                addToast(`成功合入 ${count} 条外部向量记忆！`, 'success');
-                refreshVmList();
+                const importedMemories = (data.memories as VectorMemory[]).map((memory) => ({
+                    ...memory,
+                    charId: formData.id,
+                }));
+                const result = await upsertVectorMemoriesManaged(
+                    formData.id,
+                    importedMemories,
+                    hasCloudSyncTarget(),
+                    memoryActionDeps,
+                );
+
+                setVmList(result.memories);
+                setVmCount(result.memories.length);
+                addToast(
+                    result.mode === 'cloud'
+                        ? `成功合入 ${result.imported} 条外部向量记忆，并已刷新云端缓存`
+                        : result.reason === 'local_only'
+                            ? `已在本地合入 ${result.imported} 条外部向量记忆`
+                            : `后端暂不可用，已先在本地暂存 ${result.imported} 条向量记忆（待同步）`,
+                    'success',
+                );
             } catch (err) {
                 console.error(err);
                 addToast('解析导入文件失败', 'error');
@@ -306,7 +404,7 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
     };
 
     const handleImportMemories = async () => {
-        const embKey = localStorage.getItem('embedding_api_key');
+        const embKey = getEmbeddingConfig().apiKey;
         if (!embKey) { addToast('请先配置 Embedding API Key', 'error'); return; }
 
         const items: { title: string; content: string; source: string }[] = [];
@@ -321,7 +419,7 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
         setIsBatching(true);
         const config = getEmbeddingConfig();
-        let created = 0;
+        const newMemories: VectorMemory[] = [];
 
         try {
             for (let i = 0; i < items.length; i++) {
@@ -341,11 +439,26 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                     modelId: config.model,
                     source: 'import',
                 };
-                await DB.saveVectorMemory(newMem);
-                created++;
+                newMemories.push(newMem);
                 if (i < items.length - 1) await new Promise(r => setTimeout(r, 200));
             }
-            addToast(`导入完成！新创建 ${created} 条向量记忆`, 'success');
+
+            const result = await upsertVectorMemoriesManaged(
+                formData.id,
+                newMemories,
+                hasCloudSyncTarget(),
+                memoryActionDeps,
+            );
+            setVmList(result.memories);
+            setVmCount(result.memories.length);
+            addToast(
+                result.mode === 'cloud'
+                    ? `导入完成！${result.imported} 条记忆已先写入后端并刷新本地缓存`
+                    : result.reason === 'local_only'
+                        ? `导入完成！${result.imported} 条记忆已保存到本地`
+                        : `导入完成！${result.imported} 条记忆已暂存本地，等待同步到云端`,
+                'success',
+            );
         } catch (e: any) {
             addToast(`导入失败: ${e.message}`, 'error');
         } finally {
@@ -357,55 +470,174 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
     const handleClearAll = async () => {
         if (!confirm('确认清空该角色的所有向量记忆？此操作不可撤销。')) return;
-        await DB.clearVectorMemories(formData.id);
-        refreshVmList();
-        addToast('已清空所有向量记忆', 'info');
+        const result = await clearVectorMemoriesManaged(formData.id, memoryActionDeps);
+        setVmList(result.memories);
+        setVmCount(result.memories.length);
+        addToast(
+            result.mode === 'cloud'
+                ? '已先清空云端并同步刷新本地缓存'
+                : '后端暂不可用，已先清空本地缓存',
+            'info',
+        );
     };
 
     // --- 情感基因溯源 Handler ---
     const handleBackfillSnapshots = async () => {
-        const subKey = localStorage.getItem('sub_api_key');
-        const subUrl = localStorage.getItem('sub_api_base_url');
-        const subModel = localStorage.getItem('sub_api_model');
-        if (!subKey || !subUrl || !subModel) {
-            addToast('请先在副 API 设置中配置模型（用于情感基因溯源）', 'error');
-            return;
-        }
-        const subApiConfig = { baseUrl: subUrl, apiKey: subKey, model: subModel };
+        if (isBackfilling) return;
 
-        // Find memories without hormone snapshots
-        const needBackfill = vmList.filter(m => !m.hormoneSnapshot && m.sourceMessageIds && m.sourceMessageIds.length > 0);
-        if (needBackfill.length === 0) {
-            addToast('所有记忆已完成情感基因标注 ✓', 'info');
+        const subApiConfig = getSecondaryApiConfig();
+        if (!subApiConfig) {
+            addToast('Please configure the secondary API model for hormone backfill', 'error');
             return;
         }
 
         setIsBackfilling(true);
         backfillAbortRef.current = false;
-        setBackfillProgress(`准备处理 ${needBackfill.length} 条记忆...`);
+        setBackfillProgress('Syncing existing cloud progress...');
 
         try {
-            const ids = needBackfill.map(m => m.id);
-            const charName = formData.name || 'AI';
-
-            // Process in batches of 5
-            let done = 0;
-            const BATCH = 5;
-            for (let i = 0; i < ids.length; i += BATCH) {
-                if (backfillAbortRef.current) break;
-                const batch = ids.slice(i, i + BATCH);
-                await VectorMemoryExtractor.backfillNewMemories(batch, charName, subApiConfig);
-                done += batch.length;
-                setBackfillProgress(`🧬 已处理 ${done}/${needBackfill.length} 条记忆`);
+            const preflightSync = await syncHormoneProgressFromCloud();
+            const needBackfill = listNeedHormoneBackfill(preflightSync.latestVmList);
+            if (needBackfill.length === 0) {
+                addToast(
+                    preflightSync.syncedCount > 0
+                        ? `Recovered ${preflightSync.syncedCount} hormone snapshots from cloud. All memories are already up to date`
+                        : 'All memories already have hormone snapshots',
+                    'info',
+                );
+                return;
             }
 
-            if (backfillAbortRef.current) {
-                addToast(`情感基因溯源已中止（${done}/${needBackfill.length}）`, 'info');
+            const currentCharName = formData.name || 'AI';
+            const items: CloudHormoneBackfillItem[] = [];
+            let collectSkipped = 0;
+            let localRefreshError: string | null = null;
+
+            setBackfillProgress(
+                preflightSync.syncedCount > 0
+                    ? `Recovered ${preflightSync.syncedCount} cloud results, preparing ${needBackfill.length} memories...`
+                    : `Preparing ${needBackfill.length} memories...`,
+            );
+
+            for (const memory of needBackfill) {
+                if (!memory.sourceMessageIds || memory.sourceMessageIds.length === 0) {
+                    collectSkipped++;
+                    continue;
+                }
+
+                const msgs = await DB.getMessagesByIds(memory.sourceMessageIds);
+                if (msgs.length === 0) {
+                    collectSkipped++;
+                    continue;
+                }
+
+                items.push({
+                    memoryId: memory.id,
+                    referenceTimestamp: memory.createdAt,
+                    messages: msgs.map(msg => ({
+                        role: msg.role,
+                        content: msg.content,
+                        timestamp: msg.timestamp,
+                        id: msg.id,
+                    })),
+                });
+            }
+
+            if (items.length === 0) {
+                addToast(`No source messages available (${collectSkipped} skipped)`, 'info');
+                return;
+            }
+
+            setBackfillProgress(`已收集 ${items.length} 条记忆，正在提交后台任务...`);
+
+            const flowResult = await runHormoneBackfillJobFlow({
+                createJob: () => createHormoneBackfillJob(
+                    formData.id,
+                    currentCharName,
+                    items,
+                    subApiConfig,
+                ),
+                getJob: getHormoneBackfillJob,
+                cancelJob: cancelHormoneBackfillJob,
+                isCancelled: () => backfillAbortRef.current,
+                onJobAccepted: (createResult) => {
+                    setBackfillProgress(
+                        createResult.reused
+                            ? `后台已有任务进行中，已接续显示当前进度（共 ${createResult.job.totalItems} 条）`
+                            : `后台任务已提交（共 ${createResult.job.totalItems} 条）`,
+                    );
+                },
+                onJobPolled: ({ job }) => {
+                    setBackfillProgress(
+                        `已完成 ${job.completedItems}` +
+                        `${job.processingItems > 0 ? ` / 处理中 ${job.processingItems}` : ''}` +
+                        `${job.queuedItems > 0 ? ` / 排队中 ${job.queuedItems}` : ''}` +
+                        `${job.failedItems > 0 ? ` / 失败 ${job.failedItems}` : ''}` +
+                        ` / 总计 ${job.totalItems}`,
+                    );
+                },
+            });
+
+            const finalDetail = flowResult.finalDetail;
+            if (!finalDetail) {
+                throw new Error('Hormone backfill job ended without a final status');
+            }
+
+            const finalJob = finalDetail.job;
+            const failedDetail = (
+                typeof finalJob.error === 'string' && finalJob.error.trim()
+                    ? finalJob.error.trim()
+                    : finalDetail.items.find((item) => item.status === 'failed' && item.lastError)?.lastError?.trim()
+            ) || '';
+            if (finalJob.completedItems > 0) {
+                const refreshResult = await syncHormoneProgressFromCloud();
+                localRefreshError = refreshResult.syncError || null;
+            }
+
+            if (flowResult.cancelled || finalJob.status === 'cancelled') {
+                addToast(`Emotion backfill cancelled (${finalJob.completedItems} completed)`, 'info');
+            } else if (finalJob.status === 'completed') {
+                addToast(`Emotion backfill completed: ${finalJob.completedItems} memories updated`, 'success');
             } else {
-                addToast(`✨ 情感基因溯源完成！${done} 条记忆已标注`, 'success');
+                addToast(
+                    failedDetail
+                        ? `Emotion backfill failed: ${failedDetail} (${finalJob.completedItems} completed, ${finalJob.failedItems} failed)`
+                        : `Emotion backfill failed: ${finalJob.completedItems} completed, ${finalJob.failedItems} failed`,
+                    'error',
+                );
+            }
+
+            if (localRefreshError) {
+                addToast(`Emotion backfill finished on backend, but local cache refresh failed: ${localRefreshError}`, 'error');
             }
         } catch (e: any) {
-            addToast(`情感基因溯源失败: ${e.message}`, 'error');
+            const errorMessage = e?.message || 'Unknown error';
+
+            if (errorMessage === 'Failed to create hormone backfill job') {
+                setBackfillProgress('Refreshing local memories from cloud...');
+                const recoverySync = await syncHormoneProgressFromCloud();
+                const remaining = listNeedHormoneBackfill(recoverySync.latestVmList).length;
+
+                if (remaining === 0) {
+                    addToast(
+                        recoverySync.syncedCount > 0
+                            ? `Recovered ${recoverySync.syncedCount} hormone snapshots from cloud. All memories are already up to date`
+                            : 'All memories are already up to date on the backend',
+                        'info',
+                    );
+                    return;
+                }
+
+                if (recoverySync.syncedCount > 0) {
+                    addToast(
+                        `Recovered ${recoverySync.syncedCount} hormone snapshots from cloud, but ${remaining} memories still need backfill`,
+                        'info',
+                    );
+                    return;
+                }
+            }
+
+            addToast(`Emotion backfill failed: ${errorMessage}`, 'error');
         } finally {
             setIsBackfilling(false);
             setBackfillProgress('');
@@ -594,7 +826,6 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
     };
 
     const renderVectorTab = () => {
-        const windowCount = Math.max(1, Math.ceil(((parseInt(batchEnd) || 1) - (parseInt(batchStart) || 1) + 1) / 30));
         
         return (
             <div className="space-y-5 animate-fade-in relative z-0">

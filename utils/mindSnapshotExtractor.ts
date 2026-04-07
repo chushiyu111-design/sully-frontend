@@ -11,19 +11,18 @@
  *   - 激素动力学计算由 hormoneDynamics.ts 完成
  */
 
-import { CharacterProfile, InternalState, Message } from '../types';
+import { CharacterProfile,InternalState,Message } from '../types';
 import { extractJsonTyped } from './safeApi';
-import { StatusCardData, CustomStatusTemplate, SKELETON_REGISTRY } from '../types/statusCard';
+import { StatusCardData,CustomStatusTemplate,SKELETON_REGISTRY } from '../types/statusCard';
 import { DB } from './db';
 import { RealtimeContextManager } from './realtimeContext';
 import {
-    RawSenseOutput,
-    SenseDelta,
-    computeNewState,
-    resolveInternalState,
-    createBaselineState,
-    formatStateLog,
-    isLegacyMoodState,
+  RawSenseOutput,
+  SenseDelta,
+  computeNewState,
+  resolveInternalState,
+  createBaselineState,
+  formatStateLog
 } from './hormoneDynamics';
 
 // ─── Configuration ───────────────────────────────────────────

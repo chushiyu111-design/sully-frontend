@@ -2,13 +2,16 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import {
   buildDaySnapshotSummaryForPrompt,
+  computeContextFingerprint,
   formatCurrentWeatherForPrompt,
+  getCurrentPlanNode,
   getLocalDateInfo,
   getWeatherCacheStateKey,
   loadCurrentWeather,
   sanitizeDaySnapshot,
   sanitizePlaceSeed,
 } from '../../csyos-workers/src/services/charLifeSnapshot';
+import type { CityProfile, CurrentWeather, DaySnapshot, LocalDateInfo } from '../../csyos-workers/src/services/charLifeSnapshot';
 import { buildFragmentPrompt } from '../../csyos-workers/src/services/lifeStreamService';
 
 class FakeD1Database {
@@ -88,6 +91,34 @@ describe('charLifeSnapshot helpers', () => {
         expect(snapshot.planNodes.length).toBeGreaterThanOrEqual(3);
         expect(snapshot.planNodes.length).toBeLessThanOrEqual(6);
         expect(snapshot.planNodes.every(node => ['住处', '工作地点', '散步路线'].includes(node.place))).toBe(true);
+    });
+
+    it('getCurrentPlanNode returns the closest node for the current hour', () => {
+        const snapshot: DaySnapshot = {
+            localDate: '2026-04-08',
+            timezone: 'Asia/Shanghai',
+            weekday: '星期三',
+            isWorkday: true,
+            dayTone: 'test',
+            baseRhythm: 'test',
+            planNodes: [
+                { timeHint: '早上', place: '住处', mode: 'stable', plan: 'p1', whyNatural: 'w1' },
+                { timeHint: '中午', place: '工作地点', mode: 'stable', plan: 'p2', whyNatural: 'w2' },
+                { timeHint: '傍晚', place: '散步路线', mode: 'loose', plan: 'p3', whyNatural: 'w3' },
+                { timeHint: '晚上', place: '住处', mode: 'stable', plan: 'p4', whyNatural: 'w4' },
+            ],
+            aftertasteSeed: 'test',
+            generatedAt: Date.now(),
+        };
+
+        const node15 = getCurrentPlanNode(snapshot, 15);
+        expect(node15?.place).toBe('工作地点');
+
+        const node21 = getCurrentPlanNode(snapshot, 21);
+        expect(node21?.place).toBe('住处');
+
+        const node5 = getCurrentPlanNode(snapshot, 5);
+        expect(node5?.place).toBe('住处');
     });
 
     it('queries current weather by char homeCity and records weather_unavailable fallback', async () => {
@@ -254,5 +285,112 @@ describe('charLifeSnapshot helpers', () => {
         expect(prompt.userPrompt).toContain('loose 节点轻微偏掉');
         expect(prompt.userPrompt).toContain('不要把输出写成天气播报');
         expect(prompt.userPrompt).toContain('今日原定生活快照');
+    });
+
+    it('produces stable fingerprints and detects context changes', () => {
+        const base = {
+            charId: 'c1',
+            charName: 'K',
+            charSystemPrompt: '他是一个安静的人。',
+            charPersonality: '内向，喜欢独处。',
+            worldview: '住在常下雨的城市。',
+            moodState: null,
+            updatedAt: Date.now(),
+        };
+
+        const fp1 = computeContextFingerprint(base);
+        const fp2 = computeContextFingerprint(base);
+        expect(fp1).toBe(fp2);
+
+        const changed = { ...base, charSystemPrompt: '她是一个活泼的人。' };
+        const fp3 = computeContextFingerprint(changed);
+        expect(fp3).not.toBe(fp1);
+    });
+
+    it('allows verified place names to pass through sanitizePlaceSeed', () => {
+        const verified = new Set(['西西弗书店·万象城店', '便利蜂·翠苑店']);
+        expect(sanitizePlaceSeed('西西弗书店·万象城店', verified)).toBe('西西弗书店·万象城店');
+        expect(sanitizePlaceSeed('便利蜂·翠苑店', verified)).toBe('便利蜂·翠苑店');
+        expect(sanitizePlaceSeed('星巴克臻选门店')).toBe('常去咖啡店');
+    });
+
+    it('respects nodeCountHint for day snapshot node count', () => {
+        const lowNodeProfile: CityProfile = {
+            homeCity: '上海',
+            timezone: 'Asia/Shanghai',
+            confidence: 0.8,
+            lifestyleSketch: '宅家型角色',
+            placeSeeds: ['住处', '便利店'],
+            generatedAt: Date.now(),
+            routineType: 'homebound',
+            routineHints: ['几乎不出门'],
+            activeWindow: { start: 10, end: 22 },
+            activityLevel: 0.25,
+            nodeCountHint: { min: 1, max: 3 },
+        };
+
+        const dateInfo: LocalDateInfo = {
+            timezone: 'Asia/Shanghai',
+            localDate: '2026-04-08',
+            weekday: '星期三',
+            isWorkday: true,
+            hour: 10,
+            minute: 0,
+            timeStr: '10:00',
+            timeLabel: '上午',
+        };
+
+        const snapshot = sanitizeDaySnapshot({}, lowNodeProfile, dateInfo);
+        expect(snapshot.planNodes.length).toBeGreaterThanOrEqual(1);
+        expect(snapshot.planNodes.length).toBeLessThanOrEqual(3);
+    });
+
+    it('produces haze drift hint for foggy weather', () => {
+        const fogWeather: CurrentWeather = {
+            city: '上海',
+            description: '霾',
+            temp: 18,
+            feelsLike: 17,
+            humidity: 85,
+            dominantCondition: '霾',
+            provider: 'qweather',
+            observedAt: Date.now(),
+        };
+
+        const result = formatCurrentWeatherForPrompt(fogWeather);
+        expect(result).toContain('雾霾');
+        expect(result).toContain('室内');
+    });
+
+    it('produces sandstorm drift hint', () => {
+        const sandWeather: CurrentWeather = {
+            city: '北京',
+            description: '扬沙',
+            temp: 12,
+            feelsLike: 8,
+            humidity: 30,
+            dominantCondition: '扬沙',
+            provider: 'qweather',
+            observedAt: Date.now(),
+        };
+
+        const result = formatCurrentWeatherForPrompt(sandWeather);
+        expect(result).toContain('沙尘');
+    });
+
+    it('produces extreme heat drift hint at 35+ degrees', () => {
+        const hotWeather: CurrentWeather = {
+            city: '重庆',
+            description: '晴',
+            temp: 38,
+            feelsLike: 40,
+            humidity: 60,
+            dominantCondition: '晴',
+            provider: 'qweather',
+            observedAt: Date.now(),
+        };
+
+        const result = formatCurrentWeatherForPrompt(hotWeather);
+        expect(result).toContain('极端高温');
     });
 });

@@ -1,18 +1,57 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import type { Plugin } from 'vite';
+
+type BuildInfo = {
+  buildId: string;
+  builtAt: string;
+};
+
+const builtAt = new Date().toISOString();
+const buildId =
+  process.env.CF_PAGES_COMMIT_SHA?.slice(0, 12) ||
+  process.env.GITHUB_SHA?.slice(0, 12) ||
+  `${builtAt.replace(/\D/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const buildInfo: BuildInfo = { buildId, builtAt };
+
+function buildInfoPlugin(info: BuildInfo): Plugin {
+  const body = `${JSON.stringify(info, null, 2)}\n`;
+
+  return {
+    name: 'sully-build-info',
+    configureServer(server) {
+      server.middlewares.use('/build-info.json', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(body);
+      });
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'build-info.json',
+        source: body,
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react() as any],
+  plugins: [react() as any, buildInfoPlugin(buildInfo)],
+  define: {
+    __APP_BUILD_ID__: JSON.stringify(buildId),
+  },
   server: {
     proxy: {
       '/minimax-api': {
         target: 'https://api.minimaxi.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/minimax-api/, '')
-      }
-    }
+        rewrite: (path) => path.replace(/^\/minimax-api/, ''),
+      },
+    },
   },
-  base: './', // 关键配置：使用相对路径，确保在 GitHub Pages 子目录下能找到资源
+  base: './',
   test: {
     globals: true,
     environment: 'jsdom',
@@ -21,9 +60,5 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
-    rollupOptions: {
-      // 关键修复：将这些包排除在打包之外，让浏览器通过 index.html 的 importmap 加载
-      external: ['pdfjs-dist', 'katex', 'jszip']
-    }
-  }
+  },
 });

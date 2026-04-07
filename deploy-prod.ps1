@@ -1,47 +1,169 @@
-# ============================================================
-# deploy-prod.ps1 - 正式链接部署脚本 (Cloudflare Pages)
-# ============================================================
-# 警告：此脚本会更新正式链接！请确认功能已在测试环境验证通过。
-#
-# 正式链接（如关联了 GitHub）在推送 main 分支时即可自动部署。
-# 只有在需要绕过 GitHub 自动部署，或直接通过本地构建上传时，才需运行此脚本。
-# ============================================================
+param(
+    [switch]$PrecheckOnly,
+    [switch]$AllowWithoutRecentBeta
+)
 
-Write-Host ""
-Write-Host "=========================================" -ForegroundColor Red
-Write-Host "  ⚠️  警告：即将部署到正式链接 (Cloudflare Pages)  ⚠️" -ForegroundColor Red
-Write-Host "=========================================" -ForegroundColor Red
-Write-Host ""
-Write-Host "当前 Git 分支：$(git branch --show-current)" -ForegroundColor Cyan
-Write-Host "最新 Commit：$(git log --oneline -1)" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "⚠️  如果你已在 Cloudflare 关联了 GitHub 仓库，推送代码即可自动部署。" -ForegroundColor Yellow
-Write-Host "    手动上传会创建 Direct Upload 版本的部署。" -ForegroundColor Yellow
-Write-Host ""
+$ErrorActionPreference = 'Stop'
 
-$confirm = Read-Host "确定要手动构建并部署到正式链接吗？输入 'YES' 确认，其他任意键取消"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envFile = Join-Path $scriptDir '.env.production.local'
+$stateFile = Join-Path $scriptDir '.deploy-state.json'
+$wranglerNpx = 'npx.cmd'
+$recentBetaWindowHours = 24
+$prodConfirmationPhrase = 'DEPLOY PROD SULLY-FRONTEND'
 
-if ($confirm -ne "YES") {
+function Import-EnvFile {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing env file: $Path"
+    }
+
+    Get-Content -LiteralPath $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) {
+            return
+        }
+
+        $separatorIndex = $line.IndexOf('=')
+        if ($separatorIndex -lt 1) {
+            throw "Invalid env line: $line"
+        }
+
+        $key = $line.Substring(0, $separatorIndex).Trim()
+        $value = $line.Substring($separatorIndex + 1).Trim()
+
+        if ((($value.StartsWith('"') -and $value.EndsWith('"'))) -or (($value.StartsWith("'")) -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+
+        Set-Item -Path ("Env:" + $key) -Value $value
+    }
+}
+
+function Assert-RequiredEnv {
+    param([string[]]$Keys)
+
+    foreach ($key in $Keys) {
+        $value = (Get-Item -Path ("Env:" + $key) -ErrorAction SilentlyContinue).Value
+        if ([string]::IsNullOrWhiteSpace($value) -or $value -match 'replace-me|<your-|<set-') {
+            throw "Missing or placeholder value for $key in $envFile"
+        }
+    }
+}
+
+function Get-DeployState {
+    if (-not (Test-Path -LiteralPath $stateFile)) {
+        return $null
+    }
+
+    $raw = Get-Content -LiteralPath $stateFile -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    return $raw | ConvertFrom-Json
+}
+
+function Get-GitHead {
+    $output = git rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return ($output | Select-Object -First 1).Trim()
+}
+
+function Get-GitDirty {
+    $output = git status --porcelain 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return @($output).Count -gt 0
+}
+
+function Assert-CloudflareAuth {
+    Write-Host "Precheck: verifying Cloudflare auth..." -ForegroundColor Cyan
+    npx wrangler whoami
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wrangler auth precheck failed with exit code $LASTEXITCODE"
+    }
+}
+
+Push-Location $scriptDir
+try {
+    $state = Get-DeployState
+    $gitHead = Get-GitHead
+    $gitDirty = Get-GitDirty
+
+    if (-not $AllowWithoutRecentBeta) {
+        if ($gitDirty) {
+            throw "Production deploy blocked: the working tree has uncommitted changes. Commit them, redeploy beta, then retry production."
+        }
+
+        if ($null -eq $state) {
+            throw "Production deploy blocked: no recent beta deploy marker found. Run .\\deploy-beta.ps1 first."
+        }
+
+        $lastBetaAt = [datetimeoffset]::Parse($state.lastBetaDeployAt)
+        $age = (Get-Date) - $lastBetaAt.LocalDateTime
+        if ($age.TotalHours -gt $recentBetaWindowHours) {
+            throw "Production deploy blocked: the latest recorded beta deploy is older than $recentBetaWindowHours hours. Run .\\deploy-beta.ps1 again first."
+        }
+
+        if ($state.gitDirty) {
+            throw "Production deploy blocked: the latest recorded beta deploy came from a dirty working tree. Commit the intended code, redeploy beta, then retry production."
+        }
+
+        if ($gitHead -and $state.gitCommit -and $gitHead -ne $state.gitCommit) {
+            throw "Production deploy blocked: HEAD ($gitHead) does not match the last beta deploy commit ($($state.gitCommit)). Re-run beta for the current code first."
+        }
+    }
+
+    Write-Host "" 
+    Write-Host "=========================================" -ForegroundColor Red
+    Write-Host "  Production Pages deploy is about to run  " -ForegroundColor Red
+    Write-Host "=========================================" -ForegroundColor Red
     Write-Host ""
-    Write-Host "✅ 已取消，未部署任何内容。" -ForegroundColor Green
-    exit 0
+
+    if ($state) {
+        Write-Host "Latest recorded beta deploy: $($state.lastBetaDeployAt)" -ForegroundColor Yellow
+        if ($state.previewUrl) {
+            Write-Host "Latest beta preview URL: $($state.previewUrl)" -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "Loading production env from $envFile" -ForegroundColor Cyan
+    Import-EnvFile -Path $envFile
+    Assert-RequiredEnv -Keys @('VITE_CSYOS_BACKEND_URL', 'VITE_CSYOS_BACKEND_TOKEN')
+
+    Assert-CloudflareAuth
+
+    Write-Host "Building production bundle..." -ForegroundColor Cyan
+    npm run build -- --mode production
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build failed with exit code $LASTEXITCODE"
+    }
+
+    if ($PrecheckOnly) {
+        Write-Host "Production precheck complete. No deploy executed." -ForegroundColor Green
+        return
+    }
+
+    $confirm = Read-Host "Type '$prodConfirmationPhrase' to continue"
+    if ($confirm -ne $prodConfirmationPhrase) {
+        Write-Host "Cancelled." -ForegroundColor Yellow
+        exit 0
+    }
+
+    Write-Host "Deploying production bundle to Cloudflare Pages..." -ForegroundColor Cyan
+    & $wranglerNpx wrangler pages deploy dist --project-name sully-frontend
+    if ($LASTEXITCODE -ne 0) {
+        throw "Pages deploy failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Host "Production deploy complete." -ForegroundColor Green
+} finally {
+    Pop-Location
 }
-
-Write-Host ""
-Write-Host "🔨 开始构建项目 (npm run build)..." -ForegroundColor Cyan
-npm run build
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ 构建失败！退出部署。" -ForegroundColor Red
-    exit $LASTEXITCODE
-}
-
-Write-Host ""
-Write-Host "🚀 正在部署到 Cloudflare Pages 正式环境..." -ForegroundColor Cyan
-# 请确保你的 Cloudflare Pages 项目名称正确（这里预设为 aetheros-simulator 或你的线上项目名）
-# 如果你需要更换项目名，请修改 --project-name 后的参数
-npx wrangler pages deploy dist --project-name sully-frontend 
-
-Write-Host ""
-Write-Host "部署完成！" -ForegroundColor Green
-Write-Host "✅ 你的应用已部署到 Cloudflare Pages。" -ForegroundColor Green
-

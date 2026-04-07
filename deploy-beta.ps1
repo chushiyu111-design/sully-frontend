@@ -1,20 +1,173 @@
-# 部署到内测版 (Cloudflare Pages Preview 环境)
-# 用法：在终端里运行  .\deploy-beta.ps1
+param(
+    [switch]$PrecheckOnly
+)
 
-Write-Host "🔨 开始构建内测版 (npm run build)..." -ForegroundColor Cyan
-npm run build
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ 构建失败！退出部署。" -ForegroundColor Red
-    exit $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envFile = Join-Path $scriptDir '.env.staging.local'
+$stateFile = Join-Path $scriptDir '.deploy-state.json'
+$projectName = 'sully-frontend'
+$betaBranch = 'beta'
+$betaAliasUrl = 'https://beta.sully-frontend.pages.dev'
+$wranglerNpx = 'npx.cmd'
+
+function Import-EnvFile {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing env file: $Path"
+    }
+
+    Get-Content -LiteralPath $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith('#')) {
+            return
+        }
+
+        $separatorIndex = $line.IndexOf('=')
+        if ($separatorIndex -lt 1) {
+            throw "Invalid env line: $line"
+        }
+
+        $key = $line.Substring(0, $separatorIndex).Trim()
+        $value = $line.Substring($separatorIndex + 1).Trim()
+
+        if ((($value.StartsWith('"') -and $value.EndsWith('"'))) -or (($value.StartsWith("'")) -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+
+        Set-Item -Path ("Env:" + $key) -Value $value
+    }
 }
 
-Write-Host "🚀 正在部署到 Cloudflare Pages (Beta/Preview)..." -ForegroundColor Cyan
-# 这里通过省略或者指定非 production 环境来做 Preview 部署
-# 根据实际使用如果 beta 有单独的 project-name 可以更改这里
-npx wrangler pages deploy dist --project-name sully-frontend --branch beta
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ 部署失败！请检查 Wrangler 配置/登录状态。" -ForegroundColor Red
-    exit $LASTEXITCODE
+function Assert-RequiredEnv {
+    param([string[]]$Keys)
+
+    foreach ($key in $Keys) {
+        $value = (Get-Item -Path ("Env:" + $key) -ErrorAction SilentlyContinue).Value
+        if ([string]::IsNullOrWhiteSpace($value) -or $value -match 'replace-me|<your-|<set-') {
+            throw "Missing or placeholder value for $key in $envFile"
+        }
+    }
 }
 
-Write-Host "部署完成！已上传到 Cloudflare Pages 的测试地址。" -ForegroundColor Green
+function Find-PagesDeploymentUrl {
+    param([string[]]$Lines, [string]$ProjectName)
+
+    $pattern = "https://[A-Za-z0-9-]+\." + [regex]::Escape($ProjectName) + "\.pages\.dev"
+    foreach ($line in $Lines) {
+        $match = [regex]::Match($line, $pattern)
+        if ($match.Success) {
+            return $match.Value
+        }
+    }
+
+    return $null
+}
+
+function Get-GitHead {
+    $output = git rev-parse HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return ($output | Select-Object -First 1).Trim()
+}
+
+function Get-GitDirty {
+    $output = git status --porcelain 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    return @($output).Count -gt 0
+}
+
+function Save-BetaDeployState {
+    param([string]$PreviewUrl)
+
+    $state = [ordered]@{
+        lastBetaDeployAt = (Get-Date).ToString('o')
+        gitCommit        = Get-GitHead
+        gitDirty         = Get-GitDirty
+        betaAliasUrl     = $betaAliasUrl
+        previewUrl       = $PreviewUrl
+    }
+
+    $state | ConvertTo-Json | Set-Content -LiteralPath $stateFile -Encoding UTF8
+}
+
+function Get-LatestPreviewUrl {
+    param([string]$ProjectName, [string]$Branch)
+
+    $listOutput = & $wranglerNpx wrangler pages deployment list --project-name $ProjectName 2>&1
+    $listExitCode = $LASTEXITCODE
+    if ($listExitCode -ne 0) {
+        throw "Pages deployment listing failed with exit code $listExitCode"
+    }
+
+    $rowPattern = '\|\s*Preview\s*\|\s*' + [regex]::Escape($Branch) + '\s*\|'
+    foreach ($line in $listOutput) {
+        if ($line -match $rowPattern) {
+            $url = Find-PagesDeploymentUrl -Lines @($line) -ProjectName $ProjectName
+            if ($null -ne $url) {
+                return $url
+            }
+        }
+    }
+
+    return $null
+}
+
+Push-Location $scriptDir
+try {
+    Write-Host "Loading beta env from $envFile" -ForegroundColor Cyan
+    Import-EnvFile -Path $envFile
+    Assert-RequiredEnv -Keys @('VITE_CSYOS_BACKEND_URL', 'VITE_CSYOS_BACKEND_TOKEN')
+
+    Write-Host "Precheck: verifying Cloudflare auth..." -ForegroundColor Cyan
+    npx wrangler whoami
+    if ($LASTEXITCODE -ne 0) {
+        throw "Wrangler auth precheck failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Host "Precheck: building beta bundle (staging mode)..." -ForegroundColor Cyan
+    npm run build -- --mode staging
+    if ($LASTEXITCODE -ne 0) {
+        throw "Staging build precheck failed with exit code $LASTEXITCODE"
+    }
+
+    if ($PrecheckOnly) {
+        Write-Host "Precheck complete. No deploy executed." -ForegroundColor Green
+        Write-Host "Canonical beta URL: $betaAliasUrl" -ForegroundColor Green
+        return
+    }
+
+    Write-Host "Deploying beta bundle to Cloudflare Pages preview..." -ForegroundColor Cyan
+    $deployOutput = & $wranglerNpx wrangler pages deploy dist --project-name $projectName --branch $betaBranch --commit-dirty=true 2>&1
+    $deployExitCode = $LASTEXITCODE
+    $deployOutput | ForEach-Object { $_ }
+    if ($deployExitCode -ne 0) {
+        throw "Pages deploy failed with exit code $deployExitCode"
+    }
+
+    Write-Host "Beta deploy complete." -ForegroundColor Green
+    Write-Host "Canonical beta URL: $betaAliasUrl" -ForegroundColor Green
+
+    $latestPreviewUrl = Find-PagesDeploymentUrl -Lines $deployOutput -ProjectName $projectName
+    if ($null -eq $latestPreviewUrl) {
+        $latestPreviewUrl = Get-LatestPreviewUrl -ProjectName $projectName -Branch $betaBranch
+    }
+
+    if ($null -ne $latestPreviewUrl) {
+        Write-Host "Latest preview URL: $latestPreviewUrl" -ForegroundColor Green
+    } else {
+        Write-Host "Latest preview URL: unavailable (run 'npx wrangler pages deployment list --project-name $projectName' if needed)." -ForegroundColor Yellow
+    }
+
+    Save-BetaDeployState -PreviewUrl $latestPreviewUrl
+    Write-Host "Beta deploy marker recorded in $stateFile" -ForegroundColor Green
+} finally {
+    Pop-Location
+}

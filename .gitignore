@@ -24,6 +24,9 @@ dist-ssr
 *.sw?
 .vercel
 .env*.local
+.env.staging.local
+.env.production.local
+.deploy-state.json
 
 # Vite cache
 vite.config.ts.timestamp-*

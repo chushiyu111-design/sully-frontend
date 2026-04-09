@@ -1,0 +1,294 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useApp } from '../../context/AppContext';
+import { useAudioPlayer } from '../../hooks/useAudioPlayer';
+import { AppID } from '../../types';
+import {
+    readFloatingLyricsSettings,
+    toggleFloatingLyricsEnabled,
+} from './floatingLyricsSettings';
+import './DynamicIsland.css';
+
+/**
+ * 灵动岛 — 退出音乐 App 后的浮动迷你播放器。
+ *
+ * 显示条件：
+ * 1. 当前 activeApp 不是 Music
+ * 2. 有可恢复的当前歌曲 (currentSong !== null)
+ *
+ * 状态：
+ * - collapsed（胶囊）：显示封面缩略图 + 歌名滚动 + 播放/暂停按钮
+ * - expanded（展开）：显示封面 + 歌名 + 艺术家 + 进度条 + 上一首/播放/下一首
+ */
+const DynamicIsland: React.FC = () => {
+    const { activeApp, openApp } = useApp();
+    const {
+        currentSong,
+        isPlaying,
+        progress,
+        currentTime,
+        duration,
+        togglePlay,
+        playNext,
+        playPrev,
+        seek,
+    } = useAudioPlayer();
+    const [expanded, setExpanded] = useState(false);
+    const [lyricsEnabled, setLyricsEnabled] = useState(
+        () => readFloatingLyricsSettings().enabled,
+    );
+
+    const shouldShow = useMemo(
+        () => activeApp !== AppID.Music && currentSong !== null,
+        [activeApp, currentSong],
+    );
+
+    useEffect(() => {
+        if (!shouldShow) {
+            setExpanded(false);
+        }
+    }, [shouldShow]);
+
+    useEffect(() => {
+        const handleStorage = () => {
+            setLyricsEnabled(readFloatingLyricsSettings().enabled);
+        };
+
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+    }, []);
+
+    const handleToggleExpand = useCallback((event: React.MouseEvent) => {
+        event.stopPropagation();
+        setExpanded((prev) => !prev);
+    }, []);
+
+    const handleOpenMusicApp = useCallback(() => {
+        setExpanded(false);
+        openApp(AppID.Music);
+    }, [openApp]);
+
+    const handleTogglePlay = useCallback(
+        (event: React.MouseEvent) => {
+            event.stopPropagation();
+            togglePlay();
+        },
+        [togglePlay],
+    );
+
+    const handlePrev = useCallback(
+        (event: React.MouseEvent) => {
+            event.stopPropagation();
+            void playPrev();
+        },
+        [playPrev],
+    );
+
+    const handleNext = useCallback(
+        (event: React.MouseEvent) => {
+            event.stopPropagation();
+            void playNext();
+        },
+        [playNext],
+    );
+
+    const handleProgressClick = useCallback(
+        (event: React.MouseEvent<HTMLDivElement>) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            const percent = Math.max(
+                0,
+                Math.min(100, ((event.clientX - rect.left) / rect.width) * 100),
+            );
+            seek(percent);
+        },
+        [seek],
+    );
+
+    const handleToggleLyrics = useCallback((event: React.MouseEvent) => {
+        event.stopPropagation();
+        const nextSettings = toggleFloatingLyricsEnabled();
+        setLyricsEnabled(nextSettings.enabled);
+    }, []);
+
+    if (!shouldShow || !currentSong) return null;
+
+    const artistText =
+        currentSong.artists.map((artist) => artist.name).join(' / ') || '未知歌手';
+
+    const formatTime = (seconds: number): string => {
+        const safeSeconds = Math.max(0, Math.floor(seconds));
+        return `${Math.floor(safeSeconds / 60)}:${(safeSeconds % 60)
+            .toString()
+            .padStart(2, '0')}`;
+    };
+
+    const coverUrl = currentSong.album.picUrl;
+    const coverSeed = currentSong.id || 0;
+    const fallbackHue = ((coverSeed % 360) + 360) % 360;
+
+    return (
+        <div
+            className={`dynamic-island ${expanded ? 'dynamic-island--expanded' : 'dynamic-island--collapsed'}`}
+        >
+            {!expanded && (
+                <div className="di-capsule" onClick={handleToggleExpand}>
+                    <div
+                        className={`di-capsule-cover ${isPlaying ? '' : 'di-capsule-cover--paused'}`}
+                        style={
+                            coverUrl
+                                ? { backgroundImage: `url(${coverUrl})` }
+                                : {
+                                      background: `linear-gradient(135deg, hsl(${fallbackHue}, 70%, 60%), hsl(${(fallbackHue + 40) % 360}, 65%, 50%))`,
+                                  }
+                        }
+                    >
+                        {!coverUrl && (
+                            <span className="di-capsule-cover-note">♪</span>
+                        )}
+                    </div>
+
+                    <div className="di-capsule-info">
+                        <div className="di-capsule-title">
+                            <span className="di-capsule-title-text">
+                                {currentSong.name || '未知歌曲'}
+                            </span>
+                        </div>
+                    </div>
+
+                    {isPlaying ? (
+                        <div className="di-capsule-bars" onClick={handleTogglePlay}>
+                            <span className="di-bar" />
+                            <span className="di-bar" />
+                            <span className="di-bar" />
+                        </div>
+                    ) : (
+                        <div
+                            className="di-capsule-play-btn"
+                            onClick={handleTogglePlay}
+                        >
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                            >
+                                <path d="M8 5v14l11-7z" />
+                            </svg>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {expanded && (
+                <div className="di-expanded">
+                    <div
+                        className="di-expanded-handle"
+                        onClick={handleToggleExpand}
+                    >
+                        <div className="di-expanded-handle-bar" />
+                    </div>
+
+                    <div className="di-expanded-main">
+                        <div
+                            className={`di-expanded-cover ${isPlaying ? 'di-expanded-cover--spinning' : ''}`}
+                            style={
+                                coverUrl
+                                    ? { backgroundImage: `url(${coverUrl})` }
+                                    : {
+                                          background: `linear-gradient(135deg, hsl(${fallbackHue}, 70%, 60%), hsl(${(fallbackHue + 40) % 360}, 65%, 50%))`,
+                                      }
+                            }
+                        >
+                            {!coverUrl && (
+                                <span className="di-expanded-cover-note">♪</span>
+                            )}
+                        </div>
+
+                        <div className="di-expanded-info">
+                            <div className="di-expanded-name">
+                                {currentSong.name || '未知歌曲'}
+                            </div>
+                            <div className="di-expanded-artist">{artistText}</div>
+                        </div>
+                    </div>
+
+                    <div
+                        className="di-expanded-progress"
+                        onClick={handleProgressClick}
+                    >
+                        <div
+                            className="di-expanded-progress-fill"
+                            style={{ width: `${progress}%` }}
+                        />
+                    </div>
+                    <div className="di-expanded-time">
+                        <span>{formatTime(currentTime)}</span>
+                        <span>{formatTime(duration)}</span>
+                    </div>
+
+                    <div className="di-expanded-controls">
+                        <div className="di-ctrl-btn" onClick={handlePrev}>
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                            >
+                                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                            </svg>
+                        </div>
+                        <div className="di-ctrl-play" onClick={handleTogglePlay}>
+                            {isPlaying ? (
+                                <svg
+                                    width="22"
+                                    height="22"
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                >
+                                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+                                </svg>
+                            ) : (
+                                <svg
+                                    width="22"
+                                    height="22"
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                >
+                                    <path d="M8 5v14l11-7z" />
+                                </svg>
+                            )}
+                        </div>
+                        <div className="di-ctrl-btn" onClick={handleNext}>
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                            >
+                                <path d="M6 18l8.5-6L6 6v12zm10-12v12h2V6z" />
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div className="di-expanded-extras">
+                        <div
+                            className={`di-expanded-lyric-toggle ${lyricsEnabled ? 'di-expanded-lyric-toggle--active' : ''}`}
+                            onClick={handleToggleLyrics}
+                        >
+                            词
+                        </div>
+                    </div>
+
+                    <div
+                        className="di-expanded-open"
+                        onClick={handleOpenMusicApp}
+                    >
+                        打开音乐
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default React.memo(DynamicIsland);

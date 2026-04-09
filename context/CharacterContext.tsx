@@ -1,6 +1,7 @@
 import React,{ createContext,useContext,useEffect,useState } from 'react';
 import { CharacterProfile,GroupProfile,Worldbook,NovelBook } from '../types';
 import { DB } from '../utils/db';
+import { preloadImages } from '../utils/preloadResources';
 import { useNotification } from './NotificationContext';
 
 export interface CharacterContextType {
@@ -158,7 +159,6 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                 setNovels(dbNovels);
 
                 try {
-                    const { preloadImages } = await import('../utils/preloadResources');
                     const activeChar =
                         finalChars.find(c => c.id === (localStorage.getItem('os_last_active_char_id') || initialCharacter.id))
                         || finalChars[0];

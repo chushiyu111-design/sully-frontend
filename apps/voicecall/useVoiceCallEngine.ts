@@ -473,6 +473,33 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             ttsWsRef.current = ttsWs;
 
             // ─── TTS 预连接：与 LLM 并行启动握手，消除首句等待 ───
+            // 注意：这段异步逻辑不 await，让它和 llm.chat 并行跑
+            (async () => {
+                try {
+                    await ttsWs.connect(vcTtsConfig);
+                    await ttsWs.start(vcTtsConfig);
+                    if (gen !== generationRef.current) { ttsWs.close(); return; }
+
+                    ttsReady = true;
+                    console.log('[Engine] TTS pre-connect ready');
+
+                    // 连接期间 LLM 可能已产出句子 → 刷空 pendingSentences
+                    for (const s of pendingSentences) {
+                        ttsWs.sendText(s);
+                        sentSentCount++;
+                    }
+                    pendingSentences.length = 0;
+
+                    // 极端情况：LLM 已完成但 TTS 预连接才刚好完成
+                    if (llmComplete) {
+                        ttsWs.finish().catch(() => {});
+                        tryMarkTtsFinished();
+                    }
+                } catch (err) {
+                    console.error('[Engine] TTS pre-connect failed, degrading to text:', err);
+                    degradeRemainingToText();
+                }
+            })();
 
             await llm.chat(text, {
                 onSentence: async (sentence) => {

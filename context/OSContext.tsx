@@ -5,6 +5,7 @@ import { DB } from '../utils/db';
 import { onSystemLog } from '../utils/systemInterceptor';
 import { exportSystemData,importSystemData,ExportStateSnapshot,ImportCallbacks } from '../utils/systemBackup';
 import { setHapticsEnabled as setHapticsEnabledGlobal } from '../utils/haptics';
+import { preloadImages } from '../utils/preloadResources';
 
 // Sub-contexts
 import { NotificationProvider,useNotification,NotificationContextType } from './NotificationContext';
@@ -434,7 +435,6 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
                 // 预加载当前角色的所有图片资源（头像、立绘、房间素材、皮肤套装）
                 try {
-                    const { preloadImages } = await import('../utils/preloadResources');
                     const activeChar = finalChars.find((c: CharacterProfile) => c.id === (localStorage.getItem('os_last_active_char_id') || initialCharacter.id)) || finalChars[0];
                     if (activeChar) {
                         const urls: string[] = [

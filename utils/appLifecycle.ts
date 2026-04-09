@@ -1,3 +1,5 @@
+import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { requestSystemFullscreen } from '../App';
 import { probeForUpdatedBuild } from './runtimeRecovery';
 
@@ -53,15 +55,15 @@ export function initAppLifecycle() {
     }
   });
 
-  import('@capacitor/app')
-    .then(({ App }) => {
-      App.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) {
-          onForeground();
-        }
-      });
-    })
-    .catch(() => {
-      // ignore in web-only environments
-    });
+  if (!Capacitor.isNativePlatform()) {
+    return;
+  }
+
+  CapApp.addListener('appStateChange', ({ isActive }) => {
+    if (isActive) {
+      onForeground();
+    }
+  }).catch(() => {
+    // ignore if listener registration fails
+  });
 }

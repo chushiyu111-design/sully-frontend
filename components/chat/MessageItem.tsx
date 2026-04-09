@@ -21,6 +21,7 @@ import FurnitureInteractionCard from './cards/FurnitureInteractionCard';
 import VoiceCallSummaryCard from './cards/VoiceCallSummaryCard';
 import ForwardCard from './cards/ForwardCard';
 import WeChatMomentsCard from './cards/WeChatMomentsCard';
+import SongShareCardBubble from './cards/SongShareCardBubble';
 import ChatBubble from './ChatBubble';
 import InteractionPill from './InteractionPill';
 import VoiceBubble from './VoiceBubble';
@@ -582,6 +583,13 @@ const MessageItem = React.memo(({
         );
     }
 
+    // --- Song Share Card: detect metadata.type === 'song_card' ---
+    if (m.type === 'text' && m.metadata?.type === 'song_card') {
+        return commonLayout(
+            <SongShareCardBubble metadata={m.metadata as any} />
+        );
+    }
+
     // --- Voice Compat: detect <语音>...</语音> in text messages (原版 SillyTavern 导入兼容) ---
     // Original SillyTavern stores voice messages as type:'text' with XML tags in content.
     // We detect this at render time and display them as proper voice bubbles.
@@ -698,6 +706,8 @@ const MessageItem = React.memo(({
         prev.msg.type === next.msg.type &&
         prev.msg.content === next.msg.content &&
         prev.msg.metadata?.status === next.msg.metadata?.status &&
+        prev.msg.metadata?.type === next.msg.metadata?.type &&
+        prev.msg.metadata?.songId === next.msg.metadata?.songId &&
         prev.msg.metadata?.hasAudio === next.msg.metadata?.hasAudio &&
         prev.msg.metadata?.duration === next.msg.metadata?.duration &&
         prev.msg.metadata?.sourceText === next.msg.metadata?.sourceText &&

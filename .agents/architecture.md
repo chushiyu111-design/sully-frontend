@@ -1,6 +1,6 @@
 # 糯米机二改 — 项目架构文档
 
-> 最后更新：2026-04-07 · 本文档供 AI 助手和开发者参考，避免对项目结构产生错误假设。
+> 最后更新：2026-04-09 · 本文档供 AI 助手和开发者参考，避免对项目结构产生错误假设。
 
 ---
 
@@ -18,6 +18,10 @@
 
 > [!IMPORTANT]
 > **前端和后端是两个独立的仓库/目录**，各有自己的 `package.json`、`.git` 和部署流程。
+
+> [!NOTE]
+> 当前生产前端尚未绑定自有域名，正式入口仍是 `https://sully-frontend.pages.dev`。
+> 生产后端当前通过 `https://chushiyu.de5.net` 对外，部分辅助 Worker 仍在使用 `workers.dev` 默认域名。
 
 ---
 
@@ -547,10 +551,16 @@ graph TB
 
 | 组件 | 部署位置 | 域名 |
 |---|---|---|
-| 前端 | Cloudflare Pages | (自定义域名) |
-| 后端 | Cloudflare Workers | `chushiyu.de5.net` |
+| 前端 | Cloudflare Pages | `https://sully-frontend.pages.dev`（当前无自定义域名） |
+| 后端 | Cloudflare Workers | `https://chushiyu.de5.net` |
+| TTS 代理 | Cloudflare Workers | `wss://tts-ws-proxy.sully-tts-proxy.workers.dev/ws` |
+| 外部平台代理 | Cloudflare Workers | `https://sully-n.qegj567.workers.dev` |
 | 数据库 | Cloudflare D1 | `csyos-db` |
 | 备份存储 | Cloudflare R2 | `csyos-backups` |
+
+> [!NOTE]
+> 上表描述的是当前线上真实入口，不是未来目标状态。
+> 等前端和辅助 Worker 绑定新域名后，这里需要和部署环境一起同步更新。
 
 ---
 

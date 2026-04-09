@@ -12,6 +12,7 @@ description: 部署到正式/测试环境 (Cloudflare Pages + Workers)
 > [!IMPORTANT]
 > - 前端部署已从 Vercel 迁移到 **Cloudflare Pages**
 > - 后端部署通过 **Wrangler** 到 Cloudflare Workers
+> - 当前生产前端还没有自定义域名，所以正式入口仍是 `https://sully-frontend.pages.dev`
 > - 测试环境 URL 是固定的（`beta.` 前缀），不是随机生成的
 > - `beta.sully-frontend.pages.dev` 是唯一的测试链接；随机的 `*.sully-frontend.pages.dev` 仅用于确认最近一次 preview 部署
 > - `.vercel/` 和旧的 Vercel workflow 仅作历史残留保留，**不要**再把它们当成现行部署入口

@@ -2,17 +2,21 @@
 
 `SULLYTEST2` 是当前主前端仓库。
 
-它不是传统的 `src/` 单入口项目。当前真实源码主要分布在仓库根层的:
+它不是传统的 `src/` 单入口项目，而是“根层入口文件 + 一级领域目录”布局。当前真实源码主要分布在仓库根层和这些目录里:
 
 - `App.tsx`
 - `index.tsx`
+- `constants.tsx`
+- `types.ts`
 - `apps/`
 - `components/`
 - `context/`
 - `hooks/`
 - `utils/`
+- `constants/`
+- `types/`
 
-如果你是第一次接手这个仓库，先不要默认去 `src/` 里找入口。
+如果你是第一次接手这个仓库，不要再去找一个并不存在的 `src/` 主源码树。
 
 ## 当前定位
 
@@ -45,30 +49,35 @@
 | `context/` | 全局状态与编排 |
 | `hooks/` | 自定义 hooks |
 | `utils/` | 业务逻辑、service、client |
+| `constants/` | 常量拆分目录 |
+| `types/` | 领域类型目录 |
 | `utils/db/` | IndexedDB 本地数据层 |
 | `functions/` | Cloudflare Pages Functions |
 | `worker/` | worker 逻辑 |
 | `test/` | 测试入口 |
+| `assets/` | 静态素材 |
+| `public/` | 公开静态资源 |
+| `styles/` | 样式资源 |
 
 ### 需要特别注意的目录
 
 | 路径 | 说明 |
 | --- | --- |
-| `api/` | 当前为空，属于退役占位目录 |
-| `src/` | 当前不是主源码树，主要是残留资产 |
-| `.vercel/` | 历史残留，不再是当前部署真相源 |
 | `dist/` | 构建产物，不要直接修改 |
+| `node_modules/` | 依赖目录，不要直接修改 |
+| `.wrangler/` | Cloudflare 本地工具状态，不是业务源码 |
 
-## `apps/` 里的一个坑
+## 当前结构怎么理解
 
-`apps/` 里有活页面，也有恢复快照和备份文件，例如:
+当前前端更准确的说法是:
 
-- `*.recovered.tsx`
-- `*.backup-*`
-- `*.pre-rebuild-*`
-- `*.pre-recovery-*`
+- 这是根层源码布局，不是“源码还没整理完”的临时状态
+- `App.tsx`、`index.tsx`、`constants.tsx`、`types.ts` 仍然是活文件
+- `apps/`、`components/`、`context/`、`hooks/`、`utils/` 是一级领域目录
+- `constants.tsx` 和 `constants/`、`types.ts` 和 `types/` 同时存在时，要按 import 关系判断修改落点
+- 截至 2026-04-08，仓库里已经没有 `src/`、`api/`、`.vercel/` 这些旧目录，也没有 `*.recovered.tsx` / `*.backup-*` 这类恢复快照命名文件
 
-改动前先确认自己改的是当前真正被引用的文件。
+所以现在排查问题时，可以把 `apps/` 直接当成活页面目录来理解，不需要再先怀疑里面是不是恢复快照。
 
 ## 常用命令
 
@@ -139,14 +148,14 @@ Beta 预发:
 - `deploy-beta.ps1`
 - `deploy-prod.ps1`
 
-`.vercel/` 目录不应再作为当前部署判断依据。
+当前仓库里也已经没有 `.vercel/` 目录；部署判断仍以 Cloudflare 配置为准。
 
 ## 配套文档
 
-如果要理解整个工作区，不要只看这个 README，还要看工作区根目录中的:
+如果要理解整个工作区，不要只看这个 README，还要看工作区根目录和 `docs/` 目录中的:
 
-- `ARCHITECTURE_INVENTORY.md`
-- `WORKSPACE_ROLE_MAP.md`
-- `DIRECTORY_FEATURE_MAP.md`
-- `DOMAIN_OWNERSHIP.md`
-- `TESTING_AND_DEPLOY.md`
+- `docs/ARCHITECTURE_INVENTORY.md`
+- `docs/WORKSPACE_ROLE_MAP.md`
+- `docs/DIRECTORY_FEATURE_MAP.md`
+- `docs/DOMAIN_OWNERSHIP.md`
+- `docs/TESTING_AND_DEPLOY.md`

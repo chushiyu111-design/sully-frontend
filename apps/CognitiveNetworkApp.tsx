@@ -55,12 +55,21 @@ interface DistillResetStats {
 
 interface DistillResult {
     clustersFound: number;
+    processedClusters?: number;
+    maxClustersPerRun?: number;
     l1Created: number;
     l1Merged: number;
     l1Deduped: number;
     l0Linked: number;
     errors: number;
     elapsed: number;
+    deferred?: {
+        stage: string;
+        stageLabel: string;
+        clusterSize: number;
+        preview: string;
+        reason: string;
+    }[];
     resetStats?: DistillResetStats;
 }
 
@@ -1253,10 +1262,38 @@ const CognitiveNetworkApp: React.FC = () => {
                                 ))}
                             </div>
 
+                            {typeof distillResult.processedClusters === 'number'
+                                && distillResult.clustersFound > distillResult.processedClusters && (
+                                    <div className="mb-2 rounded-xl bg-white/75 border border-white/70 px-3 py-2 text-[10px] text-slate-500 leading-relaxed">
+                                        本次先处理了 {distillResult.processedClusters} / {distillResult.clustersFound} 个共鸣簇
+                                        {typeof distillResult.maxClustersPerRun === 'number' ? `（单次上限 ${distillResult.maxClustersPerRun}）` : ''}
+                                        ，剩余的会留到下一次继续凝结。
+                                    </div>
+                                )}
+
                             <div className="flex justify-between text-[10px] text-slate-400">
                                 <span>用时 {(distillResult.elapsed / 1000).toFixed(1)}s</span>
                                 {distillResult.errors > 0 && <span className="text-rose-500">{distillResult.errors} 处暂缓</span>}
                             </div>
+
+                            {!!distillResult.deferred?.length && (
+                                <div className="mt-3 space-y-2">
+                                    {distillResult.deferred.map((item, index) => (
+                                        <div key={`${item.stage}-${index}`} className="rounded-xl border border-rose-100/70 bg-white/80 px-3 py-2.5">
+                                            <div className="flex items-center justify-between gap-3 text-[10px]">
+                                                <span className="font-semibold text-rose-600">{item.stageLabel}</span>
+                                                <span className="text-stone-400">{item.clusterSize} 条回忆</span>
+                                            </div>
+                                            <div className="mt-1 text-[10px] text-stone-500 leading-relaxed">
+                                                簇摘要: {item.preview}
+                                            </div>
+                                            <div className="mt-1 text-[10px] text-rose-500 break-all leading-relaxed">
+                                                原因: {item.reason}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </section>

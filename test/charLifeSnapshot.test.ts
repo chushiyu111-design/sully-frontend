@@ -5,6 +5,7 @@ import {
   computeContextFingerprint,
   formatCurrentWeatherForPrompt,
   getCurrentPlanNode,
+  getCurrentPlanNodeStatus,
   getLocalDateInfo,
   getWeatherCacheStateKey,
   loadCurrentWeather,
@@ -84,6 +85,11 @@ describe('charLifeSnapshot helpers', () => {
                 lifestyleSketch: '平时会在住处、工作地点和散步路线之间来回。',
                 placeSeeds: ['住处', '工作地点', '散步路线'],
                 generatedAt: Date.now(),
+                routineType: 'office_worker',
+                routineHints: ['朝九晚六'],
+                activeWindow: { start: 8, end: 22 },
+                activityLevel: 0.6,
+                nodeCountHint: { min: 3, max: 6 },
             },
             getLocalDateInfo('Asia/Shanghai', Date.UTC(2026, 3, 6, 2, 0, 0)),
         );
@@ -119,6 +125,42 @@ describe('charLifeSnapshot helpers', () => {
 
         const node5 = getCurrentPlanNode(snapshot, 5);
         expect(node5?.place).toBe('住处');
+    });
+
+    it('getCurrentPlanNodeStatus returns "left" when past durationMin', () => {
+        const snapshot: DaySnapshot = {
+            localDate: '2026-04-09',
+            timezone: 'Asia/Shanghai',
+            weekday: '星期三',
+            isWorkday: true,
+            dayTone: 'test',
+            baseRhythm: 'test',
+            planNodes: [
+                { timeHint: '早上', place: '住处', mode: 'stable', plan: 'p1', whyNatural: 'w1', durationMin: 120 },
+                { timeHint: '中午', place: '常去咖啡店', mode: 'loose', plan: 'p2', whyNatural: 'w2', durationMin: 40 },
+                { timeHint: '傍晚', place: '散步路线', mode: 'loose', plan: 'p3', whyNatural: 'w3' },
+                { timeHint: '晚上', place: '住处', mode: 'stable', plan: 'p4', whyNatural: 'w4' },
+            ],
+            aftertasteSeed: 'test',
+            generatedAt: Date.now(),
+        };
+
+        const at1220 = getCurrentPlanNodeStatus(snapshot, 12, 20);
+        expect(at1220?.status).toBe('at');
+        expect(at1220?.node.place).toBe('常去咖啡店');
+
+        const at1300 = getCurrentPlanNodeStatus(snapshot, 13, 0);
+        expect(at1300?.status).toBe('transit');
+        expect(at1300?.node.place).toBe('常去咖啡店');
+        expect(at1300?.nextNode?.place).toBe('散步路线');
+
+        const at1830 = getCurrentPlanNodeStatus(snapshot, 18, 30);
+        expect(at1830?.status).toBe('at');
+        expect(at1830?.node.place).toBe('散步路线');
+
+        const at2330 = getCurrentPlanNodeStatus(snapshot, 23, 30);
+        expect(at2330?.status).toBe('left');
+        expect(at2330?.node.place).toBe('住处');
     });
 
     it('queries current weather by char homeCity and records weather_unavailable fallback', async () => {
@@ -157,6 +199,11 @@ describe('charLifeSnapshot helpers', () => {
                 lifestyleSketch: '平时会在住处和工作地点之间移动。',
                 placeSeeds: ['住处', '工作地点'],
                 generatedAt: Date.now(),
+                routineType: 'office_worker',
+                routineHints: ['通勤族'],
+                activeWindow: { start: 8, end: 22 },
+                activityLevel: 0.5,
+                nodeCountHint: { min: 3, max: 5 },
             },
             localDateInfo,
             'test-qweather-key',
@@ -182,6 +229,11 @@ describe('charLifeSnapshot helpers', () => {
                 lifestyleSketch: '平时在住处附近活动。',
                 placeSeeds: ['住处'],
                 generatedAt: Date.now(),
+                routineType: 'homebound',
+                routineHints: ['宅家'],
+                activeWindow: { start: 10, end: 22 },
+                activityLevel: 0.3,
+                nodeCountHint: { min: 2, max: 4 },
             },
             localDateInfo,
             '',
@@ -392,5 +444,32 @@ describe('charLifeSnapshot helpers', () => {
 
         const result = formatCurrentWeatherForPrompt(hotWeather);
         expect(result).toContain('极端高温');
+    });
+
+    describe('fictional city context', () => {
+        it('computeContextFingerprint includes fictional city fields', () => {
+            const base = {
+                charId: 'c1',
+                charName: 'TestChar',
+                charSystemPrompt: 'prompt',
+                charPersonality: 'personality',
+                moodState: null,
+                updatedAt: Date.now(),
+            };
+
+            const fp1 = computeContextFingerprint({
+                ...base,
+                cityOverride: '新月城',
+            });
+
+            const fp2 = computeContextFingerprint({
+                ...base,
+                cityOverride: '新月城',
+                isFictionalCity: true,
+                cityReferenceReal: '上海',
+            });
+
+            expect(fp1).not.toBe(fp2);
+        });
     });
 });

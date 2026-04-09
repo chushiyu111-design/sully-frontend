@@ -42,6 +42,7 @@ ${formattedMsgs}
 7. content 必须精简，不超过 150 字！emotionalJourney 不超过 50 字！
 8. 如果用户在对话中**纠正了之前的信息**（如"我其实不喜欢XX"、"我已经不再XX了"、"之前说错了"），且已有记忆中存在与之矛盾的条目，请使用 "invalidate" 标记该旧记忆为过时
 9. 优先 create，谨慎 update。宁可多创建几条独立记忆，也不要把不同事件合并到一条里
+10. content 必须以${charName}的视角写，用"我"自称。称呼用户时用其名字或昵称，不要写"你"。
 
 请以 JSON 数组格式回答（不要用 markdown 代码块包裹，不要加任何额外说明文字）：
 [
@@ -49,7 +50,7 @@ ${formattedMsgs}
     "action": "create" | "update" | "skip" | "invalidate",
     "targetId": "update 或 invalidate 时填写，指向已有记忆的 ID",
     "title": "8-15字事件描述短语（如：因纪念日被忘记而争吵、在西湖第一次牵手）",
-    "content": "精简描述，不超过150字",
+    "content": "以${charName}的第一人称写，不超过150字。用'我'自称，用对方的名字或昵称称呼用户，不要用'你'指代任何人",
     "emotionalJourney": "情感变化，不超过50字",
     "importance": 1到10的整数,
     "reason": "仅 invalidate 时填写，说明为何此记忆已过时"

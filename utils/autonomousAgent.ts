@@ -67,6 +67,8 @@ type ContextSnapshot = {
     coreMemoryDigest?: string;
     cityOverride?: string;
     cityAdcode?: string;
+    isFictionalCity?: boolean;
+    cityReferenceReal?: string;
     userName: string;
     recentMessages: Array<{
         role: string;
@@ -268,6 +270,10 @@ async function buildContextSnapshot(
     const coreMemoryDigest = buildCoreMemoryDigest(char, topMemory);
     const cityOverride = char.cityOverride?.trim() || undefined;
     const cityAdcode = char.cityAdcode?.trim() || undefined;
+    const isFictionalCity = char.isFictionalCity || undefined;
+    const cityReferenceReal = char.isFictionalCity
+        ? (char.cityReferenceReal?.trim() || undefined)
+        : undefined;
 
     return {
         charId,
@@ -279,6 +285,8 @@ async function buildContextSnapshot(
         coreMemoryDigest,
         cityOverride,
         cityAdcode,
+        isFictionalCity,
+        cityReferenceReal,
         userName,
         recentMessages: recentMessages.map(message => ({
             role: message.role,

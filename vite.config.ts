@@ -60,5 +60,24 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/three')) {
+            return 'vendor-three';
+          }
+          if (id.includes('node_modules/pdfjs-dist')) {
+            return 'vendor-pdf';
+          }
+          if (id.includes('node_modules/katex')) {
+            return 'vendor-katex';
+          }
+          if (id.includes('node_modules/html2canvas')) {
+            return 'vendor-canvas';
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

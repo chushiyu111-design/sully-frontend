@@ -1,4 +1,4 @@
-import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
 export type PdfJsLike = {
   getDocument: (src: { data: ArrayBuffer }) => { promise: Promise<any> };
@@ -21,8 +21,8 @@ let html2canvasPromise: Promise<typeof import('html2canvas').default> | null = n
 
 export async function loadPdfJs(): Promise<PdfJsLike> {
   if (!pdfjsPromise) {
-    pdfjsPromise = import('pdfjs-dist').then((mod) => {
-      const pdfjs = (mod.default ?? mod) as unknown as PdfJsLike;
+    pdfjsPromise = import('pdfjs-dist/build/pdf.mjs').then((mod) => {
+      const pdfjs = mod as unknown as PdfJsLike;
       if (pdfjs.GlobalWorkerOptions) {
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
       }

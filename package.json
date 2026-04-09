@@ -32,7 +32,7 @@
     "katex": "^0.16.11",
     "modern-screenshot": "^4.6.8",
     "onnxruntime-web": "^1.24.3",
-    "pdfjs-dist": "^3.11.174",
+    "pdfjs-dist": "5.4.624",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "three": "^0.183.1",

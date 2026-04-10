@@ -100,7 +100,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.VoiceCall, name: '语音通话', icon: 'VoiceCall', color: 'slate' },
   { id: AppID.CognitiveNetwork, name: '认知网络', icon: 'CognitiveNetwork', color: 'violet' },
   { id: AppID.StatusWorkshop, name: '状态栏工坊', icon: 'StatusWorkshop', color: 'slate' },
-  { id: AppID.Music, name: '网易云音乐', icon: 'Music', color: 'red' },
+  { id: AppID.Music, name: 'Emo Cloud', icon: 'Music', color: 'red' },
 ];
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

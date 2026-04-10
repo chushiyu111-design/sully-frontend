@@ -204,47 +204,134 @@ interface XhsMcpProps {
 }
 
 export const XhsMcpSection = React.memo<XhsMcpProps>(({ enabled, mcpUrl, nickname, userId, set, onTestStatus, onUpdateConfig }) => {
+    const [connectedMode, setConnectedMode] = useState<'bridge' | 'mcp' | ''>('');
+    const [qrImage, setQrImage] = useState<string | null>(null);
+    const [qrLoading, setQrLoading] = useState(false);
+
     const testXhsMcp = async () => {
         if (!mcpUrl) { onTestStatus('请填写 MCP Server URL'); return; }
-        onTestStatus('正在连接 MCP Server...');
+        onTestStatus('正在连接...');
         try {
             const { XhsMcpClient } = await import('../../../utils/xhsMcpClient');
             const result = await XhsMcpClient.testConnection(mcpUrl);
             if (result.connected) {
                 const toolCount = result.tools?.length || 0;
+                const modeLabel = result.mode === 'bridge' ? 'Bridge' : 'MCP';
+                setConnectedMode(result.mode || '');
                 const loginInfo = result.loggedIn
                     ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}`
-                    : ' | ⚠️ 未登录，请先在浏览器中登录小红书';
-                onTestStatus(`✅ MCP 连接成功! ${toolCount} 个工具可用${loginInfo}`);
+                    : ' | ⚠️ 未登录，请先登录小红书';
+                onTestStatus(`✅ ${modeLabel} 连接成功! ${toolCount} 个工具可用${loginInfo}`);
                 if (result.nickname && !nickname) set('xhsNickname', result.nickname);
                 if (result.userId && !userId) set('xhsUserId', result.userId);
                 onUpdateConfig({ enabled, serverUrl: mcpUrl, loggedInNickname: nickname || result.nickname, loggedInUserId: userId || result.userId });
-            } else { onTestStatus(`❌ 连接失败: ${result.error}`); }
-        } catch (e: any) { onTestStatus(`网络错误: ${e.message}`); }
+            } else { onTestStatus(`❌ 连接失败: ${result.error}`); setConnectedMode(''); }
+        } catch (e: any) { onTestStatus(`网络错误: ${e.message}`); setConnectedMode(''); }
+    };
+
+    const autoDetect = async () => {
+        onTestStatus('🔍 自动探测中...');
+        const { XhsMcpClient } = await import('../../../utils/xhsMcpClient');
+        const candidates = ['/xhs-api', '/xhs-mcp', 'http://localhost:18061/api', 'http://localhost:18060/mcp'];
+        for (const url of candidates) {
+            try {
+                onTestStatus(`🔍 尝试 ${url}...`);
+                const r = await XhsMcpClient.testConnection(url);
+                if (r.connected) {
+                    set('xhsMcpUrl', url);
+                    setConnectedMode(r.mode || '');
+                    const modeLabel = r.mode === 'bridge' ? 'Bridge' : 'MCP';
+                    onTestStatus(`✅ 自动探测成功: ${url} (${modeLabel})`);
+                    if (r.nickname && !nickname) set('xhsNickname', r.nickname);
+                    if (r.userId && !userId) set('xhsUserId', r.userId);
+                    onUpdateConfig({ enabled, serverUrl: url, loggedInNickname: nickname || r.nickname, loggedInUserId: userId || r.userId });
+                    return;
+                }
+            } catch { /* continue */ }
+        }
+        onTestStatus('❌ 自动探测失败，请手动填写 URL 或启动 XHS 服务');
+    };
+
+    const fetchQrCode = async () => {
+        if (!mcpUrl) { onTestStatus('请先连接 MCP 服务'); return; }
+        setQrLoading(true);
+        try {
+            const { XhsMcpClient } = await import('../../../utils/xhsMcpClient');
+            const r = await XhsMcpClient.getLoginQrcode(mcpUrl);
+            if (r.success && r.data) {
+                // data 可能是 base64 字符串或包含 base64 的对象
+                const imgData = typeof r.data === 'string' ? r.data
+                    : r.data.qrcode || r.data.image || r.data.base64 || r.data.qr_code || '';
+                if (imgData) {
+                    const src = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`;
+                    setQrImage(src);
+                } else {
+                    onTestStatus('⚠️ 返回数据中未找到二维码图片');
+                }
+            } else {
+                onTestStatus(`⚠️ 获取二维码失败: ${r.error || '未知错误'}`);
+            }
+        } catch (e: any) {
+            onTestStatus(`⚠️ 获取二维码失败: ${e.message}`);
+        } finally {
+            setQrLoading(false);
+        }
     };
 
     return (
         <div className="bg-red-50/50 p-4 rounded-2xl space-y-3">
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2"><span className="text-lg">📕</span><span className="text-sm font-bold text-red-700">小红书 MCP</span><span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">浏览器自动化</span></div>
+                <div className="flex items-center gap-2">
+                    <span className="text-lg">📕</span>
+                    <span className="text-sm font-bold text-red-700">小红书 MCP</span>
+                    {connectedMode && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${connectedMode === 'bridge' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
+                            {connectedMode === 'bridge' ? 'Bridge 模式' : 'MCP 模式'}
+                        </span>
+                    )}
+                </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={enabled} onChange={e => { set('xhsMcpEnabled', e.target.checked); set('xhsEnabled', e.target.checked); }} className="sr-only peer" />
                     <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
                 </label>
             </div>
-            <p className="text-[10px] text-red-500/70 leading-relaxed">通过 MCP Server（浏览器自动化）操作小红书。角色可以搜索、浏览、发帖、评论。</p>
+            <p className="text-[10px] text-red-500/70 leading-relaxed">双模式小红书自动化。Bridge 模式（推荐）无需 Docker，MCP 模式兼容旧版。</p>
             {enabled && (
                 <div className="space-y-2">
-                    <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Server URL</label><input value={mcpUrl} onChange={e => set('xhsMcpUrl', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" /></div>
-                    <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试 MCP 连接</button>
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Server URL</label><input value={mcpUrl} onChange={e => set('xhsMcpUrl', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="/xhs-api (Bridge) 或 /xhs-mcp (MCP)" /></div>
                     <div className="grid grid-cols-2 gap-2">
-                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label><input value={nickname} onChange={e => set('xhsNickname', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="手动填写（MCP检测可能不准）" /></div>
-                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label><input value={userId} onChange={e => set('xhsUserId', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="可选，用于查看主页" /></div>
+                        <button onClick={testXhsMcp} className="py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                        <button onClick={autoDetect} className="py-2 bg-red-50 text-red-500 text-xs font-bold rounded-xl active:scale-95 transition-transform border border-red-200">🔍 自动探测</button>
+                    </div>
+                    {connectedMode && (
+                        <div className="grid grid-cols-2 gap-2">
+                            <button onClick={fetchQrCode} disabled={qrLoading} className="py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-50">
+                                {qrLoading ? '获取中...' : '📱 扫码登录'}
+                            </button>
+                            <button onClick={async () => {
+                                const { XhsMcpClient } = await import('../../../utils/xhsMcpClient');
+                                const r = await XhsMcpClient.logout(mcpUrl);
+                                onTestStatus(r.success ? '已重置登录状态' : `重置失败: ${r.error}`);
+                            }} className="py-2 bg-slate-100 text-slate-500 text-xs rounded-xl active:scale-95 transition-transform border border-slate-200">
+                                🔄 重置登录
+                            </button>
+                        </div>
+                    )}
+                    {qrImage && (
+                        <div className="flex flex-col items-center gap-2 p-3 bg-white rounded-xl border border-red-200">
+                            <img src={qrImage} alt="小红书登录二维码" className="w-40 h-40 object-contain" />
+                            <p className="text-[10px] text-red-500/70">请用小红书 App 扫码登录</p>
+                            <button onClick={() => setQrImage(null)} className="text-[10px] text-slate-400 underline">关闭</button>
+                        </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label><input value={nickname} onChange={e => set('xhsNickname', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="连接后自动获取" /></div>
+                        <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label><input value={userId} onChange={e => set('xhsUserId', e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="可选" /></div>
                     </div>
                     <p className="text-[10px] text-red-500/70 leading-relaxed">
-                        需要部署 xiaohongshu-mcp 并保持登录。在角色聊天设置中单独开关小红书。<br />
-                        昵称和用户ID用于"查看自己的主页"功能。MCP自动检测可能不准，建议手动填写。<br />
-                        项目: github.com/xpzouying/xiaohongshu-mcp
+                        <b>Bridge 模式（推荐）：</b>双击 scripts/start-xhs.bat 一键启动<br />
+                        <b>MCP 模式：</b>Docker 运行 xiaohongshu-mcp + CORS 代理<br />
+                        本地开发可直接用 /xhs-api 或 /xhs-mcp（Vite 代理）
                     </p>
                 </div>
             )}

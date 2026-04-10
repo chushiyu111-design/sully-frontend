@@ -14,6 +14,7 @@ import type {
 
 const COOKIE_KEY = 'netease_music_cookie';
 const NETEASE_DETAIL_PROXY_PATH = '/netease-api/song-detail';
+const MUSIC_SERVICE_NAME = '音乐服务';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -74,7 +75,7 @@ function assertMusicApiSuccess(value: unknown, fallback: string): void {
     const message = extractErrorMessage(record, fallback);
 
     if (verifyUrl || (code !== null && code < 0)) {
-        throw new Error(verifyUrl ? `${message} | 网易云触发了验证` : message);
+        throw new Error(verifyUrl ? `${message} | ${MUSIC_SERVICE_NAME}触发了验证` : message);
     }
 }
 
@@ -173,7 +174,7 @@ async function enrichSongsWithAlbumCovers(songs: NeteaseSong[]): Promise<Netease
     ]) {
         try {
             const detailResponse = await fetchDetail();
-            assertMusicApiSuccess(detailResponse, '网易云歌曲详情暂时不可用');
+            assertMusicApiSuccess(detailResponse, `${MUSIC_SERVICE_NAME}歌曲详情暂时不可用`);
 
             const detailMap = new Map(
                 (Array.isArray(detailResponse.songs) ? detailResponse.songs : [])
@@ -357,7 +358,7 @@ export async function searchSongs(keyword: string, limit = 30, offset = 0): Prom
         offset,
         type: 1,
     });
-    assertMusicApiSuccess(data, '网易云搜索暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}搜索暂时不可用`);
     const result = asRecord(data.result);
     const rawSongs = Array.isArray(result?.songs) ? result.songs : [];
     const songs = rawSongs
@@ -377,7 +378,7 @@ export async function getSongUrl(ids: number[]): Promise<NeteaseSongUrl[]> {
         cookie: getMusicCookie(),
         br: 320000,
     });
-    assertMusicApiSuccess(data, '网易云播放链接暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}播放链接暂时不可用`);
     const entries = Array.isArray(data.data) ? data.data : [];
     return entries
         .map(normalizeSongUrl)
@@ -404,7 +405,7 @@ export function getAudioProxyUrl(rawUrl: string | null | undefined): string | nu
 
 export async function getLyric(id: number): Promise<NeteaseLyric> {
     const data = await musicPost<JsonRecord>('/api/music/lyric', { id });
-    assertMusicApiSuccess(data, '网易云歌词暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}歌词暂时不可用`);
     const lyric: NeteaseLyric = {};
 
     const lrc = asRecord(data.lrc);
@@ -422,7 +423,7 @@ export async function getLyric(id: number): Promise<NeteaseLyric> {
 
 export async function getSongDetail(ids: number[]): Promise<NeteaseSong[]> {
     const data = await musicPost<{ songs?: unknown }>('/api/music/song/detail', { ids });
-    assertMusicApiSuccess(data, '网易云歌曲详情暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}歌曲详情暂时不可用`);
     const songs = Array.isArray(data.songs) ? data.songs : [];
     return songs
         .map(normalizeSong)
@@ -434,13 +435,13 @@ export async function getPlaylistDetail(id: number): Promise<NeteasePlaylist | n
         id,
         cookie: getMusicCookie(),
     });
-    assertMusicApiSuccess(data, '网易云歌单详情暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}歌单详情暂时不可用`);
     return normalizePlaylist(data.playlist);
 }
 
 export async function getTopPlaylists(cat = '全部', limit = 30): Promise<NeteasePlaylist[]> {
     const data = await musicPost<{ playlists?: unknown }>('/api/music/top/playlist', { cat, limit });
-    assertMusicApiSuccess(data, '网易云推荐歌单暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}推荐歌单暂时不可用`);
     const playlists = Array.isArray(data.playlists) ? data.playlists : [];
     return playlists
         .map(normalizePlaylist)
@@ -480,6 +481,6 @@ export async function getUserAccount(cookie = getMusicCookie()): Promise<Netease
     if (!trimmedCookie) return null;
 
     const data = await musicPost<JsonRecord>('/api/music/user/account', { cookie: trimmedCookie });
-    assertMusicApiSuccess(data, '网易云账号信息暂时不可用');
+    assertMusicApiSuccess(data, `${MUSIC_SERVICE_NAME}账号信息暂时不可用`);
     return normalizeUserAccount(data);
 }

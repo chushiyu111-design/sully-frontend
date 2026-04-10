@@ -16,7 +16,7 @@ interface SongShareCardBubbleProps {
  *   ┌──────────────────────────────┐
  *   │  [cover]  Song Name          │
  *   │  60×60    Artist             │
- *   │           网易云音乐          │
+ *   │            Emo Cloud          │
  *   │──────────────────────────────│
  *   │  🎵 音乐                     │
  *   └──────────────────────────────┘
@@ -160,7 +160,7 @@ const SongShareCardBubble: React.FC<SongShareCardBubbleProps> = ({ metadata }) =
                             marginTop: '1px',
                         }}
                     >
-                        网易云音乐
+                        Emo Cloud
                     </div>
                 </div>
             </div>
@@ -170,28 +170,16 @@ const SongShareCardBubble: React.FC<SongShareCardBubbleProps> = ({ metadata }) =
                 style={{
                     borderTop: '0.5px solid rgba(0,0,0,0.06)',
                     padding: '6px 12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
                 }}
             >
-                <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    style={{ width: '12px', height: '12px', flexShrink: 0 }}
-                >
-                    <path
-                        d="M9 18V5l12-2v13"
-                        stroke="#ccc"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
-                    <circle cx="6" cy="18" r="3" stroke="#ccc" strokeWidth="1.5" />
-                    <circle cx="18" cy="16" r="3" stroke="#ccc" strokeWidth="1.5" />
-                </svg>
-                <span style={{ fontSize: '10px', color: '#ccc', letterSpacing: '0.5px' }}>
-                    音乐
+                <span style={{
+                    fontSize: '10px',
+                    color: '#c0c0c0',
+                    fontFamily: "'Georgia', 'Palatino Linotype', serif",
+                    fontStyle: 'italic',
+                    letterSpacing: '0.8px',
+                }}>
+                    Music
                 </span>
             </div>
         </div>

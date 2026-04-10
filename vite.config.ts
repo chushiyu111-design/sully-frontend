@@ -49,6 +49,23 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/minimax-api/, ''),
       },
+      // XHS Bridge 模式 (xiaohongshu-skills REST server)
+      '/xhs-api': {
+        target: 'http://localhost:18061',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/xhs-api/, '/api'),
+      },
+      // XHS MCP 模式 (xiaohongshu-mcp Go server)
+      '/xhs-mcp': {
+        target: 'http://localhost:18060',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/xhs-mcp/, '/mcp'),
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            proxyRes.headers['access-control-expose-headers'] = 'Mcp-Session-Id';
+          });
+        },
+      },
     },
   },
   base: './',

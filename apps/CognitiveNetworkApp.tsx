@@ -273,11 +273,15 @@ const CognitiveNetworkApp: React.FC = () => {
             try {
                 const processBody: any = {};
                 if (selectedCharId) processBody.charId = selectedCharId;
+                const timeoutSignal = AbortSignal.timeout(120_000);
+                const combinedSignal = controller
+                    ? AbortSignal.any([controller.signal, timeoutSignal])
+                    : timeoutSignal;
                 const r = await fetch(`${url}/api/graph/semantic-process-one`, {
                     method: 'POST',
                     headers: authHeaders(),
                     body: JSON.stringify(processBody),
-                    signal: controller?.signal,
+                    signal: combinedSignal,
                 });
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 const data = await r.json() as any;

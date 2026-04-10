@@ -1,5 +1,5 @@
 /**
- * MusicApp — 网易云音乐真实 API 版
+ * MusicApp — Emo Cloud 真实 API 版
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,6 +21,11 @@ import {
 import './music.css';
 
 const SEARCH_HISTORY_KEY = 'music_recent_keywords';
+const MUSIC_APP_NAME = 'Emo Cloud';
+const MUSIC_VIP_NAME = 'Cloud VIP';
+const MUSIC_SCAN_APP_NAME = '手机音乐 App';
+const MUSIC_WEB_LOGIN_NAME = '网页登录页';
+const MUSIC_SERVICE_NAME = '音乐服务';
 
 type MusicPage = 'discover' | 'search' | 'profile';
 type PrimaryPage = Exclude<MusicPage, 'search'>;
@@ -103,8 +108,8 @@ function getFallbackGradient(seed: number): string {
 
 function getVipLabel(account: NeteaseUserAccount | null): string {
   if (!account?.isVip) return '普通用户';
-  if (account.vipLevel > 0) return `黑胶 VIP Lv.${account.vipLevel}`;
-  return '黑胶 VIP';
+  if (account.vipLevel > 0) return `${MUSIC_VIP_NAME} Lv.${account.vipLevel}`;
+  return MUSIC_VIP_NAME;
 }
 
 function buildQrImageCandidates(qrUrl: string): string[] {
@@ -174,7 +179,7 @@ const DiscoverPage: React.FC<{
     <div className="music-section-header">
       <div>
         <div className="music-section-title">推荐歌单</div>
-        <div className="music-section-subtitle">来自网易云热度榜单的真实歌单</div>
+        <div className="music-section-subtitle">来自真实热度榜单的歌单推荐</div>
       </div>
     </div>
 
@@ -443,7 +448,7 @@ const ProfilePage: React.FC<{
         </div>
 
         {isLoading ? (
-          <div className="music-profile-loading"><div className="music-inline-spinner" /><div className="music-state-text">正在同步网易云账号...</div></div>
+          <div className="music-profile-loading"><div className="music-inline-spinner" /><div className="music-state-text">正在同步 {MUSIC_APP_NAME} 账号...</div></div>
         ) : isLoggedIn && account ? (
           <>
             <CoverArt src={account.avatarUrl} alt={account.nickname} seed={account.userId} className="music-profile-avatar" />
@@ -458,7 +463,7 @@ const ProfilePage: React.FC<{
               <div className="music-profile-tool"><span>动态</span><strong>{account.eventCount}</strong></div>
               <div className="music-profile-tool"><span>状态</span><strong>{account.isVip ? 'VIP' : '普通'}</strong></div>
             </div>
-            <div className="music-profile-summary-card"><div className="music-state-title">网易云账号已连接</div><div className="music-state-text">现在搜索、登录态和播放都走真实接口了。高码率歌曲会自动带上你的登录 cookie 请求。</div></div>
+            <div className="music-profile-summary-card"><div className="music-state-title">{MUSIC_APP_NAME} 已连接</div><div className="music-state-text">现在搜索、登录态和播放都走真实接口了。高码率歌曲会自动带上你的登录 cookie 请求。</div></div>
           </>
         ) : isLoggedIn ? (
           <div className="music-login-card">
@@ -466,13 +471,13 @@ const ProfilePage: React.FC<{
             <div className="music-login-card-text">
               {error
                 ? '这通常是登录态不完整或刚授权后的同步失败。重新扫码一次就能刷新完整 cookie。'
-                : '昵称、头像和 VIP 状态正在从网易云拉取，通常几秒内就会刷新出来。'}
+                : `昵称、头像和 VIP 状态正在从${MUSIC_SERVICE_NAME}拉取，通常几秒内就会刷新出来。`}
             </div>
             <button type="button" className="music-primary-button" onClick={onOpenLogin}>{error ? '重新扫码登录' : '重新打开二维码'}</button>
           </div>
         ) : (
           <div className="music-login-card">
-            <div className="music-login-card-title">登录网易云账号</div>
+            <div className="music-login-card-title">登录 {MUSIC_APP_NAME}</div>
             <div className="music-login-card-text">扫码后可以读取真实昵称、头像和 VIP 状态，并为需要登录态的歌曲拿到可播放链接。</div>
             <button type="button" className="music-primary-button" onClick={onOpenLogin}>打开二维码登录</button>
           </div>
@@ -483,7 +488,7 @@ const ProfilePage: React.FC<{
 
       {!isLoggedIn && !isLoading && (
         <div className="music-profile-empty-stack">
-          <div className="music-state-card"><div className="music-state-title">为什么需要登录？</div><div className="music-state-text">网易云部分歌曲播放链接依赖登录 cookie。登录后，播放器会优先走你的账号权限拿真实音频地址。</div></div>
+          <div className="music-state-card"><div className="music-state-title">为什么需要登录？</div><div className="music-state-text">部分歌曲播放链接依赖登录 cookie。登录后，播放器会优先走你的账号权限拿真实音频地址。</div></div>
           <div className="music-state-card"><div className="music-state-title">你会看到什么</div><div className="music-state-text">昵称、头像、VIP 状态和累计听歌数都会替换掉当前页面里的硬编码占位信息。</div></div>
         </div>
       )}
@@ -548,7 +553,7 @@ const QrLoginModal: React.FC<{ open: boolean; onClose: () => void; onSuccess: ()
 
         if (result.code === 801) {
           setStatus('waiting');
-          setStatusText('请使用网易云音乐 App 扫码。');
+          setStatusText(`请使用${MUSIC_SCAN_APP_NAME}扫码。`);
           return;
         }
         if (result.code === 802) {
@@ -608,7 +613,7 @@ const QrLoginModal: React.FC<{ open: boolean; onClose: () => void; onSuccess: ()
 
         setQrUrl(nextQrUrl);
         setStatus('waiting');
-        setStatusText('请使用网易云音乐 App 扫码。');
+        setStatusText(`请使用${MUSIC_SCAN_APP_NAME}扫码。`);
         await pollStatus(qrKey);
         if (!active) return;
 
@@ -635,7 +640,7 @@ const QrLoginModal: React.FC<{ open: boolean; onClose: () => void; onSuccess: ()
       <div className="music-modal-card" onClick={(event) => event.stopPropagation()}>
         <div className="music-modal-header">
           <div>
-            <div className="music-modal-title">扫码登录网易云</div>
+            <div className="music-modal-title">扫码登录 {MUSIC_APP_NAME}</div>
             <div className="music-modal-subtitle">使用手机 App 扫码后，这台设备会同步你的登录态</div>
           </div>
           <button type="button" className="music-icon-button" onClick={onClose}>×</button>
@@ -648,7 +653,7 @@ const QrLoginModal: React.FC<{ open: boolean; onClose: () => void; onSuccess: ()
             <div className="music-qr-box">
               <img
                 src={qrImageSrc}
-                alt="网易云二维码登录"
+                alt={`${MUSIC_APP_NAME} 二维码登录`}
                 className="music-qr-image"
                 onError={() => setImageIndex((current) => current < qrImageCandidates.length - 1 ? current + 1 : current)}
               />
@@ -662,9 +667,9 @@ const QrLoginModal: React.FC<{ open: boolean; onClose: () => void; onSuccess: ()
 
         {requiresOfficialVerification && (
           <div className="music-state-card" style={{ margin: '0 0 16px', padding: '14px 16px' }}>
-            <div className="music-state-title">这一步是网易云官方验证</div>
-            <div className="music-state-text">先在网易云网页版完成一次验证，再回来重新扫码，通常就能进入成功回调。</div>
-            <button type="button" className="music-secondary-button" onClick={handleOpenNeteaseWeb}>打开网易云网页版</button>
+            <div className="music-state-title">这一步需要网页验证</div>
+            <div className="music-state-text">先在网页登录页完成一次验证，再回来重新扫码，通常就能进入成功回调。</div>
+            <button type="button" className="music-secondary-button" onClick={handleOpenNeteaseWeb}>打开{MUSIC_WEB_LOGIN_NAME}</button>
           </div>
         )}
 
@@ -730,7 +735,7 @@ const FullPlayer: React.FC<{
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="music-player-song-name">{song.name}</div>
-              <div className="music-player-song-artist">{getSongArtists(song)}<span className="music-player-quality-badge">{song.album.name || '网易云音乐'}</span></div>
+              <div className="music-player-song-artist">{getSongArtists(song)}<span className="music-player-quality-badge">{song.album.name || MUSIC_APP_NAME}</span></div>
             </div>
             <div style={{ display: 'flex', gap: 16, flexShrink: 0 }}><div style={{ color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}><IconHeart /></div><div style={{ color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}><IconMore /></div></div>
           </div>

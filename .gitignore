@@ -33,3 +33,7 @@ vite.config.ts.timestamp-*
 
 # Misc junk
 *.lnk
+
+# Local-only XHS toolkit dependency
+scripts/xiaohongshu-skills/
+scripts/xiaohongshu-skills-main/

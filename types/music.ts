@@ -1,54 +1,26 @@
-export type MusicSearchTab =
-    | 'all'
-    | 'song'
-    | 'playlist'
-    | 'album'
-    | 'artist'
-    | 'radio'
-    | 'program';
-
-export type MusicEntityKind = Exclude<MusicSearchTab, 'all'>;
-
 export interface NeteaseArtist {
     id: number;
     name: string;
-    avatarUrl?: string;
 }
 
-export interface NeteaseArtistSummary extends NeteaseArtist {
-    kind: 'artist';
-    picUrl?: string;
-    musicSize?: number;
-    albumSize?: number;
-    briefDesc?: string;
-    description?: string;
-}
-
-export interface NeteaseAlbumSummary {
-    kind: 'album';
+export interface NeteaseAlbum {
     id: number;
     name: string;
     picUrl?: string;
-    artistName?: string;
-    publishTime?: number;
-    songCount?: number;
-    description?: string;
-    songs?: NeteaseSong[];
 }
 
-export type NeteaseAlbum = NeteaseAlbumSummary;
-
 export interface NeteaseSong {
-    kind: 'song';
     id: number;
     name: string;
     artists: NeteaseArtist[];
-    album: NeteaseAlbumSummary;
+    album: NeteaseAlbum;
     duration: number;
-    alias?: string[];
 }
 
-export type SongPlayable = NeteaseSong;
+export interface NeteaseSearchResult {
+    songs?: NeteaseSong[];
+    songCount?: number;
+}
 
 export interface NeteaseSongUrl {
     id: number;
@@ -70,81 +42,12 @@ export interface NeteasePlaylistCreator {
 }
 
 export interface NeteasePlaylist {
-    kind: 'playlist';
     id: number;
     name: string;
     coverImgUrl: string;
     trackCount: number;
     tracks?: NeteaseSong[];
     creator?: NeteasePlaylistCreator;
-    description?: string;
-    playCount?: number;
-}
-
-export interface NeteaseDjCreator {
-    userId: number;
-    nickname: string;
-    avatarUrl?: string;
-}
-
-export interface NeteaseDjRadio {
-    kind: 'radio';
-    id: number;
-    name: string;
-    picUrl: string;
-    description?: string;
-    category?: string;
-    programCount?: number;
-    subCount?: number;
-    dj?: NeteaseDjCreator;
-    lastProgramName?: string;
-    programs?: NeteaseDjProgram[];
-}
-
-export interface NeteaseDjProgram {
-    kind: 'program';
-    id: number;
-    name: string;
-    duration: number;
-    description?: string;
-    coverUrl?: string;
-    serialNum?: number;
-    listenerCount?: number;
-    createTime?: number;
-    radioId?: number;
-    radioName?: string;
-    radio?: NeteaseDjRadio;
-    dj?: NeteaseDjCreator;
-    mainSong?: NeteaseSong;
-}
-
-export type ProgramPlayable = NeteaseDjProgram;
-export type MusicPlayable = SongPlayable | ProgramPlayable;
-
-export type MusicSearchItem =
-    | NeteaseSong
-    | NeteasePlaylist
-    | NeteaseAlbumSummary
-    | NeteaseArtistSummary
-    | NeteaseDjRadio
-    | NeteaseDjProgram;
-
-export interface MusicSearchSection<T extends MusicSearchItem = MusicSearchItem> {
-    tab: MusicSearchTab;
-    title: string;
-    items: T[];
-    total: number;
-    error?: string | null;
-}
-
-export interface MusicSearchBundle {
-    keyword: string;
-    sections: MusicSearchSection[];
-}
-
-export interface NeteaseSearchResult {
-    songs?: NeteaseSong[];
-    songCount?: number;
 }
 
 export interface NeteaseUserAccount {
@@ -178,12 +81,4 @@ export interface LyricLine {
     time: number;
     text: string;
     translation?: string;
-}
-
-export function isSongPlayable(value: MusicPlayable | null | undefined): value is SongPlayable {
-    return value?.kind === 'song';
-}
-
-export function isProgramPlayable(value: MusicPlayable | null | undefined): value is ProgramPlayable {
-    return value?.kind === 'program';
 }

@@ -21,6 +21,21 @@ export interface DistrictInfo {
     districts: DistrictInfo[];
 }
 
+interface MapRequestOptions {
+    signal?: AbortSignal;
+}
+
+interface CacheEntry<T> {
+    expiresAt: number;
+    value: T;
+}
+
+const CITY_INPUT_TIPS_TIMEOUT_MS = 8000;
+const CITY_INPUT_TIPS_CACHE_TTL_MS = 5 * 60 * 1000;
+const CITY_INPUT_TIPS_CACHE_MAX_ENTRIES = 120;
+const cityInputTipsCache = new Map<string, CacheEntry<CityTip[]>>();
+const CITY_INPUT_TIPS_AUTH_ERROR = '城市搜索鉴权失败，请刷新后重试';
+
 function normalizeCityTip(value: unknown): CityTip | null {
     if (!value || typeof value !== 'object') return null;
 
@@ -66,14 +81,83 @@ function normalizeDistrictInfo(value: unknown): DistrictInfo | null {
     };
 }
 
+function getCityInputTipsCacheKey(keyword: string): string {
+    return keyword.trim().toLocaleLowerCase();
+}
+
+function readCityInputTipsCache(cacheKey: string): CityTip[] | null {
+    const cached = cityInputTipsCache.get(cacheKey);
+    if (!cached) return null;
+
+    if (cached.expiresAt <= Date.now()) {
+        cityInputTipsCache.delete(cacheKey);
+        return null;
+    }
+
+    return cached.value;
+}
+
+function writeCityInputTipsCache(cacheKey: string, value: CityTip[]): void {
+    cityInputTipsCache.set(cacheKey, {
+        expiresAt: Date.now() + CITY_INPUT_TIPS_CACHE_TTL_MS,
+        value,
+    });
+
+    while (cityInputTipsCache.size > CITY_INPUT_TIPS_CACHE_MAX_ENTRIES) {
+        const oldestKey = cityInputTipsCache.keys().next().value;
+        if (!oldestKey) break;
+        cityInputTipsCache.delete(oldestKey);
+    }
+}
+
+function createTimedAbortSignal(timeoutMs: number, externalSignal?: AbortSignal): {
+    cleanup: () => void;
+    didTimeout: () => boolean;
+    signal: AbortSignal;
+} {
+    const controller = new AbortController();
+    let timedOut = false;
+
+    const abortFromExternal = () => {
+        controller.abort();
+    };
+
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort();
+        } else {
+            externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+        }
+    }
+
+    const timeoutId = globalThis.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, timeoutMs);
+
+    return {
+        signal: controller.signal,
+        didTimeout: () => timedOut,
+        cleanup: () => {
+            globalThis.clearTimeout(timeoutId);
+            externalSignal?.removeEventListener('abort', abortFromExternal);
+        },
+    };
+}
+
 /**
  * 调用后端 Workers 的 /api/map/inputtips 接口做城市联想
  * @param keyword 用户输入的关键词片段
  * @returns 城市提示列表
  */
-export async function getCityInputTips(keyword: string): Promise<CityTip[]> {
+export async function getCityInputTips(keyword: string, options: MapRequestOptions = {}): Promise<CityTip[]> {
     const trimmedKeyword = keyword.trim();
     if (!trimmedKeyword) return [];
+    const cacheKey = getCityInputTipsCacheKey(trimmedKeyword);
+    const cached = readCityInputTipsCache(cacheKey);
+    if (cached) return cached;
+
+    const abortHandle = createTimedAbortSignal(CITY_INPUT_TIPS_TIMEOUT_MS, options.signal);
 
     try {
         const response = await fetch(
@@ -83,29 +167,43 @@ export async function getCityInputTips(keyword: string): Promise<CityTip[]> {
                     contentType: false,
                     extra: { 'Accept': 'application/json' },
                 }),
-                signal: AbortSignal.timeout(8000),
+                signal: abortHandle.signal,
             },
         );
 
         if (!response.ok) {
+            if (response.status === 429) {
+                return [];
+            }
+            if (response.status === 401 || response.status === 403) {
+                throw new Error(CITY_INPUT_TIPS_AUTH_ERROR);
+            }
             throw new Error(`城市搜索失败 (${response.status})`);
         }
 
         const data = await safeResponseJson(response);
         const tips = Array.isArray(data?.tips) ? (data.tips as unknown[]) : [];
-        return tips.length > 0
+        const normalizedTips = tips.length > 0
             ? tips
                 .map(normalizeCityTip)
                 .filter((tip): tip is CityTip => Boolean(tip))
             : [];
+
+        writeCityInputTipsCache(cacheKey, normalizedTips);
+        return normalizedTips;
     } catch (error) {
-        if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        if (abortHandle.didTimeout()) {
             throw new Error('城市搜索超时，请稍后再试');
+        }
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw error;
         }
         if (error instanceof Error && error.message.trim()) {
             throw error;
         }
         throw new Error('城市搜索失败，请稍后再试');
+    } finally {
+        abortHandle.cleanup();
     }
 }
 

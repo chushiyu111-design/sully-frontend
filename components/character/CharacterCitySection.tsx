@@ -3,6 +3,7 @@ import { getCityInputTips, type CityTip } from '../../utils/mapService';
 
 const CITY_SUGGESTION_LIMIT = 6;
 const CITY_SEARCH_DEBOUNCE_MS = 250;
+const CITY_SEARCH_MIN_KEYWORD_LENGTH = 2;
 const BLUR_CLOSE_DELAY_MS = 120;
 
 type CityFieldKey = 'cityOverride' | 'cityAdcode' | 'isFictionalCity' | 'cityReferenceReal';
@@ -28,6 +29,7 @@ interface CityAutocompleteState {
     debouncedKeyword: string;
     error: string | null;
     isFocused: boolean;
+    isKeywordTooShort: boolean;
     isLoading: boolean;
     suggestions: CityTip[];
     handleBlur: () => void;
@@ -70,8 +72,9 @@ function useCityAutocomplete(keyword: string, enabled: boolean, selectedValue?: 
 
     useEffect(() => {
         const trimmedKeyword = keyword.trim();
+        const shouldDelaySearch = trimmedKeyword.length > 0 && trimmedKeyword.length < CITY_SEARCH_MIN_KEYWORD_LENGTH;
 
-        if (!enabled || !trimmedKeyword) {
+        if (!enabled || !trimmedKeyword || shouldDelaySearch) {
             requestSequenceRef.current += 1;
             setDebouncedKeyword('');
             setSuggestions([]);
@@ -106,8 +109,9 @@ function useCityAutocomplete(keyword: string, enabled: boolean, selectedValue?: 
 
         setIsLoading(true);
         setError(null);
+        const abortController = new AbortController();
 
-        getCityInputTips(debouncedKeyword)
+        getCityInputTips(debouncedKeyword, { signal: abortController.signal })
             .then((tips) => {
                 if (!active || requestSequenceRef.current !== requestId) {
                     return;
@@ -116,6 +120,9 @@ function useCityAutocomplete(keyword: string, enabled: boolean, selectedValue?: 
                 setIsLoading(false);
             })
             .catch((searchError) => {
+                if (searchError instanceof DOMException && searchError.name === 'AbortError') {
+                    return;
+                }
                 if (!active || requestSequenceRef.current !== requestId) {
                     return;
                 }
@@ -126,6 +133,7 @@ function useCityAutocomplete(keyword: string, enabled: boolean, selectedValue?: 
 
         return () => {
             active = false;
+            abortController.abort();
         };
     }, [debouncedKeyword, enabled, selectedValue]);
 
@@ -160,6 +168,7 @@ function useCityAutocomplete(keyword: string, enabled: boolean, selectedValue?: 
         debouncedKeyword,
         error,
         isFocused,
+        isKeywordTooShort: enabled && keyword.trim().length > 0 && keyword.trim().length < CITY_SEARCH_MIN_KEYWORD_LENGTH,
         isLoading,
         suggestions,
         handleBlur,
@@ -301,11 +310,13 @@ const CharacterCitySectionComponent = ({
     const showCitySuggestions = cityAutocomplete.isFocused && !isFictionalCity && cityHasKeyword && cityAutocomplete.suggestions.length > 0;
     const showCityEmptyState = cityAutocomplete.isFocused && !isFictionalCity && cityHasKeyword && !cityAutocomplete.isLoading && !cityAutocomplete.error && cityAutocomplete.suggestions.length === 0;
     const showCityError = cityAutocomplete.isFocused && !isFictionalCity && cityHasKeyword && Boolean(cityAutocomplete.error);
+    const showCityKeywordHint = cityAutocomplete.isFocused && !isFictionalCity && cityAutocomplete.isKeywordTooShort;
 
     const referenceHasKeyword = referenceAutocomplete.debouncedKeyword.length > 0;
     const showReferenceSuggestions = referenceAutocomplete.isFocused && Boolean(isFictionalCity) && referenceHasKeyword && referenceAutocomplete.suggestions.length > 0;
     const showReferenceEmptyState = referenceAutocomplete.isFocused && Boolean(isFictionalCity) && referenceHasKeyword && !referenceAutocomplete.isLoading && !referenceAutocomplete.error && referenceAutocomplete.suggestions.length === 0;
     const showReferenceError = referenceAutocomplete.isFocused && Boolean(isFictionalCity) && referenceHasKeyword && Boolean(referenceAutocomplete.error);
+    const showReferenceKeywordHint = referenceAutocomplete.isFocused && Boolean(isFictionalCity) && referenceAutocomplete.isKeywordTooShort;
 
     const handleSelectCityTip = (tip: CityTip) => {
         setCityKeyword(tip.name);
@@ -382,6 +393,9 @@ const CharacterCitySectionComponent = ({
                     {!isFictionalCity && cityAutocomplete.isLoading && cityHasKeyword && (
                         <div className="mt-2 text-[10px] text-slate-400">正在搜索城市...</div>
                     )}
+                    {showCityKeywordHint && (
+                        <div className="mt-2 text-[10px] text-slate-400">至少输入 2 个字再搜索。</div>
+                    )}
                     {showCityError && (
                         <div className="mt-2 text-[10px] text-red-400">{cityAutocomplete.error}</div>
                     )}
@@ -449,6 +463,9 @@ const CharacterCitySectionComponent = ({
                             )}
                             {referenceAutocomplete.isLoading && referenceHasKeyword && (
                                 <div className="mt-2 text-[10px] text-slate-400">正在搜索参照城市...</div>
+                            )}
+                            {showReferenceKeywordHint && (
+                                <div className="mt-2 text-[10px] text-slate-400">至少输入 2 个字再搜索。</div>
                             )}
                             {showReferenceError && (
                                 <div className="mt-2 text-[10px] text-red-400">{referenceAutocomplete.error}</div>

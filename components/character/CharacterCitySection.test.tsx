@@ -88,7 +88,10 @@ describe('CharacterCitySection', () => {
         await advanceDebounce();
         await flushPromises();
 
-        expect(mockedGetCityInputTips).toHaveBeenCalledWith('上海');
+        expect(mockedGetCityInputTips).toHaveBeenCalledWith(
+            '上海',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
         const suggestion = screen.getByText('上海');
         fireEvent.mouseDown(suggestion.closest('button')!);
 
@@ -96,13 +99,38 @@ describe('CharacterCitySection', () => {
         expect(onFieldChange).toHaveBeenCalledWith('cityAdcode', '310000');
     });
 
+    it('waits for at least two characters before starting a city search', async () => {
+        mockedGetCityInputTips.mockResolvedValue([
+            makeTip('上海', '上海市', '310000'),
+        ]);
+
+        renderSection();
+        const input = screen.getByPlaceholderText('输入城市名搜索...');
+
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: '上' } });
+
+        await advanceDebounce();
+        await flushPromises();
+
+        expect(mockedGetCityInputTips).not.toHaveBeenCalled();
+        expect(screen.getByText('至少输入 2 个字再搜索。')).toBeInTheDocument();
+
+        fireEvent.change(input, { target: { value: '上海' } });
+
+        await advanceDebounce();
+        await flushPromises();
+
+        expect(mockedGetCityInputTips).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps only the latest autocomplete result when requests resolve out of order', async () => {
         const firstSearch = createDeferred<CityTip[]>();
         const secondSearch = createDeferred<CityTip[]>();
 
         mockedGetCityInputTips.mockImplementation((keyword) => {
-            if (keyword === '上') return firstSearch.promise;
-            if (keyword === '上海') return secondSearch.promise;
+            if (keyword === '上海') return firstSearch.promise;
+            if (keyword === '上海市') return secondSearch.promise;
             return Promise.resolve([]);
         });
 
@@ -110,11 +138,11 @@ describe('CharacterCitySection', () => {
         const input = screen.getByPlaceholderText('输入城市名搜索...');
 
         fireEvent.focus(input);
-        fireEvent.change(input, { target: { value: '上' } });
+        fireEvent.change(input, { target: { value: '上海' } });
         await advanceDebounce();
         await flushPromises();
 
-        fireEvent.change(input, { target: { value: '上海' } });
+        fireEvent.change(input, { target: { value: '上海市' } });
         await advanceDebounce();
         await flushPromises();
 

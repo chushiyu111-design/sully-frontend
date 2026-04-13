@@ -145,7 +145,9 @@ const Chat: React.FC = () => {
         };
     }, [activeCharacterId]);
 
-    const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    const char = activeCharacterId
+        ? characters.find(c => c.id === activeCharacterId)
+        : characters[0];
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
 
@@ -1120,8 +1122,11 @@ const Chat: React.FC = () => {
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date')
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
-        .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => { if (char.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false; return true; })
+        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
+        .filter(m => {
+            if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false;
+            return true;
+        })
         .slice(-visibleCount),
         [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
 
@@ -1236,6 +1241,24 @@ const Chat: React.FC = () => {
             setSttProcessing(false);
         }
     }, [char, addToast, reloadMessages]);
+
+    if (!char) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center bg-slate-100 px-6 text-center text-slate-600">
+                <div className="mb-3 h-12 w-12 animate-pulse rounded-full bg-white shadow-sm" />
+                <h2 className="text-base font-semibold text-slate-700">角色资料同步中</h2>
+                <p className="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">
+                    刚刚的人设改动还在切换到聊天页，等角色信息就绪后会自动进入对话。
+                </p>
+                <button
+                    onClick={closeApp}
+                    className="mt-5 rounded-full bg-slate-800 px-4 py-2 text-xs font-medium text-white transition-transform active:scale-95"
+                >
+                    返回桌面
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div

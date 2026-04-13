@@ -1,8 +1,7 @@
 
 
 
-
-import React,{ useRef,useState } from 'react';
+import React,{ useEffect,useRef,useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Message,ChatTheme } from '../../types';
 import { StatusCardData } from '../../types/statusCard';
@@ -206,11 +205,37 @@ const MessageItem = React.memo(({
 
     const handleAvatarClick = () => {
         if (!hasAnyVoice || selectionMode) return;
-        setShowInnerVoice(prev => !prev);
-        // Auto dismiss after 8 seconds (increased for better reading experience)
-        if (innerVoiceTimer.current) clearTimeout(innerVoiceTimer.current);
-        innerVoiceTimer.current = setTimeout(() => setShowInnerVoice(false), 8000);
+        setShowInnerVoice(prev => {
+            const next = !prev;
+
+            if (innerVoiceTimer.current) {
+                clearTimeout(innerVoiceTimer.current);
+                innerVoiceTimer.current = null;
+            }
+
+            // Keep status cards open until the user dismisses them manually.
+            if (next && !statusCardData) {
+                innerVoiceTimer.current = setTimeout(() => {
+                    setShowInnerVoice(false);
+                    innerVoiceTimer.current = null;
+                }, 8000);
+            }
+
+            return next;
+        });
     };
+
+    useEffect(() => () => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+
+        if (innerVoiceTimer.current) {
+            clearTimeout(innerVoiceTimer.current);
+            innerVoiceTimer.current = null;
+        }
+    }, []);
 
     const renderAvatar = (src: string, isCharAvatar = false) => (
         <div
@@ -388,7 +413,8 @@ const MessageItem = React.memo(({
                     {/* Inner Voice / Creative Card Floating Overlay */}
                     {!isUser && showInnerVoice && hasAnyVoice && ReactDOM.createPortal(
                         <div
-                            className="fixed inset-0 z-[9999] flex items-center justify-center transition-opacity duration-300 animate-fade-in"
+                            data-testid="inner-voice-backdrop"
+                            className="fixed inset-0 z-[9999] overflow-y-auto px-4 py-6 transition-opacity duration-300 animate-fade-in sm:px-6 sm:py-10"
                             style={{
                                 backgroundColor: 'rgba(0,0,0,0.65)',
                                 backdropFilter: 'blur(12px)',
@@ -396,108 +422,113 @@ const MessageItem = React.memo(({
                             }}
                             onClick={() => setShowInnerVoice(false)}
                         >
-                            <div
-                                className="relative animate-inner-voice-in"
-                                style={{ width: '330px', maxWidth: 'calc(100vw - 48px)' }}
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                {statusCardData ? (
-                                    /* ═══ Creative Card Mode ═══ */
-                                    <React.Suspense fallback={<div style={{ color: '#fff', textAlign: 'center', padding: '40px' }}>加载中...</div>}>
-                                        <StatusCardRenderer data={statusCardData} />
-                                    </React.Suspense>
-                                ) : innerVoice ? (
-                                    /* ═══ Classic Inner Voice — Premium Art Gallery Card ═══ */
-                                    <div className="relative" style={{
-                                        background: '#F9F8F4',
-                                        borderRadius: '3px',
-                                        boxShadow: '0 30px 60px -15px rgba(0,0,0,0.5), 0 0 20px rgba(0,0,0,0.1), inset 0 0 0 1px rgba(255,255,255,0.7)',
-                                        transform: 'rotate(-1.5deg)',
-                                        padding: '18px',
-                                        paddingBottom: '24px',
-                                    }}>
-                                        <div className="absolute inset-0 pointer-events-none rounded-[3px]" style={{
-                                            opacity: 0.15,
-                                            mixBlendMode: 'color-burn',
-                                            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-                                            backgroundSize: '128px 128px',
-                                        }} />
-                                        <div className="relative w-full aspect-[4/3] bg-[#E8E6DF] z-10" style={{
-                                            boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.06)',
-                                            border: '1px solid rgba(0,0,0,0.05)',
+                            <div className="flex min-h-full items-start justify-center sm:items-center">
+                                <div
+                                    data-testid={statusCardData ? 'status-card-overlay-shell' : 'inner-voice-overlay-shell'}
+                                    className={`relative w-full ${
+                                        statusCardData
+                                            ? 'max-w-[360px] animate-status-card-in'
+                                            : 'max-w-[330px] animate-inner-voice-in'
+                                    }`}
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    {statusCardData ? (
+                                        /* ═══ Creative Card Mode ═══ */
+                                        <React.Suspense fallback={<div style={{ color: '#fff', textAlign: 'center', padding: '40px' }}>加载中...</div>}>
+                                            <StatusCardRenderer data={statusCardData} />
+                                        </React.Suspense>
+                                    ) : innerVoice ? (
+                                        /* ═══ Classic Inner Voice — Premium Art Gallery Card ═══ */
+                                        <div className="relative" style={{
+                                            background: '#F9F8F4',
+                                            borderRadius: '3px',
+                                            boxShadow: '0 30px 60px -15px rgba(0,0,0,0.5), 0 0 20px rgba(0,0,0,0.1), inset 0 0 0 1px rgba(255,255,255,0.7)',
+                                            transform: 'rotate(-1.5deg)',
+                                            padding: '18px',
+                                            paddingBottom: '24px',
                                         }}>
-                                            <img
-                                                src={`/images/inner-voice/${(() => {
-                                                    const str = innerVoice || String(m.id ?? 0);
-                                                    let hash = 0;
-                                                    for (let i = 0; i < str.length; i++) {
-                                                        hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-                                                    }
-                                                    return (((hash % 11) + 11) % 11) + 1;
-                                                })()}.jpg`}
-                                                alt=""
-                                                style={{
-                                                    width: '100%', height: '100%',
-                                                    objectFit: 'cover', objectPosition: 'center',
-                                                    display: 'block',
-                                                    filter: 'contrast(0.95) sepia(15%) opacity(0.95)',
-                                                }}
-                                                decoding="async"
-                                            />
-                                            {(() => {
-                                                const POSTMARKS = [
-                                                    { file: 'postmark.png',  w: 85, h: 85, rotate: -25, bottom: -7, right: -5  },
-                                                    { file: 'postmark2.png', w: 78, h: 90, rotate: -15, bottom: -8, right: -3  },
-                                                    { file: 'postmark3.png', w: 80, h: 80, rotate: -30, bottom: -6, right: -4  },
-                                                    { file: 'postmark4.png', w: 90, h: 75, rotate: -20, bottom: -5, right: -6  },
-                                                ];
-                                                const idx = Math.abs((m.id ?? 0)) % POSTMARKS.length;
-                                                const pm = POSTMARKS[idx];
-                                                return (
-                                                    <div className="absolute pointer-events-none" style={{
-                                                        bottom: `${pm.bottom}px`, right: `${pm.right}px`,
-                                                        width: `${pm.w}px`, height: `${pm.h}px`,
-                                                        opacity: 0.55, mixBlendMode: 'multiply',
-                                                        transform: `rotate(${pm.rotate}deg)`, filter: 'contrast(1.2)',
-                                                    }}>
-                                                        <img src={`/images/decorations/${pm.file}`} alt="postmark" className="w-full h-full object-contain" />
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                        <div className="w-full mt-7 mb-4 flex items-center justify-center relative z-10">
-                                            <div className="text-[10px] tracking-[0.4em] text-[#8C8273] font-serif uppercase">Inner Voice</div>
-                                        </div>
-                                        <div className="relative z-10 px-2" style={{
-                                            color: '#2A2520', fontSize: '16px', lineHeight: '2.0',
-                                            fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif",
-                                            letterSpacing: '1px', textAlign: 'center', whiteSpace: 'pre-wrap',
-                                            minHeight: '60px', display: 'flex', flexDirection: 'column', justifyContent: 'center',
-                                        }}>
-                                            {innerVoice.trim()}
-                                        </div>
-                                        <div className="w-full mt-6 pt-4 border-t border-[#8C8273]/20 flex justify-between items-end relative z-10">
-                                            <span className="text-[9px] text-[#A69D8F] font-serif tracking-[0.2em] uppercase">
-                                                Vol.{String((m.id ?? 0) % 100).padStart(2, '0')}
-                                            </span>
-                                            <span className="text-[9px] text-[#A69D8F] font-serif tracking-[0.2em] uppercase">
+                                            <div className="absolute inset-0 pointer-events-none rounded-[3px]" style={{
+                                                opacity: 0.15,
+                                                mixBlendMode: 'color-burn',
+                                                backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+                                                backgroundSize: '128px 128px',
+                                            }} />
+                                            <div className="relative w-full aspect-[4/3] bg-[#E8E6DF] z-10" style={{
+                                                boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.06)',
+                                                border: '1px solid rgba(0,0,0,0.05)',
+                                            }}>
+                                                <img
+                                                    src={`/images/inner-voice/${(() => {
+                                                        const str = innerVoice || String(m.id ?? 0);
+                                                        let hash = 0;
+                                                        for (let i = 0; i < str.length; i++) {
+                                                            hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+                                                        }
+                                                        return (((hash % 11) + 11) % 11) + 1;
+                                                    })()}.jpg`}
+                                                    alt=""
+                                                    style={{
+                                                        width: '100%', height: '100%',
+                                                        objectFit: 'cover', objectPosition: 'center',
+                                                        display: 'block',
+                                                        filter: 'contrast(0.95) sepia(15%) opacity(0.95)',
+                                                    }}
+                                                    decoding="async"
+                                                />
                                                 {(() => {
-                                                    const d = new Date(m.timestamp);
-                                                    const months = ["Jan.", "Feb.", "Mar.", "Apr.", "May", "Jun.", "Jul.", "Aug.", "Sep.", "Oct.", "Nov.", "Dec."];
-                                                    return `${months[d.getMonth()]} ${d.getDate()}`;
+                                                    const POSTMARKS = [
+                                                        { file: 'postmark.png',  w: 85, h: 85, rotate: -25, bottom: -7, right: -5  },
+                                                        { file: 'postmark2.png', w: 78, h: 90, rotate: -15, bottom: -8, right: -3  },
+                                                        { file: 'postmark3.png', w: 80, h: 80, rotate: -30, bottom: -6, right: -4  },
+                                                        { file: 'postmark4.png', w: 90, h: 75, rotate: -20, bottom: -5, right: -6  },
+                                                    ];
+                                                    const idx = Math.abs((m.id ?? 0)) % POSTMARKS.length;
+                                                    const pm = POSTMARKS[idx];
+                                                    return (
+                                                        <div className="absolute pointer-events-none" style={{
+                                                            bottom: `${pm.bottom}px`, right: `${pm.right}px`,
+                                                            width: `${pm.w}px`, height: `${pm.h}px`,
+                                                            opacity: 0.55, mixBlendMode: 'multiply',
+                                                            transform: `rotate(${pm.rotate}deg)`, filter: 'contrast(1.2)',
+                                                        }}>
+                                                            <img src={`/images/decorations/${pm.file}`} alt="postmark" className="w-full h-full object-contain" />
+                                                        </div>
+                                                    );
                                                 })()}
-                                            </span>
+                                            </div>
+                                            <div className="w-full mt-7 mb-4 flex items-center justify-center relative z-10">
+                                                <div className="text-[10px] tracking-[0.4em] text-[#8C8273] font-serif uppercase">Inner Voice</div>
+                                            </div>
+                                            <div className="relative z-10 px-2" style={{
+                                                color: '#2A2520', fontSize: '16px', lineHeight: '2.0',
+                                                fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif",
+                                                letterSpacing: '1px', textAlign: 'center', whiteSpace: 'pre-wrap',
+                                                minHeight: '60px', display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                                            }}>
+                                                {innerVoice.trim()}
+                                            </div>
+                                            <div className="w-full mt-6 pt-4 border-t border-[#8C8273]/20 flex justify-between items-end relative z-10">
+                                                <span className="text-[9px] text-[#A69D8F] font-serif tracking-[0.2em] uppercase">
+                                                    Vol.{String((m.id ?? 0) % 100).padStart(2, '0')}
+                                                </span>
+                                                <span className="text-[9px] text-[#A69D8F] font-serif tracking-[0.2em] uppercase">
+                                                    {(() => {
+                                                        const d = new Date(m.timestamp);
+                                                        const months = ["Jan.", "Feb.", "Mar.", "Apr.", "May", "Jun.", "Jul.", "Aug.", "Sep.", "Oct.", "Nov.", "Dec."];
+                                                        return `${months[d.getMonth()]} ${d.getDate()}`;
+                                                    })()}
+                                                </span>
+                                            </div>
+                                            <div className="absolute top-0 right-0 w-12 h-12 pointer-events-none rounded-tr-[3px]" style={{
+                                                background: 'linear-gradient(225deg, rgba(0,0,0,0.02) 0%, transparent 50%)',
+                                            }}></div>
                                         </div>
-                                        <div className="absolute top-0 right-0 w-12 h-12 pointer-events-none rounded-tr-[3px]" style={{
-                                            background: 'linear-gradient(225deg, rgba(0,0,0,0.02) 0%, transparent 50%)',
-                                        }}></div>
-                                    </div>
-                                ) : null}
-                                
-                                {/* Tap to close hint */}
-                                <div className="absolute -bottom-10 left-0 right-0 flex justify-center z-10 pointer-events-none opacity-60">
-                                    <div className="text-[10px] text-white/90 font-serif tracking-widest px-3 py-1 rounded-full border border-white/20 bg-black/20 backdrop-blur-sm">
-                                        TAP ANYWHERE TO CLOSE
+                                    ) : null}
+
+                                    <div className="mt-4 flex justify-center opacity-60">
+                                        <div className="pointer-events-none text-[10px] text-white/90 font-serif tracking-widest px-3 py-1 rounded-full border border-white/20 bg-black/20 backdrop-blur-sm">
+                                            TAP ANYWHERE TO CLOSE
+                                        </div>
                                     </div>
                                 </div>
                             </div>

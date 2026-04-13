@@ -5,8 +5,15 @@
  * 负责：CSS变量注入、白名单验证、fallback降级。
  */
 
-import React,{ Suspense,useMemo } from 'react';
+import React,{ Suspense,useEffect,useId,useMemo,useRef,useState } from 'react';
 import { StatusCardData } from '../../types/statusCard';
+import {
+    STATUS_CARD_IFRAME_SHELL,
+    STATUS_CARD_MAX_HEIGHT_PX,
+    STATUS_CARD_MAX_VIEWPORT_HEIGHT,
+    STATUS_CARD_MIN_HEIGHT_PX,
+    STATUS_CARD_WIDTH_PX,
+} from './statusCardIframe';
 
 // ─── Lazy-loaded skeletons ──────────────────────────────────────
 // Each skeleton is lazy-imported to avoid bloating the main bundle.
@@ -33,6 +40,127 @@ function sanitizeColor(value: string | undefined, fallback: string | undefined):
     if (!value) return fallback;
     return SAFE_COLOR_RE.test(value.trim()) ? value.trim() : fallback;
 }
+
+function getFontFamily(fontStyle: StatusCardData['style']['fontStyle']): string {
+    switch (fontStyle) {
+        case 'sans':
+            return "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', sans-serif";
+        case 'mono':
+            return "'SF Mono', 'Fira Code', monospace";
+        case 'handwrite':
+            return "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif";
+        case 'serif':
+        default:
+            return "'Noto Serif SC', 'Songti SC', STSong, serif";
+    }
+}
+
+const FreeformStatusCard: React.FC<{ html: string }> = ({ html }) => {
+    const previewRef = useRef<HTMLIFrameElement>(null);
+    const frameChannel = useId().replace(/:/g, '_');
+    const [previewReady, setPreviewReady] = useState(false);
+    const [previewHeight, setPreviewHeight] = useState(STATUS_CARD_MIN_HEIGHT_PX);
+
+    useEffect(() => {
+        setPreviewHeight(STATUS_CARD_MIN_HEIGHT_PX);
+    }, [html]);
+
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent<{ type?: string; channel?: string; height?: number }>) => {
+            if (event.data?.type !== 'preview-height') return;
+            if (event.data.channel !== frameChannel) return;
+
+            const nextHeight = typeof event.data.height === 'number'
+                ? Math.min(Math.max(event.data.height + 16, STATUS_CARD_MIN_HEIGHT_PX), STATUS_CARD_MAX_HEIGHT_PX)
+                : STATUS_CARD_MIN_HEIGHT_PX;
+
+            setPreviewHeight(nextHeight);
+        };
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+    }, [frameChannel]);
+
+    useEffect(() => {
+        if (!previewReady) return;
+
+        previewRef.current?.contentWindow?.postMessage(
+            { type: 'preview-update', channel: frameChannel, html },
+            '*',
+        );
+    }, [frameChannel, html, previewReady]);
+
+    return (
+        <iframe
+            ref={previewRef}
+            srcDoc={STATUS_CARD_IFRAME_SHELL}
+            sandbox="allow-scripts"
+            title="Freeform creative card"
+            data-preview-channel={frameChannel}
+            style={{
+                width: `${STATUS_CARD_WIDTH_PX}px`,
+                maxWidth: 'calc(100vw - 48px)',
+                height: `${previewHeight}px`,
+                maxHeight: `min(${STATUS_CARD_MAX_HEIGHT_PX}px, ${STATUS_CARD_MAX_VIEWPORT_HEIGHT})`,
+                border: 'none',
+                borderRadius: '24px',
+                background: 'transparent',
+                colorScheme: 'light dark',
+                overflow: 'hidden',
+                display: 'block',
+            }}
+            onLoad={() => setPreviewReady(true)}
+        />
+    );
+};
+
+const CustomTextCard: React.FC<{ data: StatusCardData }> = ({ data }) => (
+    <div
+        data-testid="custom-text-status-card"
+        style={{
+            width: `${STATUS_CARD_WIDTH_PX}px`,
+            maxWidth: 'calc(100vw - 48px)',
+            borderRadius: '24px',
+            padding: '22px 20px',
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06))',
+            border: '1px solid rgba(255,255,255,0.12)',
+            boxShadow: '0 24px 40px rgba(0,0,0,0.28)',
+            color: data.style.textColor || '#f8fafc',
+            fontFamily: getFontFamily(data.style.fontStyle),
+            whiteSpace: 'pre-wrap',
+        }}
+    >
+        {data.title && (
+            <div style={{
+                fontSize: '11px',
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                opacity: 0.48,
+                marginBottom: '12px',
+            }}>
+                {data.title}
+            </div>
+        )}
+        <div style={{
+            fontSize: '14px',
+            lineHeight: 1.8,
+            minHeight: '40px',
+        }}>
+            {data.body}
+        </div>
+        {data.footer && (
+            <div style={{
+                marginTop: '14px',
+                paddingTop: '12px',
+                borderTop: '1px solid rgba(255,255,255,0.12)',
+                fontSize: '11px',
+                opacity: 0.6,
+            }}>
+                {data.footer}
+            </div>
+        )}
+    </div>
+);
 
 // ─── Fallback Card (classic innerVoice text) ────────────────────
 const FallbackCard: React.FC<{ data: StatusCardData }> = ({ data }) => (
@@ -127,23 +255,12 @@ const StatusCardRenderer: React.FC<StatusCardRendererProps> = ({ data }) => {
     // ── Freeform HTML card: render in sandboxed iframe ──
     if (sanitizedData.cardType === 'freeform' && sanitizedData.meta?.html) {
         return (
-            <iframe
-                srcDoc={sanitizedData.meta.html}
-                sandbox="allow-scripts"
-                title="Freeform creative card"
-                style={{
-                    width: '330px',
-                    maxWidth: 'calc(100vw - 48px)',
-                    height: '220px',
-                    border: 'none',
-                    borderRadius: '6px',
-                    background: 'transparent',
-                    colorScheme: 'light dark',
-                    overflow: 'hidden',
-                    display: 'block',
-                }}
-            />
+            <FreeformStatusCard html={sanitizedData.meta.html} />
         );
+    }
+
+    if (sanitizedData.cardType === 'custom_text') {
+        return <CustomTextCard data={sanitizedData} />;
     }
 
     // Resolve skeleton component

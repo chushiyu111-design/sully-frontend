@@ -85,6 +85,23 @@ describe('MessageItem status overlay', () => {
         expect(screen.queryByTestId('status-card-overlay-shell')).not.toBeInTheDocument();
     });
 
+    it('keeps classic inner voice overlays open past 8 seconds and closes only when the backdrop is clicked', () => {
+        vi.useFakeTimers();
+
+        renderMessageItem({
+            innerVoice: '今天想把这些话慢慢说完，再晚一点也没关系。',
+        });
+
+        fireEvent.click(screen.getByAltText('avatar').parentElement!);
+        expect(screen.getByTestId('inner-voice-overlay-shell')).toBeInTheDocument();
+
+        vi.advanceTimersByTime(9000);
+        expect(screen.getByTestId('inner-voice-overlay-shell')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByTestId('inner-voice-backdrop'));
+        expect(screen.queryByTestId('inner-voice-overlay-shell')).not.toBeInTheDocument();
+    });
+
     it('uses separate animation shells for status cards and classic inner voice cards', async () => {
         const firstRender = renderMessageItem({
             statusCardData: {
@@ -95,9 +112,13 @@ describe('MessageItem status overlay', () => {
         });
 
         fireEvent.click(screen.getByAltText('avatar').parentElement!);
-        expect(await screen.findByTestId('status-card-overlay-shell')).toHaveClass('animate-status-card-in');
-        expect(screen.getByTestId('status-card-overlay-shell')).toHaveClass('my-auto');
-        expect(screen.getByTestId('status-card-overlay-shell')).toHaveClass('justify-center');
+        const statusShell = await screen.findByTestId('status-card-overlay-shell');
+        expect(statusShell).toHaveClass('animate-status-card-in');
+        expect(statusShell).toHaveClass('my-auto');
+        expect(statusShell).toHaveClass('flex-col');
+        expect(statusShell).toHaveClass('items-center');
+        expect(statusShell).toHaveClass('justify-center');
+        expect(statusShell).not.toContainElement(screen.getByTestId('inner-voice-close-hint'));
 
         firstRender.unmount();
 
@@ -106,8 +127,39 @@ describe('MessageItem status overlay', () => {
         });
 
         fireEvent.click(screen.getByAltText('avatar').parentElement!);
-        expect(screen.getByTestId('inner-voice-overlay-shell')).toHaveClass('animate-inner-voice-in');
-        expect(screen.getByTestId('inner-voice-overlay-shell')).toHaveClass('my-auto');
-        expect(screen.getByTestId('inner-voice-overlay-shell')).toHaveClass('justify-center');
+        const innerVoiceShell = screen.getByTestId('inner-voice-overlay-shell');
+        expect(innerVoiceShell).toHaveClass('animate-inner-voice-in');
+        expect(innerVoiceShell).toHaveClass('my-auto');
+        expect(innerVoiceShell).toHaveClass('flex-col');
+        expect(innerVoiceShell).toHaveClass('items-center');
+        expect(innerVoiceShell).toHaveClass('justify-center');
+        expect(innerVoiceShell).not.toContainElement(screen.getByTestId('inner-voice-close-hint'));
+    });
+
+    it('shows expand control only for long classic inner voice text', () => {
+        renderMessageItem({
+            innerVoice: '今天风有点大，不过刚好适合把脑子里的杂音都吹散。',
+        });
+
+        fireEvent.click(screen.getByAltText('avatar').parentElement!);
+        expect(screen.queryByTestId('classic-inner-voice-toggle')).not.toBeInTheDocument();
+    });
+
+    it('expands long classic inner voice text inside the existing overlay', () => {
+        renderMessageItem({
+            innerVoice: '今天风很大，但我还是想把这件事慢慢想完。等会儿回去要先把桌上的纸整理掉，再看看明天那场见面到底要不要提前准备一点，不然晚上又会想起它。'
+        });
+
+        fireEvent.click(screen.getByAltText('avatar').parentElement!);
+
+        const toggle = screen.getByTestId('classic-inner-voice-toggle');
+        const scrollArea = screen.getByTestId('classic-inner-voice-scroll-area');
+        expect(toggle).toHaveTextContent('展开全文');
+        expect(scrollArea.style.maxHeight).toBe('');
+
+        fireEvent.click(toggle);
+        expect(screen.getByTestId('classic-inner-voice-toggle')).toHaveTextContent('收起全文');
+        expect(screen.getByTestId('classic-inner-voice-scroll-area').style.maxHeight).toBe('calc(100vh - 120px)');
+        expect(screen.getByTestId('classic-inner-voice-text')).toHaveTextContent('今天风很大');
     });
 });

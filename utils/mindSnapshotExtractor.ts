@@ -30,6 +30,7 @@ import {
 const SENSE_TIMEOUT_MS = 60000;   // senseBefore 超时（与 embedding/rerank 并行，不影响用户等待）
 const VOICE_TIMEOUT_MS = 180000;  // innerVoice 超时（不阻塞，可以慢一点）
 const AUTO_RETRY_DELAY_MS = 3000;
+const CLASSIC_INNER_VOICE_MAX_LENGTH = 120;
 
 // Module-level: abort-and-replace controllers
 let activeSenseController: AbortController | null = null;
@@ -93,6 +94,83 @@ function buildRecentContext(msgs: Message[], charName: string, limit: number = 3
     }
 
     return lines.length > 0 ? lines.join('\n') : null;
+}
+
+function sanitizeClassicInnerVoice(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+
+    const normalized = value
+        .replace(/\r\n?/g, '\n')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join('\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+
+    if (!normalized) return null;
+    return normalized.slice(0, CLASSIC_INNER_VOICE_MAX_LENGTH);
+}
+
+function unescapeInnerVoiceFallback(value: string): string {
+    return value
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '')
+        .replace(/\\t/g, ' ')
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, '\'')
+        .replace(/\\\\/g, '\\');
+}
+
+function extractInnerVoiceFallback(raw: string): string | null {
+    if (!raw) return null;
+
+    const keyMatch = /["']?innerVoice["']?/i.exec(raw);
+    if (!keyMatch || keyMatch.index == null) return null;
+
+    let remainder = raw.slice(keyMatch.index + keyMatch[0].length);
+    const colonIndex = remainder.search(/[:：]/);
+    if (colonIndex < 0) return null;
+
+    remainder = remainder.slice(colonIndex + 1).trim();
+    if (!remainder) return null;
+
+    const firstChar = remainder[0];
+    let candidate = '';
+
+    if (firstChar === '"' || firstChar === '\'' || firstChar === '“') {
+        const closingQuote = firstChar === '“' ? '”' : firstChar;
+        let isEscaped = false;
+
+        for (let i = 1; i < remainder.length; i++) {
+            const ch = remainder[i];
+
+            if ((closingQuote === '"' || closingQuote === '\'') && ch === '\\' && !isEscaped) {
+                isEscaped = true;
+                continue;
+            }
+
+            if (ch === closingQuote && !isEscaped) {
+                candidate = remainder.slice(1, i);
+                break;
+            }
+
+            isEscaped = false;
+        }
+
+        if (!candidate) {
+            candidate = remainder.slice(1);
+        }
+    } else {
+        candidate = remainder.split(/\r?\n/, 1)[0] || remainder;
+    }
+
+    const cleaned = candidate
+        .replace(/```[\s\S]*$/u, '')
+        .replace(/[,}\]]+\s*$/u, '')
+        .trim();
+
+    return sanitizeClassicInnerVoice(unescapeInnerVoiceFallback(cleaned));
 }
 
 
@@ -326,7 +404,7 @@ innerVoice 是${charName}此刻脑子里一闪而过的念头。
 - 这是角色脑子里的画外音，不是说出来的台词——可以更随意、更碎片化
 - 可以跟对话无关——走神、发呆、突然想到一件别的事、肚子饿了、想吐槽什么
 - 有具体细节：想到具体的事、具体的东西、具体的感受，不要空泛抒情
-- 简短有力，像一个真实的念头闪过，不超过40字
+- 简短有力，像一个真实的念头闪过，优先控制在40字以内；如果确实需要，可以稍长，但最长不要超过120字
 - 参考角色当前身体状态来影响心声内容（累了就想休息，紧张就想逃避，等等）
 
 ### 绝对不要
@@ -378,7 +456,7 @@ ${aiReply}
 
 然后只输出以下 JSON：
 {
-  "innerVoice": "${charName}的内心独白（40字以内）"
+  "innerVoice": "${charName}的内心独白（优先40字内，最长120字）"
 }`;
 
     return { system, user };
@@ -431,19 +509,25 @@ async function generateInnerVoice(
         const content = await callSecondaryLLM(apiConfig, prompt.system, prompt.user, controller.signal, 800, 0.6);
         if (!content) return null;
 
-        const parsed = extractJsonTyped(content, (obj: any) => {
-            if (obj.innerVoice && typeof obj.innerVoice === 'string') {
-                return {
-                    innerVoice: String(obj.innerVoice).slice(0, 80),
-                };
-            }
-            return null;
+        let parsed = extractJsonTyped(content, (obj: any) => {
+            const normalized = sanitizeClassicInnerVoice(obj.innerVoice);
+            if (!normalized) return null;
+
+            return {
+                innerVoice: normalized,
+            };
         });
 
         if (!parsed) {
-            console.warn('💭 [InnerVoice] Failed to parse:', content.slice(0, 200));
-            onError?.(`心声JSON解析失败`);
-            return null;
+            const recoveredInnerVoice = extractInnerVoiceFallback(content);
+            if (!recoveredInnerVoice) {
+                console.warn('💭 [InnerVoice] Failed to parse:', content.slice(0, 200));
+                onError?.(`心声JSON解析失败`);
+                return null;
+            }
+
+            parsed = { innerVoice: recoveredInnerVoice };
+            console.warn('💭 [InnerVoice] Recovered via fallback extraction');
         }
 
         // Update the stored InternalState with the new innerVoice

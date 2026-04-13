@@ -25,6 +25,7 @@ import ChatBubble from './ChatBubble';
 import InteractionPill from './InteractionPill';
 import VoiceBubble from './VoiceBubble';
 const StatusCardRenderer = React.lazy(() => import('./StatusCardRenderer'));
+const CLASSIC_INNER_VOICE_PREVIEW_THRESHOLD = 48;
 
 // --- Deduplicated Selection Checkbox ---
 const SelectionCheckbox: React.FC<{ isSelected: boolean; onToggle: () => void }> = ({ isSelected, onToggle }) => (
@@ -118,7 +119,7 @@ const MessageItem = React.memo(({
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
     const [showInnerVoice, setShowInnerVoice] = useState(false);
-    const innerVoiceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [isClassicInnerVoiceExpanded, setIsClassicInnerVoiceExpanded] = useState(false);
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
 
@@ -201,39 +202,26 @@ const MessageItem = React.memo(({
         </div>
     ) : null;
 
-    const hasAnyVoice = !!(innerVoice || statusCardData);
+    const trimmedInnerVoice = innerVoice?.trim() || '';
+    const hasClassicInnerVoice = trimmedInnerVoice.length > 0;
+    const hasAnyVoice = hasClassicInnerVoice || !!statusCardData;
+    const showClassicInnerVoiceToggle = !statusCardData && trimmedInnerVoice.length > CLASSIC_INNER_VOICE_PREVIEW_THRESHOLD;
 
     const handleAvatarClick = () => {
         if (!hasAnyVoice || selectionMode) return;
-        setShowInnerVoice(prev => {
-            const next = !prev;
-
-            if (innerVoiceTimer.current) {
-                clearTimeout(innerVoiceTimer.current);
-                innerVoiceTimer.current = null;
-            }
-
-            // Keep status cards open until the user dismisses them manually.
-            if (next && !statusCardData) {
-                innerVoiceTimer.current = setTimeout(() => {
-                    setShowInnerVoice(false);
-                    innerVoiceTimer.current = null;
-                }, 8000);
-            }
-
-            return next;
-        });
+        setShowInnerVoice(prev => !prev);
     };
+
+    useEffect(() => {
+        if (!showInnerVoice) {
+            setIsClassicInnerVoiceExpanded(false);
+        }
+    }, [showInnerVoice, trimmedInnerVoice]);
 
     useEffect(() => () => {
         if (longPressTimer.current) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
-        }
-
-        if (innerVoiceTimer.current) {
-            clearTimeout(innerVoiceTimer.current);
-            innerVoiceTimer.current = null;
         }
     }, []);
 
@@ -425,7 +413,7 @@ const MessageItem = React.memo(({
                             <div className="flex min-h-full flex-col items-center">
                                 <div
                                     data-testid={statusCardData ? 'status-card-overlay-shell' : 'inner-voice-overlay-shell'}
-                                    className={`relative my-auto flex w-full justify-center ${
+                                    className={`relative my-auto flex w-full flex-col items-center justify-center ${
                                         statusCardData
                                             ? 'max-w-[360px] animate-status-card-in'
                                             : 'max-w-[330px] animate-inner-voice-in'
@@ -437,7 +425,7 @@ const MessageItem = React.memo(({
                                         <React.Suspense fallback={<div style={{ color: '#fff', textAlign: 'center', padding: '40px' }}>加载中...</div>}>
                                             <StatusCardRenderer data={statusCardData} />
                                         </React.Suspense>
-                                    ) : innerVoice ? (
+                                    ) : hasClassicInnerVoice ? (
                                         /* ═══ Classic Inner Voice — Premium Art Gallery Card ═══ */
                                         <div className="relative" style={{
                                             background: '#F9F8F4',
@@ -446,6 +434,9 @@ const MessageItem = React.memo(({
                                             transform: 'rotate(-1.5deg)',
                                             padding: '18px',
                                             paddingBottom: '24px',
+                                            maxHeight: 'calc(100vh - 48px)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
                                         }}>
                                             <div className="absolute inset-0 pointer-events-none rounded-[3px]" style={{
                                                 opacity: 0.15,
@@ -459,7 +450,7 @@ const MessageItem = React.memo(({
                                             }}>
                                                 <img
                                                     src={`/images/inner-voice/${(() => {
-                                                        const str = innerVoice || String(m.id ?? 0);
+                                                        const str = trimmedInnerVoice || String(m.id ?? 0);
                                                         let hash = 0;
                                                         for (let i = 0; i < str.length; i++) {
                                                             hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
@@ -504,8 +495,42 @@ const MessageItem = React.memo(({
                                                 fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif",
                                                 letterSpacing: '1px', textAlign: 'center', whiteSpace: 'pre-wrap',
                                                 minHeight: '60px', display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                                                flex: isClassicInnerVoiceExpanded ? '1 1 auto' : undefined,
+                                                minWidth: 0,
                                             }}>
-                                                {innerVoice.trim()}
+                                                <div
+                                                    data-testid="classic-inner-voice-scroll-area"
+                                                    style={{
+                                                        maxHeight: isClassicInnerVoiceExpanded ? 'calc(100vh - 120px)' : undefined,
+                                                        overflowY: isClassicInnerVoiceExpanded ? 'auto' : 'visible',
+                                                        paddingRight: isClassicInnerVoiceExpanded ? '6px' : undefined,
+                                                    }}
+                                                >
+                                                    <div
+                                                        data-testid="classic-inner-voice-text"
+                                                        style={isClassicInnerVoiceExpanded ? undefined : {
+                                                            display: '-webkit-box',
+                                                            WebkitLineClamp: 3,
+                                                            WebkitBoxOrient: 'vertical',
+                                                            overflow: 'hidden',
+                                                        }}
+                                                    >
+                                                        {trimmedInnerVoice}
+                                                    </div>
+                                                </div>
+                                                {showClassicInnerVoiceToggle ? (
+                                                    <button
+                                                        type="button"
+                                                        data-testid="classic-inner-voice-toggle"
+                                                        className="mt-3 self-center text-[11px] tracking-[0.18em] text-[#8C8273] font-serif uppercase transition-opacity hover:opacity-75"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setIsClassicInnerVoiceExpanded(prev => !prev);
+                                                        }}
+                                                    >
+                                                        {isClassicInnerVoiceExpanded ? '收起全文' : '展开全文'}
+                                                    </button>
+                                                ) : null}
                                             </div>
                                             <div className="w-full mt-6 pt-4 border-t border-[#8C8273]/20 flex justify-between items-end relative z-10">
                                                 <span className="text-[9px] text-[#A69D8F] font-serif tracking-[0.2em] uppercase">
@@ -525,11 +550,14 @@ const MessageItem = React.memo(({
                                         </div>
                                     ) : null}
 
-                                    <div className="mt-4 flex justify-center opacity-60">
-                                        <div className="pointer-events-none text-[10px] text-white/90 font-serif tracking-widest px-3 py-1 rounded-full border border-white/20 bg-black/20 backdrop-blur-sm">
-                                            TAP ANYWHERE TO CLOSE
-                                        </div>
-                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                data-testid="inner-voice-close-hint"
+                                className="pointer-events-none fixed inset-x-0 bottom-8 flex justify-center opacity-60 sm:bottom-10"
+                            >
+                                <div className="text-[10px] text-white/90 font-serif tracking-widest px-3 py-1 rounded-full border border-white/20 bg-black/20 backdrop-blur-sm">
+                                    TAP ANYWHERE TO CLOSE
                                 </div>
                             </div>
                         </div>,

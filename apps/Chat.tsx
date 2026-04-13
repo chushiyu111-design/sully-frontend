@@ -26,7 +26,7 @@ import {
 } from '../utils/autonomousAgent';
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [lifeStreamVisibleInChat, setLifeStreamVisibleInChat] = useState(() => (
@@ -145,9 +145,20 @@ const Chat: React.FC = () => {
         };
     }, [activeCharacterId]);
 
-    const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    const matchedChar = activeCharacterId
+        ? characters.find(c => c.id === activeCharacterId)
+        : undefined;
+    const char = matchedChar || (isDataLoaded ? characters[0] : undefined);
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
+
+    useEffect(() => {
+        if (!isDataLoaded || characters.length === 0) return;
+
+        if (!activeCharacterId || !characters.some(candidate => candidate.id === activeCharacterId)) {
+            setActiveCharacterId(characters[0].id);
+        }
+    }, [isDataLoaded, characters, activeCharacterId, setActiveCharacterId]);
 
     // Timestamp: theme can force-enable (e.g. WeChat), otherwise per-character user setting
     const isTimestampForced = !!activeTheme.showTimestamp;
@@ -650,6 +661,10 @@ const Chat: React.FC = () => {
     };
 
     const handleBgUpload = async (file: File) => {
+        if (!char) {
+            addToast('角色资料同步中，请稍后再试', 'error');
+            return;
+        }
         try {
             const dataUrl = await processImage(file, { skipCompression: true });
             updateCharacter(char.id, { chatBackground: dataUrl });
@@ -660,6 +675,10 @@ const Chat: React.FC = () => {
     };
 
     const saveSettings = () => {
+        if (!char) {
+            addToast('角色资料同步中，请稍后再试', 'error');
+            return;
+        }
         updateCharacter(char.id, {
             contextLimit: settingsContextLimit,
             hideSystemLogs: settingsHideSysLogs
@@ -697,6 +716,10 @@ const Chat: React.FC = () => {
     };
 
     const handleSetHistoryStart = (messageId: number | undefined) => {
+        if (!char) {
+            addToast('角色资料同步中，请稍后再试', 'error');
+            return;
+        }
         updateCharacter(char.id, { hideBeforeMessageId: messageId });
         setModalType('none');
         addToast(messageId ? '已隐藏历史消息' : '已恢复全部历史记录', 'success');
@@ -821,7 +844,10 @@ const Chat: React.FC = () => {
         if (!selectedMessage) return;
         setReplyTarget({
             ...selectedMessage,
-            metadata: { ...selectedMessage.metadata, senderName: selectedMessage.role === 'user' ? '我' : char.name }
+            metadata: {
+                ...selectedMessage.metadata,
+                senderName: selectedMessage.role === 'user' ? '我' : (char?.name || '角色'),
+            }
         });
         setModalType('none');
     };
@@ -924,7 +950,7 @@ const Chat: React.FC = () => {
             return;
         }
 
-        const filename = `voice_${char.name}_${new Date().toISOString().slice(0, 10)}_${msgId}.mp3`;
+        const filename = `voice_${char?.name || 'character'}_${new Date().toISOString().slice(0, 10)}_${msgId}.mp3`;
 
         // Try navigator.share first (works on mobile PWA)
         if (navigator.share && navigator.canShare) {
@@ -1120,8 +1146,11 @@ const Chat: React.FC = () => {
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date')
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
-        .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => { if (char.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false; return true; })
+        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
+        .filter(m => {
+            if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false;
+            return true;
+        })
         .slice(-visibleCount),
         [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
 
@@ -1237,6 +1266,24 @@ const Chat: React.FC = () => {
         }
     }, [char, addToast, reloadMessages]);
 
+    if (!char) {
+        return (
+            <div className="flex h-full flex-col items-center justify-center bg-slate-100 px-6 text-center text-slate-600">
+                <div className="mb-3 h-12 w-12 animate-pulse rounded-full bg-white shadow-sm" />
+                <h2 className="text-base font-semibold text-slate-700">角色资料同步中</h2>
+                <p className="mt-2 max-w-xs text-xs leading-relaxed text-slate-500">
+                    刚刚的人设改动还在切换到聊天页，等角色信息就绪后会自动进入对话。
+                </p>
+                <button
+                    onClick={closeApp}
+                    className="mt-5 rounded-full bg-slate-800 px-4 py-2 text-xs font-medium text-white transition-transform active:scale-95"
+                >
+                    返回桌面
+                </button>
+            </div>
+        );
+    }
+
     return (
         <div
             className={`sully-chat-container flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image] duration-500 theme-${activeTheme.baseThemeId || activeTheme.id}`}
@@ -1334,10 +1381,27 @@ const Chat: React.FC = () => {
                 onSaveCustomTemplate={(tpl) => {
                     const { _setActiveOnly, ...templateToSave } = tpl;
                     if (_setActiveOnly) {
-                        updateCharacter(char.id, { activeCustomTemplateId: tpl.id });
+                        updateCharacter(char.id, {
+                            activeCustomTemplateId: tpl.id,
+                            statusBarMode: 'custom',
+                        });
                     } else {
-                        updateCharacter(char.id, { customStatusTemplates: [templateToSave] });
-                        addToast('自定义模板已保存', 'success');
+                        const currentTemplates = char.customStatusTemplates || [];
+                        const hasExistingTemplate = currentTemplates.some(existing => existing.id === templateToSave.id);
+                        const nextTemplates = hasExistingTemplate
+                            ? currentTemplates.map(existing => (
+                                existing.id === templateToSave.id
+                                    ? { ...existing, ...templateToSave }
+                                    : existing
+                            ))
+                            : [...currentTemplates, templateToSave];
+
+                        updateCharacter(char.id, {
+                            customStatusTemplates: nextTemplates,
+                            activeCustomTemplateId: templateToSave.id,
+                            statusBarMode: 'custom',
+                        });
+                        addToast('自定义方案已保存', 'success');
                     }
                 }}
                 showThinking={char.showThinking !== false}

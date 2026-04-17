@@ -31,6 +31,14 @@ export interface RawSenseOutput {
     energyDrain: SenseDelta;    // 精力消耗 → 映射到 energy（注意方向反转）
 }
 
+/** Gamygdala 风格的目标评估结果 */
+export interface GoalAppraisal {
+    direction: 'advance' | 'hinder' | 'none';
+    goalDescription: string;
+    goalUtility: number;     // 0~1
+    goalCategory: string;    // attachment / status / protection / autonomy / pleasure
+}
+
 /** 7 种递质的键名 */
 const HORMONE_KEYS = [
     'dopamine', 'serotonin', 'cortisol', 'oxytocin',
@@ -111,6 +119,43 @@ const SENSE_TO_HORMONE: { senseKey: keyof RawSenseOutput; hormoneKey: HormoneKey
     { senseKey: 'relief',      hormoneKey: 'endorphin' },
     { senseKey: 'energyDrain', hormoneKey: 'energy', invert: true },
 ];
+
+/**
+ * 基于 Gamygdala Appraisal Theory 计算目标对激素的修正因子。
+ *
+ * 目标推进(advance) → dopamine↑, cortisol↓
+ * 目标受阻(hinder)  → dopamine↓, cortisol↑
+ * 修正幅度与目标的 utility (重要度) 成正比。
+ */
+function computeGoalModifiers(appraisal: GoalAppraisal): Partial<Record<HormoneKey, number>> {
+    if (appraisal.direction === 'none') return {};
+
+    const u = appraisal.goalUtility;
+    const sign = appraisal.direction === 'advance' ? 1 : -1;
+
+    const mods: Partial<Record<HormoneKey, number>> = {};
+
+    // 核心：目标 congruence → dopamine, incongruence → cortisol
+    mods.dopamine = sign * u * 0.12;
+    mods.cortisol = -sign * u * 0.10;
+
+    // attachment 类目标额外影响 oxytocin
+    if (appraisal.goalCategory === 'attachment') {
+        mods.oxytocin = sign * u * 0.08;
+    }
+
+    // protection 类目标受阻 → norepinephrine↑（保护欲受挫→警觉）
+    if (appraisal.goalCategory === 'protection' && appraisal.direction === 'hinder') {
+        mods.norepinephrine = u * 0.06;
+    }
+
+    // 高重要度目标推进 → serotonin↑（目标确认→基线稳固）
+    if (appraisal.direction === 'advance' && u > 0.7) {
+        mods.serotonin = u * 0.05;
+    }
+
+    return mods;
+}
 
 /**
  * 将副模型的人话感知转为 7 个目标数值。
@@ -383,6 +428,7 @@ const HABITUATION_DAMPING = 0.90;
 export function computeNewState(
     sense: RawSenseOutput,
     previous: InternalState | undefined,
+    goalAppraisal?: GoalAppraisal,
 ): Omit<InternalState, 'innerVoice' | 'surfaceEmotion'> {
     const now = Date.now();
 
@@ -423,6 +469,18 @@ export function computeNewState(
     for (const key of HORMONE_KEYS) {
         if (isNaN(targets[key])) {
             targets[key] = decayed[key];  // 保持当前值，不拉回基线
+        }
+    }
+
+    // Step 1.7: 目标评估修正 (Gamygdala appraisal injection)
+    // 事件对角色目标的推进/阻碍直接调制激素目标值
+    if (goalAppraisal && goalAppraisal.direction !== 'none') {
+        const mods = computeGoalModifiers(goalAppraisal);
+        for (const key of HORMONE_KEYS) {
+            const mod = mods[key];
+            if (mod) {
+                targets[key] = Math.max(0.05, Math.min(0.95, targets[key] + mod));
+            }
         }
     }
 

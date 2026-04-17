@@ -106,7 +106,8 @@ export const ChatPrompts = {
         currentMsgs: Message[],
         realtimeConfig?: RealtimeConfig,  // 实时配置
         apiConfig?: APIConfig,  // API配置（用于破限等可选功能）
-        embeddingApiKey?: string  // Gemini Embedding API Key（用于向量记忆检索）
+        embeddingApiKey?: string,  // Gemini Embedding API Key（用于向量记忆检索）
+        characterGoals?: Array<{ description: string; utility: number; category?: string }>,  // Gamygdala 目标
     ) => {
         let baseSystemPrompt = '';
 
@@ -129,7 +130,7 @@ export const ChatPrompts = {
                 memoryMode = 'hybrid'; // default when vector is enabled but no explicit mode
             }
         }
-        baseSystemPrompt += ContextBuilder.buildCoreContext(char, userProfile, true, memoryMode);
+        baseSystemPrompt += ContextBuilder.buildCoreContext(char, userProfile, true, memoryMode, characterGoals);
 
         // ====== 向量记忆检索 — 紧贴记忆系统注入，形成「脉络 + 浮现」完整区块 ======
         if (char.vectorMemoryEnabled && embeddingApiKey) {

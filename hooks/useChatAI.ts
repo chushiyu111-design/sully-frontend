@@ -9,6 +9,7 @@ import { haptic,playThemeNotification } from '../utils/haptics';
 import { THEME_PLUGINS } from '../components/chat/ThemeRegistry';
 import { VectorMemoryExtractor } from '../utils/vectorMemoryExtractor';
 import { MindSnapshotExtractor } from '../utils/mindSnapshotExtractor';
+import { loadCharacterGoals, formatGoalListStr } from '../utils/goalService';
 import { EventExtractor } from '../utils/eventExtractor';
 import { extractThinking } from '../utils/thinkingExtractor';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
@@ -81,7 +82,7 @@ export const useChatAI = ({
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
 
     // MindSnapshot retry context
-    const lastMindSnapshotCtx = useRef<{ char: any; aiContent: string; msgs: Message[]; config: any } | null>(null);
+    const lastMindSnapshotCtx = useRef<{ char: any; aiContent: string; msgs: Message[]; config: any; goalListStr?: string } | null>(null);
 
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
@@ -126,6 +127,12 @@ export const useChatAI = ({
             // 0. Internal State Layer: senseBefore (和下方 buildSystemPrompt 的 embedding/rerank 并行)
             const secondaryConfig = getSecondaryApiConfig() || apiConfig;
 
+            // 0.1 Gamygdala — 加载角色目标（并行，静默降级）
+            const goalsPromise = loadCharacterGoals(char.id).catch(e => {
+                console.warn('🎯 [Goals] Load failed, degrading gracefully:', e);
+                return [] as Awaited<ReturnType<typeof loadCharacterGoals>>;
+            });
+
             // Run senseBefore in parallel with buildSystemPrompt
             const embeddingApiKey = getEmbeddingConfig().apiKey || undefined;
             const playbackContextPromise = injectPlaybackContext
@@ -153,16 +160,20 @@ export const useChatAI = ({
                 })
                 : Promise.resolve(null);
 
+            // Await goals before starting parallel sense + prompt build
+            const characterGoals = await goalsPromise;
+            const goalListStr = formatGoalListStr(characterGoals);
+
             const [senseResult, systemPromptResult, playbackContext] = await Promise.all([
                 secondaryConfig.apiKey
-                    ? MindSnapshotExtractor.senseBefore(char, currentMsgs, secondaryConfig)
+                    ? MindSnapshotExtractor.senseBefore(char, currentMsgs, secondaryConfig, goalListStr, characterGoals)
                         .catch(e => { console.error('💭 [Sense] Parallel error:', e); return null; })
                     : Promise.resolve(null),
                 (async () => {
                     // If senseBefore finishes first and updates char.moodState (via DB persist),
                     // buildCoreContext will pick it up. But since they run in parallel,
                     // we also manually inject body signals after if needed.
-                    return ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, apiConfig, embeddingApiKey);
+                    return ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, apiConfig, embeddingApiKey, characterGoals);
                 })(),
                 playbackContextPromise,
             ]);
@@ -951,7 +962,7 @@ mode 可选值：
             // ====== Inner Voice / Creative Card — fire-and-forget ======
             if (secondaryConfig?.apiKey && aiContent) {
                 const charSnapshot = { ...char };
-                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: currentMsgs, config: secondaryConfig };
+                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: currentMsgs, config: secondaryConfig, goalListStr };
                 const statusMode = char.statusBarMode || 'classic';
                 // Skip entirely if heart voice is off
                 if (statusMode === 'off') { /* noop — bionic engine still runs */ }
@@ -961,7 +972,8 @@ mode 可选值：
                     if (statusMode === 'classic') {
                         // ── Classic inner voice ──
                         MindSnapshotExtractor.generateInnerVoice(charSnapshot, aiContent, currentMsgs, secondaryConfig,
-                            (reason) => addToast(reason, 'error')
+                            (reason) => addToast(reason, 'error'),
+                            true, goalListStr
                         )
                             .then(newState => {
                                 if (newState && char && onMoodUpdate) {
@@ -1055,7 +1067,8 @@ mode 可选值：
         }
         if (statusMode === 'classic') {
             MindSnapshotExtractor.generateInnerVoice(ctx.char, ctx.aiContent, ctx.msgs, ctx.config,
-                (reason) => addToast(reason, 'error')
+                (reason) => addToast(reason, 'error'),
+                true, ctx.goalListStr
             )
                 .then(newState => {
                     if (newState && ctx.char && onMoodUpdate) {

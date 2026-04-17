@@ -35,7 +35,7 @@ export const ContextBuilder = {
      *   - 'vector': 跳过所有传统记忆（完全由向量检索接管）
      * @returns 标准化的 Markdown 格式 System Prompt
      */
-    buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true, memoryMode: 'traditional' | 'hybrid' | 'vector' = 'traditional'): string => {
+    buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true, memoryMode: 'traditional' | 'hybrid' | 'vector' = 'traditional', characterGoals?: Array<{ description: string; utility: number; category?: string }>): string => {
         let context = `[System: Roleplay Configuration]\n\n`;
 
         // 预处理：将已挂载世界书按 position 分为 4 个区
@@ -144,6 +144,19 @@ export const ContextBuilder = {
                     context += bodySignals + '\n\n';
                 }
             }
+        }
+
+        // 6.5 目标意识注入 (Gamygdala appraisal) — 角色潜意识需求
+        if (characterGoals && characterGoals.length > 0) {
+            const goalItems = characterGoals
+                .sort((a, b) => (b.utility || 0) - (a.utility || 0))
+                .slice(0, 4)
+                .map((g) => {
+                    const weight = g.utility > 0.7 ? '（对你来说很重要）' : '';
+                    return `· ${g.description}${weight}`;
+                })
+                .join('\n');
+            context += `### 【${char.name}潜意识里挂念的事】\n这些不是你会说出口的话，但它们是驱动你情绪反应的潜意识需求。当对话触及这些需求时，你的情绪会自然地被影响。\n${goalItems}\n\n`;
         }
 
         // ====== 【区域：最底部世界书】 ======

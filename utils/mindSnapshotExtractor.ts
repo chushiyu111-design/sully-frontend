@@ -22,7 +22,8 @@ import {
   computeNewState,
   resolveInternalState,
   createBaselineState,
-  formatStateLog
+  formatStateLog,
+  GoalAppraisal
 } from './hormoneDynamics';
 
 // ─── Configuration ───────────────────────────────────────────
@@ -236,6 +237,7 @@ function buildSensePrompt(
     recentContext: string,
     charContext: string,
     timeContext: { timeStr: string; timeOfDay: string; dateStr: string; dayOfWeek: string },
+    goalListStr?: string,
 ): { system: string; user: string } {
 
     const system = `你是一个角色状态感知模块。你的任务是分析最近的对话，判断角色${charName}的内部状态变化。
@@ -259,7 +261,15 @@ function buildSensePrompt(
 注意：日常闲聊大部分维度是 "stable"。不要过度解读。
 注意：pressure 要注意方向——用户给角色带来压力时是 "+high"（压力增大），用户让角色放松时是 "-low"。
 注意：energyDrain 表示消耗——高消耗是 "+high"，不消耗是 "stable"。
-
+${goalListStr ? `
+目标感知：
+以下是角色潜意识里在意的事：
+${goalListStr}
+额外判断这段对话是否影响了角色的某个目标：
+- 推进了某个目标 → "goalImpact": "advance:目标描述"
+- 阻碍了某个目标 → "goalImpact": "hinder:目标描述"
+- 无明显影响 → "goalImpact": "none"
+` : ''}
 ⚠ 极其重要：禁止输出任何解释、分析或思考过程。直接输出 JSON 对象，不要 markdown 代码块，不要前缀文字。`;
 
     const user = `## 角色信息
@@ -281,7 +291,8 @@ ${recentContext}
   "closeness": "...",
   "focus": "...",
   "relief": "...",
-  "energyDrain": "..."
+  "energyDrain": "...",
+  "goalImpact": "none"
 }`;
 
     return { system, user };
@@ -295,6 +306,8 @@ async function senseBefore(
     char: CharacterProfile,
     currentMsgs: Message[],
     apiConfig: { baseUrl: string; model: string; apiKey: string },
+    goalListStr?: string,
+    goals?: Array<{ description: string; utility: number; category: string }>,
 ): Promise<InternalState | null> {
     // Abort previous if still running
     if (activeSenseController) {
@@ -313,7 +326,7 @@ async function senseBefore(
         const charContext = buildCharContext(char);
         const timeContext = RealtimeContextManager.getTimeContext();
 
-        const prompt = buildSensePrompt(char.name, recentContext, charContext, timeContext);
+        const prompt = buildSensePrompt(char.name, recentContext, charContext, timeContext, goalListStr);
 
         const content = await callSecondaryLLM(apiConfig, prompt.system, prompt.user, controller.signal, 800, 0.4);
         if (!content) return null;
@@ -324,11 +337,39 @@ async function senseBefore(
             return null;
         }
 
+        // 解析 goalImpact → GoalAppraisal
+        let goalAppraisal: GoalAppraisal | undefined;
+        try {
+            const rawParsed = JSON.parse(
+                content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+            );
+            const goalImpactRaw = rawParsed?.goalImpact;
+            if (goalImpactRaw && typeof goalImpactRaw === 'string' && goalImpactRaw !== 'none') {
+                const colonIdx = goalImpactRaw.indexOf(':');
+                if (colonIdx > 0) {
+                    const dir = goalImpactRaw.slice(0, colonIdx).trim().toLowerCase();
+                    const desc = goalImpactRaw.slice(colonIdx + 1).trim();
+                    if ((dir === 'advance' || dir === 'hinder') && desc) {
+                        // 在目标列表中查找匹配的目标以获取 utility 和 category
+                        const matchedGoal = goals?.find(g =>
+                            g.description === desc || desc.includes(g.description) || g.description.includes(desc)
+                        );
+                        goalAppraisal = {
+                            direction: dir as 'advance' | 'hinder',
+                            goalDescription: desc,
+                            goalUtility: matchedGoal?.utility ?? 0.6,
+                            goalCategory: matchedGoal?.category ?? 'attachment',
+                        };
+                    }
+                }
+            }
+        } catch { /* goalImpact 解析失败静默降级 */ }
+
         // Resolve previous state (handle legacy migration)
         const previous = resolveInternalState(char.moodState as any);
 
         // Compute new state through hormone dynamics
-        const computed = computeNewState(sense, previous);
+        const computed = computeNewState(sense, previous, goalAppraisal);
 
         // Build full InternalState (innerVoice + surfaceEmotion will be filled later or carried over)
         const newState: InternalState = {
@@ -369,6 +410,7 @@ function buildInnerVoicePrompt(
     charContext: string,
     currentState: InternalState,
     timeContext: { timeStr: string; timeOfDay: string; dateStr: string; dayOfWeek: string },
+    goalListStr?: string,
 ): { system: string; user: string } {
 
     // 生成一个简洁的状态描述给副模型参考
@@ -426,7 +468,12 @@ innerVoice 是${charName}此刻脑子里一闪而过的念头。
 - 从人设和对话中推断${charName}和用户的关系（恋人、朋友、暧昧期等）
 - 心声必须反映这种关系——如果他们是恋人，内心可以有甜蜜、吃醋、想念等自然的私密念头
 - 但依然不要网文式的"宠溺""霸道"——真实的恋人想的是"ta今天声音有点哑，嗓子不舒服吗"，而不是"真想把ta揉进怀里"
-- 关系的温度要和对话的氛围匹配：对话很甜，心声不应该冷漠生硬`;
+- 关系的温度要和对话的氛围匹配：对话很甜，心声不应该冷漠生硬
+${goalListStr ? `
+### 目标意识
+${charName}潜意识里在意这些事：
+${goalListStr}
+这些需求会影响心声的方向——当对话触及这些需求时，心声可能自然地流露相关的想法（期待、担心、释然、不安等），但不要每次都提到目标，只在自然的时候。` : ''}`;
 
     const user = `## 角色信息
 
@@ -473,6 +520,7 @@ async function generateInnerVoice(
     apiConfig: { baseUrl: string; model: string; apiKey: string },
     onError?: (reason: string) => void,
     allowRetry: boolean = true,
+    goalListStr?: string,
 ): Promise<InternalState | null> {
     // Abort previous voice generation
     if (activeVoiceController) {
@@ -504,6 +552,7 @@ async function generateInnerVoice(
             charContext,
             currentState,
             timeContext,
+            goalListStr,
         );
 
         const content = await callSecondaryLLM(apiConfig, prompt.system, prompt.user, controller.signal, 800, 0.6);
@@ -553,7 +602,7 @@ async function generateInnerVoice(
                 if (allowRetry) {
                     console.log(`💭 [InnerVoice] Auto-retrying in ${AUTO_RETRY_DELAY_MS / 1000}s...`);
                     await new Promise(r => setTimeout(r, AUTO_RETRY_DELAY_MS));
-                    return generateInnerVoice(char, aiReply, currentMsgs, apiConfig, onError, false);
+                    return generateInnerVoice(char, aiReply, currentMsgs, apiConfig, onError, false, goalListStr);
                 }
                 onError?.(`心声生成超时`);
             }
@@ -562,7 +611,7 @@ async function generateInnerVoice(
             if (allowRetry && !wasReplaced) {
                 console.log(`💭 [InnerVoice] Auto-retrying in ${AUTO_RETRY_DELAY_MS / 1000}s...`);
                 await new Promise(r => setTimeout(r, AUTO_RETRY_DELAY_MS));
-                return generateInnerVoice(char, aiReply, currentMsgs, apiConfig, onError, false);
+                return generateInnerVoice(char, aiReply, currentMsgs, apiConfig, onError, false, goalListStr);
             }
             onError?.(`心声生成失败: ${err.message}`);
         }

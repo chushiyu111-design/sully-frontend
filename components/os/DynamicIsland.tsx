@@ -9,6 +9,7 @@ import {
     toggleFloatingLyricsEnabled,
 } from './floatingLyricsSettings';
 import './DynamicIsland.css';
+import { useDominantColor } from '../../hooks/useDominantColor';
 
 /** Cult UI 验证过的弹簧参数 — 果冻感但不过度弹跳 */
 const SPRING_CONFIG = {
@@ -44,6 +45,25 @@ const CONTENT_INITIAL = {
     y: 10,
     filter: 'blur(6px)',
 };
+
+/** Convert HSL (h: 0-360, s/l: 0-1) to "R, G, B" CSS string */
+function hslToRgbString(h: number, s: number, l: number): string {
+    const hN = h / 360;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const f = (t: number) => {
+        const tc = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+        if (tc < 1 / 6) return p + (q - p) * 6 * tc;
+        if (tc < 1 / 2) return q;
+        if (tc < 2 / 3) return p + (q - p) * (2 / 3 - tc) * 6;
+        return p;
+    };
+    return [
+        Math.round(f(hN + 1 / 3) * 255),
+        Math.round(f(hN) * 255),
+        Math.round(f(hN - 1 / 3) * 255),
+    ].join(', ');
+}
 
 /**
  * 灵动岛 — 退出音乐 App 后的浮动迷你播放器。
@@ -148,6 +168,21 @@ const DynamicIsland: React.FC = () => {
         setLyricsEnabled(nextSettings.enabled);
     }, []);
 
+    // ── 封面色提取（hook 必须在条件 return 之前调用）──
+    const coverUrl = currentSong
+        ? (isSongPlayable(currentSong)
+            ? currentSong.album.picUrl
+            : currentSong.coverUrl
+                || currentSong.radio?.picUrl
+                || currentSong.mainSong?.album.picUrl)
+        : undefined;
+    const dominantColor = useDominantColor(coverUrl);
+    const coverSeed = currentSong?.id || 0;
+    const fallbackHue = ((coverSeed % 360) + 360) % 360;
+    const glowRgb = dominantColor
+        ? `${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}`
+        : currentSong ? hslToRgbString(fallbackHue, 0.65, 0.55) : null;
+
     if (!shouldShow || !currentSong) return null;
 
     const artistText = isSongPlayable(currentSong)
@@ -164,14 +199,6 @@ const DynamicIsland: React.FC = () => {
             .toString()
             .padStart(2, '0')}`;
     };
-
-    const coverUrl = isSongPlayable(currentSong)
-        ? currentSong.album.picUrl
-        : currentSong.coverUrl
-            || currentSong.radio?.picUrl
-            || currentSong.mainSong?.album.picUrl;
-    const coverSeed = currentSong.id || 0;
-    const fallbackHue = ((coverSeed % 360) + 360) % 360;
 
     return (
         <motion.div
@@ -191,6 +218,9 @@ const DynamicIsland: React.FC = () => {
                 maxWidth: expanded
                     ? DI_PRESETS.expanded.width
                     : DI_PRESETS.capsule.maxWidth,
+                boxShadow: isPlaying && glowRgb
+                    ? `0 2px 20px rgba(${glowRgb}, 0.4), 0 0 40px rgba(${glowRgb}, 0.15)`
+                    : 'none',
             }}
         >
             <AnimatePresence mode="wait" initial={false}>
@@ -260,6 +290,9 @@ const DynamicIsland: React.FC = () => {
                         animate={CONTENT_ENTER}
                         exit={CONTENT_EXIT}
                         transition={{ ...SPRING_CONFIG, duration: 0.3 }}
+                        style={glowRgb ? {
+                            background: `linear-gradient(145deg, rgba(${glowRgb}, 0.12) 0%, rgba(0,0,0,0.92) 50%, rgba(${glowRgb}, 0.06) 100%)`,
+                        } : undefined}
                     >
                         <div
                             className="di-expanded-handle"

@@ -1,10 +1,11 @@
 /**
- * ActivityTab — Exercise recording and today's activity summary
+ * ActivityTab — Exercise recording + weekly summary
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useHalfSugar, parsePositiveNumber } from '../HalfSugarContext';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
-import { estimateCaloriesBurned, MET_TABLE } from '../types';
+import { estimateCaloriesBurned, MET_TABLE, type ExerciseRecord } from '../types';
+import { getRecentExercises } from '../storage/healthDB';
 
 const ActivityTab: React.FC = () => {
     const {
@@ -17,9 +18,22 @@ const ActivityTab: React.FC = () => {
     const [durationMinutes, setDurationMinutes] = useState('');
     const [customName, setCustomName] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [weekExercises, setWeekExercises] = useState<ExerciseRecord[]>([]);
 
     const selectedMeta = MET_TABLE[exerciseType] || Object.values(MET_TABLE)[0];
     const isCustom = exerciseType === 'custom';
+
+    // Load past 7 days exercises for weekly stats
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            try {
+                const records = await getRecentExercises(7);
+                if (!cancelled) setWeekExercises(records);
+            } catch { /* ignore */ }
+        })();
+        return () => { cancelled = true; };
+    }, [todayExercises]); // refresh when today's exercises change
 
     const previewCalories = useMemo(() => {
         const dur = parsePositiveNumber(durationMinutes);
@@ -37,6 +51,10 @@ const ActivityTab: React.FC = () => {
     };
 
     const totalMinutes = todayExercises.reduce((sum, e) => sum + e.durationMinutes, 0);
+    const totalCaloriesBurned = todayExercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
+    const weekMinutes = weekExercises.reduce((sum, e) => sum + e.durationMinutes, 0);
+    const weekCalories = weekExercises.reduce((sum, e) => sum + e.caloriesBurned, 0);
+    const weekDays = new Set(weekExercises.map((e) => e.date)).size;
 
     return (
         <div className="hs-tab-content no-scrollbar">
@@ -44,6 +62,19 @@ const ActivityTab: React.FC = () => {
                 <span>今日运动</span>
                 <span>{totalMinutes > 0 ? `${totalMinutes} 分钟` : ''}</span>
             </div>
+
+            {/* Today's summary card */}
+            {todayExercises.length > 0 && (
+                <div className="hs-track-card hs-animate-fade-in" style={{ margin: '0 20px 12px' }}>
+                    <div className="hs-track-header">
+                        <span className="hs-track-title"><span className="hs-emoji">🔥</span> 今日消耗</span>
+                        <span className="hs-track-value">{Math.round(totalCaloriesBurned)} kcal</span>
+                    </div>
+                    <div className="hs-track-subtitle" style={{ marginBottom: 0 }}>
+                        {todayExercises.map((e) => e.exerciseLabel).join('、')} · 共 {totalMinutes} 分钟
+                    </div>
+                </div>
+            )}
 
             {todayExercises.length > 0 ? (
                 <div className="hs-track-list" style={{ margin: '0 20px 16px' }}>
@@ -65,20 +96,29 @@ const ActivityTab: React.FC = () => {
                 <span>＋</span> 记录运动
             </button>
 
-            {/* Exercise type reference grid — emoji icons with relief filter */}
-            <div className="hs-section-title"><span>运动类型</span></div>
-            <div className="hs-exercise-grid" style={{ margin: '0 20px 20px' }}>
-                {Object.entries(MET_TABLE).filter(([key]) => key !== 'custom').map(([key, item]) => (
-                    <div key={key} className="hs-exercise-option" style={{ cursor: 'default', opacity: 0.7 }}>
-                        <span className="hs-exercise-emoji"><span className="hs-emoji">{item.icon}</span></span>
-                        <span>{item.label}</span>
+            {/* Weekly stats */}
+            {weekExercises.length > 0 && (
+                <>
+                    <div className="hs-section-title"><span>本周概览</span></div>
+                    <div className="hs-dash-grid" style={{ paddingBottom: 20 }}>
+                        <div className="hs-track-card">
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>运动天数</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>{weekDays}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--hs-text-muted)' }}> / 7 天</span></div>
+                        </div>
+                        <div className="hs-track-card">
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>总运动时长</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>{weekMinutes}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--hs-text-muted)' }}> min</span></div>
+                        </div>
+                        <div className="hs-track-card" style={{ gridColumn: '1 / -1' }}>
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>本周总消耗</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>{Math.round(weekCalories)}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--hs-text-muted)' }}> kcal</span></div>
+                        </div>
                     </div>
-                ))}
-            </div>
+                </>
+            )}
 
             {showModal && (
                 <BottomSheetModal title="记录运动" onClose={() => setShowModal(false)}>
-                    {/* Free text input for custom exercise */}
                     <div className="hs-free-input-row">
                         <input
                             type="text"
@@ -90,8 +130,6 @@ const ActivityTab: React.FC = () => {
                         />
                     </div>
                     <div className="hs-free-input-label">或选择类型</div>
-
-                    {/* Exercise type grid */}
                     <div className="hs-exercise-grid">
                         {Object.entries(MET_TABLE).filter(([key]) => key !== 'custom').map(([key, item]) => (
                             <button key={key} type="button" className={`hs-exercise-option ${exerciseType === key ? 'active' : ''}`} onClick={() => { setExerciseType(key); setCustomName(''); }}>
@@ -100,8 +138,6 @@ const ActivityTab: React.FC = () => {
                             </button>
                         ))}
                     </div>
-
-                    {/* Duration input */}
                     <div className="hs-form-input-with-unit">
                         <input type="number" inputMode="numeric" className="hs-form-input" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} placeholder="30" />
                         <span className="hs-unit">min</span>

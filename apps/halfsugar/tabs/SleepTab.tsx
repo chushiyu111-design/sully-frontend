@@ -1,10 +1,20 @@
 /**
- * SleepTab — Sleep recording and quality tracking
+ * SleepTab — Sleep recording, quality tracking + weekly summary
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useHalfSugar } from '../HalfSugarContext';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
 import { computeSleepDurationMinutes, formatDurationMinutes, type SleepQuality } from '../types';
+import { getRecentSleep } from '../storage/healthDB';
+
+interface SleepRecord {
+    id: string;
+    date: string;
+    sleepTime: string;
+    wakeTime: string;
+    durationMinutes: number;
+    quality?: string;
+}
 
 const SleepTab: React.FC = () => {
     const { todaySleep, handleSaveSleep, handleDeleteSleep } = useHalfSugar();
@@ -14,6 +24,19 @@ const SleepTab: React.FC = () => {
     const [wakeTime, setWakeTime] = useState(todaySleep?.wakeTime || '07:00');
     const [quality, setQuality] = useState<SleepQuality>(todaySleep?.quality || 'good');
     const [isSaving, setIsSaving] = useState(false);
+    const [weekSleep, setWeekSleep] = useState<SleepRecord[]>([]);
+
+    // Load past 7 days sleep for weekly stats
+    useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            try {
+                const records = await getRecentSleep(7);
+                if (!cancelled) setWeekSleep(records as SleepRecord[]);
+            } catch { /* ignore */ }
+        })();
+        return () => { cancelled = true; };
+    }, [todaySleep]);
 
     const previewDuration = useMemo(() => {
         if (!sleepTime || !wakeTime) return 0;
@@ -43,6 +66,13 @@ const SleepTab: React.FC = () => {
 
     const qualityLabel = (q: SleepQuality) => q === 'good' ? '很好' : q === 'fair' ? '还行' : '不太好';
 
+    // Weekly stats
+    const weekDays = weekSleep.length;
+    const avgDuration = weekDays > 0
+        ? Math.round(weekSleep.reduce((sum, r) => sum + r.durationMinutes, 0) / weekDays)
+        : 0;
+    const goodCount = weekSleep.filter((r) => r.quality === 'good').length;
+
     return (
         <div className="hs-tab-content no-scrollbar">
             <div className="hs-section-title">
@@ -71,6 +101,30 @@ const SleepTab: React.FC = () => {
             <button type="button" className="hs-meal-add hs-animate-fade-in" onClick={openModal}>
                 <span>＋</span> {todaySleep ? '编辑睡眠' : '记录睡眠'}
             </button>
+
+            {/* Weekly sleep stats */}
+            {weekSleep.length > 0 && (
+                <>
+                    <div className="hs-section-title" style={{ marginTop: 8 }}><span>本周概览</span></div>
+                    <div className="hs-dash-grid" style={{ paddingBottom: 20 }}>
+                        <div className="hs-track-card">
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>记录天数</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>{weekDays}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--hs-text-muted)' }}> / 7 天</span></div>
+                        </div>
+                        <div className="hs-track-card">
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>平均时长</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>{formatDurationMinutes(avgDuration)}</div>
+                        </div>
+                        <div className="hs-track-card" style={{ gridColumn: '1 / -1' }}>
+                            <div className="hs-track-subtitle" style={{ marginBottom: 4, fontWeight: 600, color: 'var(--hs-text-secondary)' }}>优质睡眠占比</div>
+                            <div className="hs-track-value" style={{ fontSize: 22 }}>
+                                {weekDays > 0 ? `${Math.round((goodCount / weekDays) * 100)}%` : '—'}
+                                <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--hs-text-muted)' }}> ({goodCount}/{weekDays} 天)</span>
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
 
             {showModal && (
                 <BottomSheetModal title="记录睡眠" onClose={() => setShowModal(false)}>

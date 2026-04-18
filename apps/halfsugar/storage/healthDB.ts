@@ -227,3 +227,27 @@ export function getDB(): Promise<IDBPDatabase<HalfSugarDB>> {
     }
     return dbPromise;
 }
+
+// ── Week-level query helpers ──
+
+function getDateDaysAgo(daysAgo: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString().slice(0, 10);
+}
+
+/** Get all exercises from the past N days */
+export async function getRecentExercises(days: number) {
+    const db = await getDB();
+    const startDate = getDateDaysAgo(days - 1);
+    const range = IDBKeyRange.lowerBound(startDate);
+    return db.getAllFromIndex('exercises', 'by-date', range);
+}
+
+/** Get all sleep records from the past N days */
+export async function getRecentSleep(days: number) {
+    const db = await getDB();
+    const startDate = getDateDaysAgo(days - 1);
+    const range = IDBKeyRange.lowerBound(startDate);
+    return db.getAllFromIndex('sleep', 'by-date', range);
+}

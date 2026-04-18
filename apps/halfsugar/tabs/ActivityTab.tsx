@@ -15,7 +15,7 @@ const ExerciseIcon: React.FC<{ d: string }> = ({ d }) => (
 
 const ActivityTab: React.FC = () => {
     const {
-        todayExercises, todayExerciseCalories, latestKnownWeightKg,
+        todayExercises, latestKnownWeightKg,
         handleSaveExercise, handleDeleteExercise, addToast,
     } = useHalfSugar();
 

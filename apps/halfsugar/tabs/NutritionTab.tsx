@@ -84,7 +84,7 @@ const NutritionTab: React.FC = () => {
                     <div className="hs-section-title">营养参考</div>
                     {recommendations.map((rec) => (
                         <div key={rec.nutrient} className="hs-recommendation-card">
-                            <div className="hs-rec-header">{rec.label} {Math.round(rec.current)} / {Math.round(rec.target)}g</div>
+                            <div className="hs-rec-header">{rec.label} 可以再补充 {Math.round(rec.gap)}g</div>
                             <div className="hs-rec-foods">
                                 {rec.foods.slice(0, 3).map((food) => (
                                     <span key={food.name} className="hs-rec-food-chip">{food.name}</span>

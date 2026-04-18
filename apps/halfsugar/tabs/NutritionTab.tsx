@@ -66,7 +66,7 @@ const NutritionTab: React.FC = () => {
                         ) : (
                             records.map((meal) => (
                                 <button key={meal.id} type="button" className="hs-meal-card hs-meal-record-card" onClick={() => handleOpenMealRecord(mealType, meal)}>
-                                    <div className="hs-meal-icon" style={{ background: mealType.bg, color: mealType.color, fontSize: 13, fontWeight: 600 }}>{mealType.label.slice(0, 1)}</div>
+                                    <div className="hs-meal-icon" style={{ background: mealType.bg, color: mealType.color }}><span className="hs-emoji">{mealType.icon}</span></div>
                                     <div className="hs-meal-info">
                                         <div className="hs-meal-type">{meal.customLabel || mealType.label}</div>
                                         <div className="hs-meal-desc">{formatMealTime(meal.createdAt) || '刚刚'} · {meal.foods.length > 0 ? meal.foods.map((f) => f.name).join('、') : '未填写食物'}</div>

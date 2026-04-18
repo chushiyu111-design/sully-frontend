@@ -203,7 +203,7 @@ export const OnboardingView: React.FC<{
 
     return (
         <div className="hs-onboarding hs-animate-fade-in">
-            <div className="hs-onboarding-illustration"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="42" height="42" style={{ color: 'var(--hs-primary-dark)' }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.97ZM5.25 4.97l-2.62 10.726c-.122.499.106 1.028.589 1.202a5.989 5.989 0 0 0 2.031.352 5.989 5.989 0 0 0 2.031-.352c.483-.174.711-.703.59-1.202L5.25 4.971Z" /></svg></div>
+            <div className="hs-onboarding-illustration"><span className="hs-emoji" style={{ fontSize: 42 }}>⚖️</span></div>
             <h1 className="hs-onboarding-title">关于我</h1>
             <p className="hs-onboarding-subtitle">记录下来，随时可以修改</p>
             <div className="hs-form-group">

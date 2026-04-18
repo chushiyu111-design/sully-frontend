@@ -7,18 +7,6 @@ import { CalorieRing } from '../components/CalorieRing';
 import { MacroBar } from '../components/MacroBar';
 import { formatDurationMinutes } from '../types';
 
-/** Monochrome inline SVG icon — single color, outline style */
-const Icon: React.FC<{ d: string; size?: number }> = ({ d, size = 16 }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width={size} height={size} style={{ flexShrink: 0 }}>
-        <path strokeLinecap="round" strokeLinejoin="round" d={d} />
-    </svg>
-);
-
-const ICON_NUTRITION = 'M12 8.25v-1.5m0 1.5c-1.355 0-2.697.056-4.024.166C6.845 8.51 6 9.473 6 10.608v2.513m6-4.871c1.355 0 2.697.056 4.024.166C17.155 8.51 18 9.473 18 10.608v2.513';
-const ICON_SCALE = 'M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0012 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 01-2.031.352 5.988 5.988 0 01-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.97ZM5.25 4.97l-2.62 10.726c-.122.499.106 1.028.589 1.202a5.989 5.989 0 002.031.352 5.989 5.989 0 002.031-.352c.483-.174.711-.703.59-1.202L5.25 4.971Z';
-const ICON_ACTIVITY = 'M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.047 8.287 8.287 0 009 9.601a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z';
-const ICON_SLEEP = 'M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998Z';
-
 const DashboardTab: React.FC = () => {
     const {
         activeCalorieTarget, caloriesConsumed, proteinConsumed, carbsConsumed, fatConsumed, fiberConsumed,
@@ -61,7 +49,7 @@ const DashboardTab: React.FC = () => {
             <div className="hs-track-cards">
                 <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('nutrition')} role="button" tabIndex={0}>
                     <div className="hs-track-header">
-                        <span className="hs-track-title"><Icon d={ICON_NUTRITION} /> 饮食</span>
+                        <span className="hs-track-title"><span className="hs-emoji">🍽️</span> 饮食</span>
                         <span className="hs-track-value">
                             {isMealsLoading ? '同步中…' : `${caloriesConsumed} kcal`}
                         </span>
@@ -73,7 +61,7 @@ const DashboardTab: React.FC = () => {
 
                 <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('trends')} role="button" tabIndex={0}>
                     <div className="hs-track-header">
-                        <span className="hs-track-title"><Icon d={ICON_SCALE} /> 体重</span>
+                        <span className="hs-track-title"><span className="hs-emoji">⚖️</span> 体重</span>
                         <span className="hs-track-value">
                             {latestWeight ? `${latestWeight.weight} kg` : '—'}
                         </span>
@@ -90,7 +78,7 @@ const DashboardTab: React.FC = () => {
             <div className="hs-track-cards">
                 <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('activity')} role="button" tabIndex={0}>
                     <div className="hs-track-header">
-                        <span className="hs-track-title"><Icon d={ICON_ACTIVITY} /> 运动</span>
+                        <span className="hs-track-title"><span className="hs-emoji">🔥</span> 运动</span>
                         <span className="hs-track-value">
                             {totalExerciseMinutes > 0 ? `${totalExerciseMinutes} 分钟` : '—'}
                         </span>
@@ -104,7 +92,7 @@ const DashboardTab: React.FC = () => {
 
                 <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('sleep')} role="button" tabIndex={0}>
                     <div className="hs-track-header">
-                        <span className="hs-track-title"><Icon d={ICON_SLEEP} /> 睡眠</span>
+                        <span className="hs-track-title"><span className="hs-emoji">🌙</span> 睡眠</span>
                         <span className="hs-track-value">
                             {todaySleep ? formatDurationMinutes(todaySleep.durationMinutes) : '—'}
                         </span>

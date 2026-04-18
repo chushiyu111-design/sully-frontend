@@ -2,7 +2,7 @@
  * HalfSugarApp — 半糖主义 Multi-Tab Entry Point
  * Slim container: wraps HalfSugarProvider + tab navigation.
  */
-import React, { Suspense } from 'react';
+import React, { Suspense, useMemo } from 'react';
 import { HalfSugarProvider, useHalfSugar, type TabID } from './HalfSugarContext';
 import { OnboardingView } from './HalfSugarTrackingUI';
 import './halfsugar.css';
@@ -14,6 +14,7 @@ const ActivityTab = React.lazy(() => import('./tabs/ActivityTab'));
 const SleepTab = React.lazy(() => import('./tabs/SleepTab'));
 const TrendsTab = React.lazy(() => import('./tabs/TrendsTab'));
 const ProfileTab = React.lazy(() => import('./tabs/ProfileTab'));
+const LunarTidesTab = React.lazy(() => import('./tabs/LunarTidesTab'));
 
 // ── Tab Bar Definition ──
 
@@ -23,7 +24,7 @@ interface TabDef {
     icon: React.ReactNode;
 }
 
-const TABS: TabDef[] = [
+const ALWAYS_TABS: TabDef[] = [
     {
         id: 'dashboard',
         label: '今日',
@@ -44,6 +45,15 @@ const TABS: TabDef[] = [
         label: '睡眠',
         icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" /></svg>,
     },
+];
+
+const LUNAR_TIDES_TAB: TabDef = {
+    id: 'lunar_tides',
+    label: '月相',
+    icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" /><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.15" /></svg>,
+};
+
+const TRAILING_TABS: TabDef[] = [
     {
         id: 'trends',
         label: '趋势',
@@ -63,7 +73,16 @@ const HalfSugarInner: React.FC = () => {
         activeTab, setActiveTab, closeApp,
         isHealthSetup, healthProfile, onboardingGoalState,
         isSettingsSaving, handleOnboardingComplete, userProfile, goals,
+        addToast,
     } = useHalfSugar();
+
+    const isFemale = healthProfile.gender === 'female';
+    const tabs = useMemo(() => {
+        const result = [...ALWAYS_TABS];
+        if (isFemale) result.push(LUNAR_TIDES_TAB);
+        result.push(...TRAILING_TABS);
+        return result;
+    }, [isFemale]);
 
     // Onboarding gate
     if (!isHealthSetup) {
@@ -96,6 +115,7 @@ const HalfSugarInner: React.FC = () => {
             case 'nutrition': return <NutritionTab />;
             case 'activity': return <ActivityTab />;
             case 'sleep': return <SleepTab />;
+            case 'lunar_tides': return <LunarTidesTab addToast={addToast} />;
             case 'trends': return <TrendsTab />;
             case 'profile': return <ProfileTab />;
             default: return <DashboardTab />;
@@ -118,7 +138,7 @@ const HalfSugarInner: React.FC = () => {
 
             {/* Bottom Tab Bar */}
             <nav className="hs-tab-bar">
-                {TABS.map((tab) => (
+                {tabs.map((tab) => (
                     <button
                         key={tab.id}
                         type="button"

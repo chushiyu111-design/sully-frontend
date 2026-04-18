@@ -6,13 +6,6 @@ import { useHalfSugar, parsePositiveNumber } from '../HalfSugarContext';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
 import { estimateCaloriesBurned, MET_TABLE } from '../types';
 
-/** Renders a monochrome SVG icon from a path string */
-const ExerciseIcon: React.FC<{ d: string }> = ({ d }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="20" height="20">
-        <path strokeLinecap="round" strokeLinejoin="round" d={d} />
-    </svg>
-);
-
 const ActivityTab: React.FC = () => {
     const {
         todayExercises, latestKnownWeightKg,
@@ -72,12 +65,12 @@ const ActivityTab: React.FC = () => {
                 <span>＋</span> 记录运动
             </button>
 
-            {/* Exercise type reference grid — monochrome icons */}
+            {/* Exercise type reference grid — emoji icons with relief filter */}
             <div className="hs-section-title"><span>运动类型</span></div>
             <div className="hs-exercise-grid" style={{ margin: '0 20px 20px' }}>
                 {Object.entries(MET_TABLE).filter(([key]) => key !== 'custom').map(([key, item]) => (
                     <div key={key} className="hs-exercise-option" style={{ cursor: 'default', opacity: 0.7 }}>
-                        <span className="hs-exercise-emoji"><ExerciseIcon d={item.icon} /></span>
+                        <span className="hs-exercise-emoji"><span className="hs-emoji">{item.icon}</span></span>
                         <span>{item.label}</span>
                     </div>
                 ))}
@@ -88,7 +81,7 @@ const ActivityTab: React.FC = () => {
                     <div className="hs-exercise-grid">
                         {Object.entries(MET_TABLE).map(([key, item]) => (
                             <button key={key} type="button" className={`hs-exercise-option ${exerciseType === key ? 'active' : ''}`} onClick={() => setExerciseType(key)}>
-                                <span className="hs-exercise-emoji"><ExerciseIcon d={item.icon} /></span>
+                                <span className="hs-exercise-emoji"><span className="hs-emoji">{item.icon}</span></span>
                                 <span>{item.label}</span>
                             </button>
                         ))}

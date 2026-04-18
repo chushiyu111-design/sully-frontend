@@ -1,8 +1,7 @@
-import {
-    buildBackendHeaders,
-    buildBackendUrl,
-    readBackendPayload,
-} from '../../utils/backendClient';
+/**
+ * halfsugarVision — AI food identification via direct LLM API calls.
+ * Backend fallback has been removed; all calls go directly to the configured LLM endpoint.
+ */
 import { extractJson, safeResponseJson } from '../../utils/safeApi';
 import { type FoodItem } from './types';
 
@@ -194,31 +193,6 @@ async function callDirectVisionApi(
     return extractVisionPayload(data);
 }
 
-async function callBackendVisionFallback(
-    imageBase64: string,
-    mealType: string,
-    apiConfig: VisionApiConfig,
-): Promise<VisionResult> {
-    const response = await fetch(buildBackendUrl('/api/health/vision/identify'), {
-        method: 'POST',
-        headers: buildBackendHeaders(),
-        body: JSON.stringify({
-            api_base_url: apiConfig.baseUrl,
-            api_key: apiConfig.apiKey,
-            model: apiConfig.model,
-            image: imageBase64,
-            meal_type: mealType,
-        }),
-    });
-
-    const { detail, payload } = await readBackendPayload(response);
-    if (!response.ok) {
-        throw new Error(detail || `识别代理失败 (${response.status})`);
-    }
-
-    return extractVisionPayload(payload);
-}
-
 const FOOD_ESTIMATION_PROMPT = `你是一个专业的食物营养分析师。用户输入一个食物名称，请估算该食物常见一人份（中等份量）的营养成分。
 
 ### 输出要求
@@ -288,29 +262,6 @@ async function callDirectTextEstimate(
     return extractVisionPayload(data);
 }
 
-async function callBackendTextEstimateFallback(
-    foodName: string,
-    apiConfig: VisionApiConfig,
-): Promise<VisionResult> {
-    const response = await fetch(buildBackendUrl('/api/health/vision/identify'), {
-        method: 'POST',
-        headers: buildBackendHeaders(),
-        body: JSON.stringify({
-            api_base_url: apiConfig.baseUrl,
-            api_key: apiConfig.apiKey,
-            model: apiConfig.model,
-            text_query: foodName,
-            meal_type: '餐食',
-        }),
-    });
-
-    const { detail, payload } = await readBackendPayload(response);
-    if (!response.ok) {
-        throw new Error(detail || `估算代理失败 (${response.status})`);
-    }
-    return extractVisionPayload(payload);
-}
-
 /**
  * Estimate nutrition for a food item by name using LLM (text-only, no vision model needed).
  */
@@ -325,17 +276,7 @@ export async function estimateFoodByName(
         throw new Error('请先在设置中填写 API 配置');
     }
 
-    try {
-        return await callDirectTextEstimate(foodName, apiConfig);
-    } catch (directError) {
-        try {
-            return await callBackendTextEstimateFallback(foodName, apiConfig);
-        } catch (fallbackError) {
-            if (directError instanceof Error && directError.message.trim()) throw directError;
-            if (fallbackError instanceof Error && fallbackError.message.trim()) throw fallbackError;
-            throw new Error('营养估算失败，请稍后重试');
-        }
-    }
+    return callDirectTextEstimate(foodName, apiConfig);
 }
 
 export async function identifyFoodFromImage(
@@ -351,19 +292,5 @@ export async function identifyFoodFromImage(
         throw new Error('请先在设置中填写可识别图片的 API 配置');
     }
 
-    try {
-        return await callDirectVisionApi(imageBase64, mealType, apiConfig);
-    } catch (directError) {
-        try {
-            return await callBackendVisionFallback(imageBase64, mealType, apiConfig);
-        } catch (fallbackError) {
-            if (directError instanceof Error && directError.message.trim()) {
-                throw directError;
-            }
-            if (fallbackError instanceof Error && fallbackError.message.trim()) {
-                throw fallbackError;
-            }
-            throw new Error('食物识别失败，请稍后重试');
-        }
-    }
+    return callDirectVisionApi(imageBase64, mealType, apiConfig);
 }

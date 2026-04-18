@@ -171,7 +171,7 @@ export function buildGoalRecords(goalForm: GoalFormState, existingGoals: HealthG
 
 // ── Tab Types ──
 
-export type TabID = 'dashboard' | 'nutrition' | 'activity' | 'sleep' | 'trends' | 'profile';
+export type TabID = 'dashboard' | 'nutrition' | 'activity' | 'sleep' | 'lunar_tides' | 'trends' | 'profile';
 
 // ── Context Shape ──
 

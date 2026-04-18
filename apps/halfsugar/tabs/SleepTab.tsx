@@ -6,13 +6,6 @@ import { useHalfSugar } from '../HalfSugarContext';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
 import { computeSleepDurationMinutes, formatDurationMinutes, type SleepQuality } from '../types';
 
-/** Monochrome moon icon */
-const MoonIcon: React.FC = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="16" height="16" style={{ flexShrink: 0 }}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998Z" />
-    </svg>
-);
-
 const SleepTab: React.FC = () => {
     const { todaySleep, handleSaveSleep, handleDeleteSleep } = useHalfSugar();
 
@@ -60,7 +53,7 @@ const SleepTab: React.FC = () => {
             {todaySleep ? (
                 <div className="hs-track-card hs-animate-fade-in" style={{ margin: '0 20px 16px' }}>
                     <div className="hs-track-header">
-                        <span className="hs-track-title"><MoonIcon /> 睡眠记录</span>
+                        <span className="hs-track-title"><span className="hs-emoji">🌙</span> 睡眠记录</span>
                         <span className="hs-track-value">{formatDurationMinutes(todaySleep.durationMinutes)}</span>
                     </div>
                     <div className="hs-track-subtitle">{todaySleep.sleepTime} → {todaySleep.wakeTime}</div>

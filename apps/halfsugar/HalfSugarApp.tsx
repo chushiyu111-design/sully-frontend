@@ -124,33 +124,40 @@ const HalfSugarInner: React.FC = () => {
 
     return (
         <div className="hs-app hs-screen">
-            <div className="hs-header">
-                <button type="button" className="hs-back-btn" onClick={closeApp}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="20" height="20"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                </button>
-                <span className="hs-header-title">半糖主义</span>
-                <div className="hs-header-spacer" />
-            </div>
-
-            <Suspense fallback={<div className="hs-tab-content"><div className="hs-loading-card">加载中…</div></div>}>
-                {renderTab()}
-            </Suspense>
-
-            {/* Bottom Tab Bar */}
-            <nav className="hs-tab-bar">
-                {tabs.map((tab) => (
-                    <button
-                        key={tab.id}
-                        type="button"
-                        className={`hs-tab-item ${activeTab === tab.id ? 'active' : ''}`}
-                        onClick={() => setActiveTab(tab.id)}
-                        aria-label={tab.label}
-                    >
-                        <span className="hs-tab-icon">{tab.icon}</span>
-                        <span className="hs-tab-label">{tab.label}</span>
+            {/* Left Sidebar */}
+            <nav className="hs-sidebar">
+                <div className="hs-sidebar-top">
+                    <button type="button" className="hs-back-btn" onClick={closeApp}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="18" height="18"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                ))}
+                </div>
+                <div className="hs-sidebar-tabs">
+                    {tabs.map((tab) => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            className={`hs-sidebar-item ${activeTab === tab.id ? 'active' : ''}`}
+                            onClick={() => setActiveTab(tab.id)}
+                            aria-label={tab.label}
+                        >
+                            <span className="hs-sidebar-icon">{tab.icon}</span>
+                            <span className="hs-sidebar-label">{tab.label}</span>
+                        </button>
+                    ))}
+                </div>
             </nav>
+
+            {/* Main Content */}
+            <div className="hs-main-content">
+                <div className="hs-header">
+                    <span className="hs-header-title">半糖主义</span>
+                    <div className="hs-header-spacer" />
+                </div>
+
+                <Suspense fallback={<div className="hs-tab-content"><div className="hs-loading-card">加载中…</div></div>}>
+                    {renderTab()}
+                </Suspense>
+            </div>
         </div>
     );
 };

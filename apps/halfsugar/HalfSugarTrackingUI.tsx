@@ -273,15 +273,15 @@ export const OnboardingView: React.FC<{
 
                 <div className="hs-goal-row">
                     <div className="hs-goal-label" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <span>允许角色感知我的体型</span>
+                        <span>他会把你放在心上</span>
                         <span style={{ fontSize: 12, color: 'rgba(15, 23, 42, 0.56)', fontWeight: 400 }}>
-                            默认关闭，仅在你主动开启时注入体型印象
+                            开启后，他会知道你有没有好好吃饭、有没有好好睡觉
                         </span>
                     </div>
                     <label className="hs-toggle">
                         <input
                             type="checkbox"
-                            aria-label="允许角色感知我的体型"
+                            aria-label="让角色感知健康数据"
                             checked={shareBodyInfo}
                             onChange={(event) => setShareBodyInfo(event.target.checked)}
                         />

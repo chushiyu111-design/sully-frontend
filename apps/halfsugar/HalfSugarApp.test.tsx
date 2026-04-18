@@ -230,7 +230,7 @@ describe('HalfSugarApp', () => {
         fireEvent.change(screen.getByPlaceholderText('170'), { target: { value: '165' } });
         fireEvent.change(screen.getAllByPlaceholderText('65')[0], { target: { value: '55' } });
         fireEvent.change(screen.getByPlaceholderText('1998'), { target: { value: '1999' } });
-        fireEvent.click(screen.getByLabelText('允许角色感知我的体型'));
+        fireEvent.click(screen.getByLabelText('让角色感知健康数据'));
         fireEvent.click(screen.getByText('开始使用'));
 
         await waitFor(() => {

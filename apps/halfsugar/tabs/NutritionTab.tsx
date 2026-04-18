@@ -18,6 +18,7 @@ const NutritionTab: React.FC = () => {
         topFavoriteFoods, apiConfig, addToast, recommendations,
     } = useHalfSugar();
 
+    const [activeMealIdx, setActiveMealIdx] = useState(0);
     const [recordingMealType, setRecordingMealType] = useState<MealTypeDefinition | null>(null);
     const [editingMeal, setEditingMeal] = useState<MealRecord | null>(null);
 
@@ -44,6 +45,9 @@ const NutritionTab: React.FC = () => {
         );
     }
 
+    const activeMealType = MEAL_TYPES[activeMealIdx];
+    const activeRecords = mealsByType[activeMealType.key] || [];
+
     return (
         <div className="hs-tab-content no-scrollbar">
             <div className="hs-section-title">
@@ -53,45 +57,62 @@ const NutritionTab: React.FC = () => {
 
             {isMealsLoading && meals.length === 0 && <div className="hs-loading-card">正在同步今日记录…</div>}
 
-            {MEAL_TYPES.map((mealType, idx) => {
-                const records = mealsByType[mealType.key] || [];
-                return (
-                    <section key={mealType.key} className={`hs-meal-group hs-animate-slide-up hs-delay-${Math.min(idx + 1, 5)}`}>
-                        <div className="hs-meal-group-title">
-                            <span>{mealType.label}</span>
-                            {records.length > 0 && <button type="button" className="hs-inline-add" onClick={() => handleOpenMealRecord(mealType)}>再记一份</button>}
-                        </div>
-                        {records.length === 0 ? (
-                            <button type="button" className="hs-meal-add" onClick={() => handleOpenMealRecord(mealType)}><span>＋</span> 记录{mealType.label}</button>
-                        ) : (
-                            records.map((meal) => (
-                                <button key={meal.id} type="button" className="hs-meal-card hs-meal-record-card" onClick={() => handleOpenMealRecord(mealType, meal)}>
-                                    <div className="hs-meal-icon" style={{ background: mealType.bg, color: mealType.color }}><span className="hs-emoji">{mealType.icon}</span></div>
-                                    <div className="hs-meal-info">
-                                        <div className="hs-meal-type">{meal.customLabel || mealType.label}</div>
-                                        <div className="hs-meal-desc">{formatMealTime(meal.createdAt) || '刚刚'} · {meal.foods.length > 0 ? meal.foods.map((f) => f.name).join('、') : '未填写食物'}</div>
-                                    </div>
-                                    <div className="hs-meal-cal">{meal.totalCalories}<span className="hs-meal-cal-unit"> kcal</span></div>
-                                </button>
-                            ))
-                        )}
-                    </section>
-                );
-            })}
+            {/* Horizontal meal type switcher */}
+            <div className="hs-meal-type-switcher">
+                {MEAL_TYPES.map((mealType, idx) => {
+                    const count = (mealsByType[mealType.key] || []).length;
+                    return (
+                        <button
+                            key={mealType.key}
+                            type="button"
+                            className={`hs-meal-type-chip ${activeMealIdx === idx ? 'active' : ''}`}
+                            onClick={() => setActiveMealIdx(idx)}
+                        >
+                            <span className="hs-emoji">{mealType.icon}</span>
+                            {mealType.label}
+                            {count > 0 && <span style={{ fontSize: 11, opacity: 0.7 }}>({count})</span>}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* Selected meal type's records */}
+            <section className="hs-meal-group hs-animate-fade-in" style={{ marginTop: 4 }}>
+                <div className="hs-meal-group-title">
+                    <span>{activeMealType.label}</span>
+                    {activeRecords.length > 0 && <button type="button" className="hs-inline-add" onClick={() => handleOpenMealRecord(activeMealType)}>再记一份</button>}
+                </div>
+                {activeRecords.length === 0 ? (
+                    <button type="button" className="hs-meal-add" onClick={() => handleOpenMealRecord(activeMealType)}><span>＋</span> 记录{activeMealType.label}</button>
+                ) : (
+                    activeRecords.map((meal) => (
+                        <button key={meal.id} type="button" className="hs-meal-card hs-meal-record-card" onClick={() => handleOpenMealRecord(activeMealType, meal)}>
+                            <div className="hs-meal-icon" style={{ background: activeMealType.bg, color: activeMealType.color }}><span className="hs-emoji">{activeMealType.icon}</span></div>
+                            <div className="hs-meal-info">
+                                <div className="hs-meal-type">{meal.customLabel || activeMealType.label}</div>
+                                <div className="hs-meal-desc">{formatMealTime(meal.createdAt) || '刚刚'} · {meal.foods.length > 0 ? meal.foods.map((f) => f.name).join('、') : '未填写食物'}</div>
+                            </div>
+                            <div className="hs-meal-cal">{meal.totalCalories}<span className="hs-meal-cal-unit"> kcal</span></div>
+                        </button>
+                    ))
+                )}
+            </section>
 
             {recommendations.length > 0 && (
                 <div className="hs-recommendation-section hs-animate-fade-in" style={{ marginTop: 8 }}>
                     <div className="hs-section-title">营养参考</div>
-                    {recommendations.map((rec) => (
-                        <div key={rec.nutrient} className="hs-recommendation-card">
-                            <div className="hs-rec-header">{rec.label} 可以再补充 {Math.round(rec.gap)}g</div>
-                            <div className="hs-rec-foods">
-                                {rec.foods.slice(0, 3).map((food) => (
-                                    <span key={food.name} className="hs-rec-food-chip">{food.name}</span>
-                                ))}
+                    <div className="hs-horizontal-scroll">
+                        {recommendations.map((rec) => (
+                            <div key={rec.nutrient} className="hs-recommendation-card" style={{ minWidth: 170 }}>
+                                <div className="hs-rec-header">{rec.label} +{Math.round(rec.gap)}g</div>
+                                <div className="hs-rec-foods">
+                                    {rec.foods.slice(0, 3).map((food) => (
+                                        <span key={food.name} className="hs-rec-food-chip">{food.name}</span>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
                 </div>
             )}
         </div>

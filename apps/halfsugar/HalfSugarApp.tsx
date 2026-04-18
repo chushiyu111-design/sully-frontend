@@ -1,8 +1,8 @@
 /**
  * HalfSugarApp — 半糖主义 Multi-Tab Entry Point
- * Slim container: wraps HalfSugarProvider + tab navigation.
+ * Typographic sidebar + collapsible rail design.
  */
-import React, { Suspense, useMemo } from 'react';
+import React, { Suspense, useCallback, useMemo, useState } from 'react';
 import { HalfSugarProvider, useHalfSugar, type TabID } from './HalfSugarContext';
 import { OnboardingView } from './HalfSugarTrackingUI';
 import './halfsugar.css';
@@ -16,54 +16,29 @@ const TrendsTab = React.lazy(() => import('./tabs/TrendsTab'));
 const ProfileTab = React.lazy(() => import('./tabs/ProfileTab'));
 const LunarTidesTab = React.lazy(() => import('./tabs/LunarTidesTab'));
 
-// ── Tab Bar Definition ──
+// ── Tab Definition (typographic — no icons) ──
 
 interface TabDef {
     id: TabID;
-    label: string;
-    icon: React.ReactNode;
+    zh: string;        // Chinese label (natural length)
+    en: string;        // English subtitle
+    initial: string;   // Single char shown when collapsed
 }
 
 const ALWAYS_TABS: TabDef[] = [
-    {
-        id: 'dashboard',
-        label: '今日',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>,
-    },
-    {
-        id: 'nutrition',
-        label: '饮食',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8.25v-1.5m0 1.5c-1.355 0-2.697.056-4.024.166C6.845 8.51 6 9.473 6 10.608v2.513m6-4.871c1.355 0 2.697.056 4.024.166C17.155 8.51 18 9.473 18 10.608v2.513M15 8.25v-1.5m-6 1.5v-1.5m12 9.75-1.5.75a3.354 3.354 0 0 1-3 0 3.354 3.354 0 0 0-3 0 3.354 3.354 0 0 1-3 0 3.354 3.354 0 0 0-3 0 3.354 3.354 0 0 1-3 0L3 16.5m15-3.379a48.474 48.474 0 0 0-6-.371c-2.032 0-4.034.126-6 .371m12 0c.39.049.777.102 1.163.16 1.07.16 1.837 1.094 1.837 2.175v5.169c0 .621-.504 1.125-1.125 1.125H4.125A1.125 1.125 0 0 1 3 20.625v-5.17c0-1.08.768-2.014 1.837-2.174A47.78 47.78 0 0 1 6 13.12" /></svg>,
-    },
-    {
-        id: 'activity',
-        label: '运动',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 0 0 .495-7.468 5.99 5.99 0 0 0-1.925 3.547 5.975 5.975 0 0 1-2.133-1.001A3.75 3.75 0 0 0 12 18Z" /></svg>,
-    },
-    {
-        id: 'sleep',
-        label: '睡眠',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" /></svg>,
-    },
+    { id: 'dashboard',  zh: '今日',     en: 'Today',     initial: '今' },
+    { id: 'nutrition',  zh: '饮食记录', en: 'Nutrition',  initial: '食' },
+    { id: 'activity',   zh: '运动',     en: 'Activity',   initial: '动' },
+    { id: 'sleep',      zh: '睡眠',     en: 'Sleep',      initial: '眠' },
 ];
 
 const LUNAR_TIDES_TAB: TabDef = {
-    id: 'lunar_tides',
-    label: '月相',
-    icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" /><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.15" /></svg>,
+    id: 'lunar_tides', zh: '月相潮汐', en: 'Lunar', initial: '月',
 };
 
 const TRAILING_TABS: TabDef[] = [
-    {
-        id: 'trends',
-        label: '趋势',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>,
-    },
-    {
-        id: 'profile',
-        label: '我的',
-        icon: <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} width="22" height="22"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6.75a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" /></svg>,
-    },
+    { id: 'trends',  zh: '趋势',  en: 'Trends',  initial: '趋' },
+    { id: 'profile', zh: '我的',  en: 'Profile',  initial: '我' },
 ];
 
 // ── Inner shell (must be inside Provider) ──
@@ -76,6 +51,9 @@ const HalfSugarInner: React.FC = () => {
         addToast,
     } = useHalfSugar();
 
+    const [sidebarExpanded, setSidebarExpanded] = useState(false);
+    const toggleSidebar = useCallback(() => setSidebarExpanded((p) => !p), []);
+
     const isFemale = healthProfile.gender === 'female';
     const tabs = useMemo(() => {
         const result = [...ALWAYS_TABS];
@@ -87,7 +65,7 @@ const HalfSugarInner: React.FC = () => {
     // Onboarding gate
     if (!isHealthSetup) {
         return (
-            <div className="hs-app hs-screen">
+            <div className="hs-app hs-screen" style={{ flexDirection: 'column' }}>
                 <div className="hs-header">
                     <button type="button" className="hs-back-btn" onClick={closeApp}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="20" height="20"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
@@ -124,36 +102,45 @@ const HalfSugarInner: React.FC = () => {
 
     return (
         <div className="hs-app hs-screen">
-            {/* Left Sidebar */}
-            <nav className="hs-sidebar">
-                <div className="hs-sidebar-top">
-                    <button type="button" className="hs-back-btn" onClick={closeApp}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="18" height="18"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                </div>
+            {/* Collapsible Left Sidebar */}
+            <nav className={`hs-sidebar ${sidebarExpanded ? 'expanded' : 'collapsed'}`}>
+                {/* Toggle area — click to expand/collapse */}
+                <button type="button" className="hs-sidebar-toggle" onClick={toggleSidebar} aria-label="切换侧边栏">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="14" height="14"
+                        style={{ transform: sidebarExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s' }}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    </svg>
+                </button>
+
+                {/* Tab list */}
                 <div className="hs-sidebar-tabs">
                     {tabs.map((tab) => (
                         <button
                             key={tab.id}
                             type="button"
                             className={`hs-sidebar-item ${activeTab === tab.id ? 'active' : ''}`}
-                            onClick={() => setActiveTab(tab.id)}
-                            aria-label={tab.label}
+                            onClick={() => { setActiveTab(tab.id); if (sidebarExpanded) setSidebarExpanded(false); }}
+                            aria-label={tab.zh}
                         >
-                            <span className="hs-sidebar-icon">{tab.icon}</span>
-                            <span className="hs-sidebar-label">{tab.label}</span>
+                            {/* Collapsed: single character */}
+                            <span className="hs-sidebar-initial">{tab.initial}</span>
+                            {/* Expanded: full text */}
+                            <span className="hs-sidebar-text">
+                                <span className="hs-sidebar-zh">{tab.zh}</span>
+                                <span className="hs-sidebar-en">{tab.en}</span>
+                            </span>
                         </button>
                     ))}
                 </div>
+
+                {/* Back button at bottom */}
+                <button type="button" className="hs-sidebar-back" onClick={closeApp} aria-label="返回">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="16" height="16"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                </button>
             </nav>
 
             {/* Main Content */}
             <div className="hs-main-content">
-                <div className="hs-header">
-                    <span className="hs-header-title">半糖主义</span>
-                    <div className="hs-header-spacer" />
-                </div>
-
                 <Suspense fallback={<div className="hs-tab-content"><div className="hs-loading-card">加载中…</div></div>}>
                     {renderTab()}
                 </Suspense>

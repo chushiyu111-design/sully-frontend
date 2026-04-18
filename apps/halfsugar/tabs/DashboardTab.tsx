@@ -84,18 +84,16 @@ const DashboardTab: React.FC = () => {
             {recommendations.length > 0 && (
                 <div className="hs-recommendation-section hs-animate-fade-in">
                     <div className="hs-section-title">今日参考</div>
-                    <div className="hs-horizontal-scroll">
-                        {recommendations.map((rec) => (
-                            <div key={rec.nutrient} className="hs-recommendation-card" style={{ minWidth: 180 }}>
-                                <div className="hs-rec-header">{rec.label} +{Math.round(rec.gap)}g</div>
-                                <div className="hs-rec-foods">
-                                    {rec.foods.slice(0, 3).map((food) => (
-                                        <span key={food.name} className="hs-rec-food-chip">{food.name}</span>
-                                    ))}
-                                </div>
+                    {recommendations.map((rec) => (
+                        <div key={rec.nutrient} className="hs-recommendation-card">
+                            <div className="hs-rec-header">{rec.label} 还差 {Math.round(rec.gap)}g</div>
+                            <div className="hs-rec-foods">
+                                {rec.foods.slice(0, 3).map((food) => (
+                                    <span key={food.name} className="hs-rec-food-chip">{food.name}</span>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        </div>
+                    ))}
                 </div>
             )}
 

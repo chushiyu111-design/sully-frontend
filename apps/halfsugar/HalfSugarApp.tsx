@@ -20,25 +20,24 @@ const LunarTidesTab = React.lazy(() => import('./tabs/LunarTidesTab'));
 
 interface TabDef {
     id: TabID;
-    zh: string;        // Chinese label (natural length)
+    zh: string;        // Chinese label
     en: string;        // English subtitle
-    initial: string;   // Single char shown when collapsed
 }
 
 const ALWAYS_TABS: TabDef[] = [
-    { id: 'dashboard',  zh: '今日',     en: 'Today',     initial: '今' },
-    { id: 'nutrition',  zh: '饮食记录', en: 'Nutrition',  initial: '食' },
-    { id: 'activity',   zh: '运动',     en: 'Activity',   initial: '动' },
-    { id: 'sleep',      zh: '睡眠',     en: 'Sleep',      initial: '眠' },
+    { id: 'dashboard',  zh: '今日',     en: 'Today' },
+    { id: 'nutrition',  zh: '饮食记录', en: 'Nutrition' },
+    { id: 'activity',   zh: '运动',     en: 'Activity' },
+    { id: 'sleep',      zh: '睡眠',     en: 'Sleep' },
 ];
 
 const LUNAR_TIDES_TAB: TabDef = {
-    id: 'lunar_tides', zh: '月相潮汐', en: 'Lunar', initial: '月',
+    id: 'lunar_tides', zh: '月相潮汐', en: 'Lunar',
 };
 
 const TRAILING_TABS: TabDef[] = [
-    { id: 'trends',  zh: '趋势',  en: 'Trends',  initial: '趋' },
-    { id: 'profile', zh: '我的',  en: 'Profile',  initial: '我' },
+    { id: 'trends',  zh: '趋势',  en: 'Trends' },
+    { id: 'profile', zh: '我的',  en: 'Profile' },
 ];
 
 // ── Inner shell (must be inside Provider) ──
@@ -102,29 +101,25 @@ const HalfSugarInner: React.FC = () => {
 
     return (
         <div className="hs-app hs-screen">
-            {/* Collapsible Left Sidebar */}
-            <nav className={`hs-sidebar ${sidebarExpanded ? 'expanded' : 'collapsed'}`}>
-                {/* Toggle area — click to expand/collapse */}
-                <button type="button" className="hs-sidebar-toggle" onClick={toggleSidebar} aria-label="切换侧边栏">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="14" height="14"
-                        style={{ transform: sidebarExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s' }}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                    </svg>
-                </button>
-
-                {/* Tab list */}
+            {/* Sidebar overlay */}
+            {sidebarExpanded && <div className="hs-sidebar-backdrop" onClick={toggleSidebar} />}
+            <nav className={`hs-sidebar ${sidebarExpanded ? 'open' : ''}`}>
+                <div className="hs-sidebar-header">
+                    <span className="hs-sidebar-brand">半糖主义</span>
+                    <button type="button" className="hs-sidebar-close" onClick={toggleSidebar} aria-label="关闭">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="16" height="16"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
                 <div className="hs-sidebar-tabs">
                     {tabs.map((tab) => (
                         <button
                             key={tab.id}
                             type="button"
                             className={`hs-sidebar-item ${activeTab === tab.id ? 'active' : ''}`}
-                            onClick={() => { setActiveTab(tab.id); if (sidebarExpanded) setSidebarExpanded(false); }}
+                            onClick={() => { setActiveTab(tab.id); setSidebarExpanded(false); }}
                             aria-label={tab.zh}
                         >
-                            {/* Collapsed: single character */}
-                            <span className="hs-sidebar-initial">{tab.initial}</span>
-                            {/* Expanded: full text */}
+                            <span className="hs-sidebar-dot" />
                             <span className="hs-sidebar-text">
                                 <span className="hs-sidebar-zh">{tab.zh}</span>
                                 <span className="hs-sidebar-en">{tab.en}</span>
@@ -132,15 +127,19 @@ const HalfSugarInner: React.FC = () => {
                         </button>
                     ))}
                 </div>
-
-                {/* Back button at bottom */}
                 <button type="button" className="hs-sidebar-back" onClick={closeApp} aria-label="返回">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="16" height="16"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                    <span>退出</span>
                 </button>
             </nav>
 
             {/* Main Content */}
             <div className="hs-main-content">
+                {/* Floating menu button */}
+                <button type="button" className="hs-menu-btn" onClick={toggleSidebar} aria-label="菜单">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="18" height="18"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
+                </button>
+
                 <Suspense fallback={<div className="hs-tab-content"><div className="hs-loading-card">加载中…</div></div>}>
                     {renderTab()}
                 </Suspense>

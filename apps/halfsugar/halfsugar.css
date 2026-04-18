@@ -1962,56 +1962,81 @@
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Collapsible Left Sidebar — Typographic Rail ── */
+/* ── Sidebar Overlay ── */
+.hs-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.2);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 60;
+    animation: hs-overlay-in 0.2s ease-out both;
+}
+
 .hs-sidebar {
-    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 200px;
     display: flex;
     flex-direction: column;
-    align-items: stretch;
     background: var(--hs-bg);
-    box-shadow: 4px 0 16px rgba(0,0,0,0.04);
-    z-index: 50;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.08);
+    z-index: 70;
+    transform: translateX(-100%);
+    transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
     overflow: hidden;
-    transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-.hs-sidebar.collapsed {
-    width: 38px;
+.hs-sidebar.open {
+    transform: translateX(0);
 }
 
-.hs-sidebar.expanded {
-    width: 130px;
+/* Sidebar header with brand + close */
+.hs-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 16px 12px;
+    flex-shrink: 0;
 }
 
-/* Toggle button */
-.hs-sidebar-toggle {
+.hs-sidebar-brand {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--hs-text);
+    letter-spacing: -0.02em;
+}
+
+.hs-sidebar-close {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 36px;
-    background: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--hs-bg);
+    box-shadow: var(--hs-neu-sm);
     border: none;
     cursor: pointer;
     color: var(--hs-text-muted);
-    flex-shrink: 0;
-    -webkit-tap-highlight-color: transparent;
-    transition: color 0.2s;
+    transition: all 0.2s;
 }
 
-.hs-sidebar-toggle:hover {
-    color: var(--hs-primary-dark);
+.hs-sidebar-close:active {
+    transform: scale(0.9);
+    box-shadow: var(--hs-neu-pressed);
 }
 
-/* Tab list container */
+/* Tab list */
 .hs-sidebar-tabs {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 4px 0;
+    padding: 8px 0;
     overflow-y: auto;
-    overflow-x: hidden;
     scrollbar-width: none;
 }
 
@@ -2023,85 +2048,57 @@
 .hs-sidebar-item {
     display: flex;
     align-items: center;
-    gap: 0;
-    padding: 10px 0;
+    gap: 12px;
+    padding: 12px 20px;
     background: none;
     border: none;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.25s, color 0.25s;
+    transition: background 0.2s;
     position: relative;
-    white-space: nowrap;
-    overflow: hidden;
 }
 
-/* Collapsed initial character */
-.hs-sidebar-initial {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 38px;
+/* Small dot for active indicator */
+.hs-sidebar-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: transparent;
     flex-shrink: 0;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--hs-text-muted);
-    transition: color 0.25s, font-weight 0.25s;
+    transition: background 0.25s;
 }
 
-/* Expanded text block */
+.hs-sidebar-item.active .hs-sidebar-dot {
+    background: var(--hs-primary-dark);
+}
+
+/* Text block */
 .hs-sidebar-text {
     display: flex;
     flex-direction: column;
-    gap: 1px;
-    opacity: 0;
-    transform: translateX(-4px);
-    transition: opacity 0.3s 0.05s, transform 0.3s 0.05s;
-    pointer-events: none;
-}
-
-.hs-sidebar.expanded .hs-sidebar-text {
-    opacity: 1;
-    transform: translateX(0);
-    pointer-events: auto;
+    gap: 2px;
 }
 
 .hs-sidebar-zh {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 500;
     color: var(--hs-text-secondary);
     line-height: 1.2;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
 }
 
 .hs-sidebar-en {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 400;
-    color: var(--hs-text-faint);
+    color: var(--hs-text-muted);
     line-height: 1;
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
 
-/* Active state — round dot indicator + color shift */
+/* Active state */
 .hs-sidebar-item.active {
     background: var(--hs-primary-bg);
-}
-
-.hs-sidebar-item.active::before {
-    content: '';
-    position: absolute;
-    left: 3px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--hs-primary-dark);
-}
-
-.hs-sidebar-item.active .hs-sidebar-initial {
-    color: var(--hs-primary-dark);
-    font-weight: 700;
 }
 
 .hs-sidebar-item.active .hs-sidebar-zh {
@@ -2114,30 +2111,54 @@
     opacity: 0.7;
 }
 
-/* Press feedback */
 .hs-sidebar-item:active {
-    transform: scale(0.95);
+    background: rgba(0, 0, 0, 0.03);
 }
 
-/* Back button at sidebar bottom */
+/* Back/exit button at bottom */
 .hs-sidebar-back {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    margin: auto auto 10px;
-    background: var(--hs-bg);
-    box-shadow: var(--hs-neu-sm);
+    gap: 8px;
+    padding: 14px 20px;
+    margin-top: auto;
+    background: none;
     border: none;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
     cursor: pointer;
     color: var(--hs-text-muted);
-    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    font-size: 13px;
+    font-weight: 500;
+    transition: color 0.2s;
     flex-shrink: 0;
 }
 
 .hs-sidebar-back:active {
+    color: var(--hs-primary-dark);
+}
+
+/* Floating menu button in main content */
+.hs-menu-btn {
+    position: absolute;
+    top: 12px;
+    left: 14px;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--hs-bg);
+    box-shadow: var(--hs-neu-sm);
+    border: none;
+    cursor: pointer;
+    color: var(--hs-text-secondary);
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.hs-menu-btn:active {
     transform: scale(0.9);
     box-shadow: var(--hs-neu-pressed);
 }

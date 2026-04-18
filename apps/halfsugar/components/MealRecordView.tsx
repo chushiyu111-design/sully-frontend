@@ -349,7 +349,7 @@ export const MealRecordView: React.FC<{
     };
 
     return (
-        <div className="hs-app hs-screen">
+        <div className="hs-tab-content no-scrollbar" style={{ display: 'flex', flexDirection: 'column', paddingBottom: 0 }}>
             <div className="hs-header">
                 <button type="button" className="hs-back-btn" onClick={onBack}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width="20" height="20">
@@ -373,7 +373,7 @@ export const MealRecordView: React.FC<{
                 </button>
             </div>
 
-            <div className="hs-scroll-area no-scrollbar">
+            <div className="hs-scroll-area no-scrollbar" style={{ flex: 1 }}>
                 {favoritePromptFood && (
                     <div className="hs-inline-toast hs-animate-fade-in">
                         <div className="hs-inline-toast-text">收藏这个食物？</div>

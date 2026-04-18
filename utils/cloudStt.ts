@@ -51,12 +51,17 @@ export async function transcribe(
     const url = `${baseUrl}/audio/transcriptions`;
 
     // ── 2. 构建 FormData ──
-    // 浏览器 MediaRecorder 常输出 webm/ogg，两家 API 均支持
-    const ext = blob.type.includes('wav') ? 'wav'
-        : blob.type.includes('mp4') ? 'mp4'
-            : blob.type.includes('ogg') ? 'ogg'
-                : 'webm';
+    // 浏览器 MediaRecorder 输出格式因浏览器而异：
+    //   Chrome → webm/opus, Safari → mp4, Edge → webm 或 mp4
+    const blobType = (blob.type || '').toLowerCase();
+    const ext = blobType.includes('wav') ? 'wav'
+        : blobType.includes('mp4') || blobType.includes('m4a') ? 'mp4'
+            : blobType.includes('ogg') ? 'ogg'
+                : blobType.includes('webm') ? 'webm'
+                    : 'webm'; // 兜底：Groq/SiliconFlow 均支持 webm
     const fileName = `recording.${ext}`;
+
+    console.log(`🎤 [CloudSTT] Blob info: size=${blob.size}, type="${blob.type}", ext=${ext}`);
 
     const formData = new FormData();
     formData.append('file', blob, fileName);

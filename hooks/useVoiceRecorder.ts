@@ -42,6 +42,7 @@ const MAX_DURATION = 60;
 const MIME_CANDIDATES = [
     'audio/webm;codecs=opus',
     'audio/webm',
+    'audio/mp4;codecs=opus',  // Edge on Windows may prefer mp4 container
     'audio/mp4',
     'audio/ogg;codecs=opus',
     'audio/ogg',
@@ -50,8 +51,12 @@ const MIME_CANDIDATES = [
 function getSupportedMime(): string {
     if (typeof MediaRecorder === 'undefined') return '';
     for (const mime of MIME_CANDIDATES) {
-        if (MediaRecorder.isTypeSupported(mime)) return mime;
+        if (MediaRecorder.isTypeSupported(mime)) {
+            console.log(`🎤 [Recorder] Using MIME: ${mime}`);
+            return mime;
+        }
     }
+    console.warn('🎤 [Recorder] No candidate MIME supported, will use browser default');
     return '';
 }
 
@@ -125,9 +130,13 @@ export function useVoiceRecorder(): UseVoiceRecorderReturn {
             if (!isLocalhost && location.protocol !== 'https:') {
                 setError('录音需要 HTTPS 连接，请使用 HTTPS 部署或 localhost 测试');
             } else {
-                setError('当前浏览器不支持录音（请使用 Chrome / Safari）');
+                setError('当前浏览器不支持录音（请使用 Chrome / Edge / Safari 最新版）');
             }
-            console.error('🎤 [Recorder] Not supported. isSecureContext:', typeof window !== 'undefined' && window.isSecureContext, 'mediaDevices:', !!navigator?.mediaDevices);
+            console.error('🎤 [Recorder] Not supported.',
+                'isSecureContext:', typeof window !== 'undefined' && window.isSecureContext,
+                'mediaDevices:', !!navigator?.mediaDevices,
+                'MediaRecorder:', typeof MediaRecorder !== 'undefined',
+                'userAgent:', navigator?.userAgent);
             return false;
         }
 
@@ -195,6 +204,9 @@ export function useVoiceRecorder(): UseVoiceRecorderReturn {
             mediaRecorderRef.current = recorder;
             chunksRef.current = [];
 
+            // Log the actual MIME type the browser chose (may differ from requested)
+            console.log(`🎤 [Recorder] MediaRecorder actual mimeType: ${recorder.mimeType || '(default)'}`);
+
             recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) {
                     chunksRef.current.push(e.data);
@@ -209,9 +221,12 @@ export function useVoiceRecorder(): UseVoiceRecorderReturn {
                     return;
                 }
 
-                const blob = new Blob(chunksRef.current, {
-                    type: mimeType || 'audio/webm',
-                });
+                // Use the actual MIME type from the recorder instance, not the
+                // requested one — on Edge, the browser may silently pick a
+                // different container (e.g. mp4 instead of webm).
+                const actualMime = recorder.mimeType || mimeType || 'audio/webm';
+                const blob = new Blob(chunksRef.current, { type: actualMime });
+                console.log(`🎤 [Recorder] Blob created: ${blob.size} bytes, type=${actualMime}`);
                 const finalDuration = Math.round((Date.now() - startTimeRef.current) / 1000);
                 cleanup();
                 setState('idle');

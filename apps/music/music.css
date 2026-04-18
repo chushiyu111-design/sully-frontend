@@ -691,23 +691,7 @@
 
 /* 中心小圆点装饰 */
 .music-player-disc-center {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.6) 20%,
-    rgba(255, 255, 255, 0.2) 60%,
-    transparent 100%
-  );
-  z-index: 3;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.25);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  display: none;
 }
 
 .music-player-disc-note {
@@ -1991,59 +1975,74 @@
 .music-player-bottom-panel {
   display: flex;
   flex-direction: column;
-  margin: 0 16px 24px;
-  border-radius: 36px;
-  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-  padding: 16px 0;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
 }
 
 .music-player-bottom-panel--glass {
-  background: rgba(255, 255, 255, 0.05); /* 极低基础透明度 */
-  backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
-  -webkit-backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 24px 16px;
-  box-shadow: 
-    0 24px 48px rgba(0, 0, 0, 0.2), 
-    inset 0 1px 1px rgba(255, 255, 255, 0.4), /* 顶部高光厚度 */
-    inset 0 0 32px rgba(255, 255, 255, 0.05); /* 全局内发光 */
-  /* 防止子内容溢出破坏玻璃模糊边框 */
-  overflow: hidden;
+  isolation: isolate;
   position: relative;
+  margin: 4px 14px 20px;
+  border-radius: 28px;
+  padding: 20px 12px 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(60px) saturate(180%) brightness(1.08);
+  backdrop-filter: blur(60px) saturate(180%) brightness(1.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    inset 0 0 20px rgba(255, 255, 255, 0.04);
 }
 
-/* 液态光泽高光，跟圆盘类似 */
 .music-player-bottom-panel--glass::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 50px;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
   background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.12) 0%,
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.5) 30%,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0.5) 70%,
     transparent 100%
   );
   pointer-events: none;
-  z-index: 0;
+  z-index: 2;
 }
 
 .music-player-bottom-panel--glass::after {
   content: '';
   position: absolute;
-  top: -20%;
-  left: -10%;
-  width: 50%;
-  height: 140%;
-  background: radial-gradient(ellipse at top left, rgba(255, 255, 255, 0.15), transparent 70%);
-  transform: rotate(-15deg);
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    transparent 35%,
+    transparent 80%,
+    rgba(0, 0, 0, 0.04) 100%
+  );
   pointer-events: none;
   z-index: 0;
 }
 
-/* 确保内部元素在高光之上 */
-.music-player-bottom-panel > * {
+.music-player-bottom-panel--glass > * {
   position: relative;
   z-index: 1;
+}
+
+.music-player-bottom-panel--glass .music-player-song-info {
+  padding: 0 16px;
+}
+.music-player-bottom-panel--glass .music-player-progress {
+  padding: 0 16px;
+}
+.music-player-bottom-panel--glass .music-player-controls {
+  padding: 0 16px;
 }

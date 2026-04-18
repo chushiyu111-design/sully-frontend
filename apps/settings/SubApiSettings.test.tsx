@@ -36,9 +36,21 @@ describe('SubApiSettings', () => {
 
         render(<SubApiSettings />);
 
-        expect(screen.getByPlaceholderText('https://...')).toHaveValue('https://structured.example.com');
-        expect(screen.getByPlaceholderText('sk-...')).toHaveValue('structured-key');
+        const urlInput = screen.getByPlaceholderText('https://...');
+        const keyInput = screen.getByPlaceholderText('sk-...');
+
+        expect(urlInput).toHaveValue('https://structured.example.com');
+        expect(keyInput).toHaveValue('structured-key');
         expect(screen.getByPlaceholderText('模型名称...')).toHaveValue('gpt-structured');
+        expect(urlInput).toHaveAttribute('autocomplete', 'off');
+        expect(urlInput).toHaveAttribute('inputmode', 'url');
+        expect(urlInput).toHaveAttribute('name', 'endpoint-secondary-api-url');
+        expect(urlInput).toHaveAttribute('data-lpignore', 'true');
+        expect(keyInput).toHaveAttribute('type', 'password');
+        expect(keyInput).toHaveAttribute('autocomplete', 'new-password');
+        expect(keyInput).toHaveAttribute('inputmode', 'text');
+        expect(keyInput).toHaveAttribute('name', 'credential-secondary-api-key');
+        expect(keyInput).toHaveAttribute('data-lpignore', 'true');
 
         fireEvent.click(screen.getByRole('button', { name: /保存配置/i }));
 

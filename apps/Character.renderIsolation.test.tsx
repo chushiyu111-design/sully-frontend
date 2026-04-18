@@ -26,6 +26,10 @@ vi.mock('../components/character/MemoryCenter', () => ({
     default: () => <div>Memory Center</div>,
 }));
 
+vi.mock('../components/character/CharacterWeixinBindingCard', () => ({
+    default: () => <div>Weixin Binding Card</div>,
+}));
+
 vi.mock('../components/character/CharacterLocationSummaryCard', () => ({
     default: (props: any) => {
         locationSummaryRenderSpy(props);

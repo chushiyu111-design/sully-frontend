@@ -3,6 +3,7 @@ import React,{ useState,useEffect,useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import { getGuardedInputProps } from '../utils/inputGuards';
 
 // --- Simple Markdown Renderer for Web Content ---
 const WebRenderer: React.FC<{ content: string }> = ({ content }) => {
@@ -401,6 +402,7 @@ Generate realistic results linking to hypothetical URLs.`;
                         placeholder="Search or type URL"
                         className="w-full bg-slate-100 border border-slate-200 rounded-full py-4 pl-12 pr-4 shadow-sm focus:shadow-md focus:bg-white focus:border-blue-300 outline-none transition-all text-slate-700"
                         autoFocus
+                        {...getGuardedInputProps({ kind: 'url', field: 'browser-start-url-or-search', inputMode: 'search', enterKeyHint: 'search' })}
                     />
                     <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>
@@ -481,6 +483,7 @@ Generate realistic results linking to hypothetical URLs.`;
                         onChange={(e) => setUrlInput(e.target.value)}
                         onFocus={() => { if(currentUrl === 'home://start') setUrlInput(''); }}
                         placeholder="Search or enter website name"
+                        {...getGuardedInputProps({ kind: 'url', field: 'browser-address-bar', inputMode: 'search', enterKeyHint: 'search' })}
                     />
                 </form>
             </div>
@@ -524,10 +527,12 @@ Generate realistic results linking to hypothetical URLs.`;
                     <div>
                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Brave Search API Key</label>
                         <input 
+                            type="password"
                             value={braveKey} 
                             onChange={e => setBraveKey(e.target.value)} 
                             placeholder="BSA-..." 
                             className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-blue-500 font-mono" 
+                            {...getGuardedInputProps({ kind: 'secret', field: 'browser-brave-search-key' })}
                         />
                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed bg-slate-50 p-2 rounded">
                             <span className="font-bold">注意：</span> 配置 Key 后可搜索现实世界的内容（如B站、小红书）。<br/>

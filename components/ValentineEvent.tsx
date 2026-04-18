@@ -17,6 +17,7 @@ import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { CharacterProfile,SpecialMomentRecord } from '../types';
+import { getGuardedInputProps } from '../utils/inputGuards';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem,Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -282,11 +283,11 @@ const InlineApiSetup: React.FC<{ onDone: () => void; onBack: () => void }> = ({ 
                 <div className="px-6 py-4 space-y-4 overflow-y-auto no-scrollbar flex-1">
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
-                        <input type="text" value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="text" value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'url', field: 'valentine-api-url' })} />
                     </div>
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                        <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'secret', field: 'valentine-api-key' })} />
                     </div>
                     <div>
                         <div className="flex justify-between items-center mb-1.5 pl-1">

@@ -61,6 +61,15 @@ describe('EmbeddingSettings', () => {
 
         expect(baseUrlInput).toHaveValue('https://api.siliconflow.cn/v1');
         expect(apiKeyInput).toHaveValue('seed-key');
+        expect(baseUrlInput).toHaveAttribute('autocomplete', 'off');
+        expect(baseUrlInput).toHaveAttribute('inputmode', 'url');
+        expect(baseUrlInput).toHaveAttribute('name', 'endpoint-embedding-base-url');
+        expect(baseUrlInput).toHaveAttribute('data-lpignore', 'true');
+        expect(apiKeyInput).toHaveAttribute('type', 'password');
+        expect(apiKeyInput).toHaveAttribute('autocomplete', 'new-password');
+        expect(apiKeyInput).toHaveAttribute('inputmode', 'text');
+        expect(apiKeyInput).toHaveAttribute('name', 'credential-embedding-api-key');
+        expect(apiKeyInput).toHaveAttribute('data-lpignore', 'true');
 
         fireEvent.change(baseUrlInput, { target: { value: ' https://embedding.example.com/v1/ ' } });
         fireEvent.change(apiKeyInput, { target: { value: ' next-key ' } });

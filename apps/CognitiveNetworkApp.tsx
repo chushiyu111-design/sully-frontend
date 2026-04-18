@@ -621,7 +621,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                <code className="flex-1 text-[11px] font-mono text-stone-600 break-all leading-relaxed select-all">
+                                <code className="flex-1 text-[11px] font-mono text-stone-600 break-all leading-relaxed">
                                     {syncCodeVisible ? getUserId() : `${getUserId().slice(0, 12)}${'*'.repeat(20)}`}
                                 </code>
                                 <button
@@ -652,7 +652,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                     autoComplete="off"
                                     autoCorrect="off"
                                     autoCapitalize="off"
-                                    className="flex-1 bg-white/80 border border-stone-200/60 rounded-xl px-3 py-2.5 text-[11px] font-mono text-stone-600 focus:border-stone-400 focus:bg-white transition-all select-text"
+                                    className="flex-1 bg-white/80 border border-stone-200/60 rounded-xl px-3 py-2.5 text-[11px] font-mono text-stone-600 focus:border-stone-400 focus:bg-white transition-all"
                                     style={{ userSelect: 'text', WebkitUserSelect: 'text', touchAction: 'auto' }}
                                 />
                                 <button

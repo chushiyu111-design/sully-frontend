@@ -14,6 +14,7 @@ import MemoryCenter from '../components/character/MemoryCenter';
 import CharacterCitySection from '../components/character/CharacterCitySection';
 import type { CharacterCitySectionHandle } from '../components/character/CharacterCitySection';
 import CharacterLocationSummaryCard from '../components/character/CharacterLocationSummaryCard';
+import CharacterWeixinBindingCard from '../components/character/CharacterWeixinBindingCard';
 import { safeResponseJson } from '../utils/safeApi';
 import { useCharacterScreenDeps } from '../hooks/useCharacterScreenDeps';
 import type { CharacterUpdateOptions } from '../context/CharacterContext';
@@ -1171,6 +1172,12 @@ ${isInitialGeneration ? `
                                     onUnmountWorldbook={unmountWorldbook}
                                 />
 
+                                <CharacterWeixinBindingCard
+                                    charId={formData.id}
+                                    charName={formData.name}
+                                    addToast={addToast}
+                                />
+
                                 {/* Export Card Button */}
                                 <div className="pt-4">
                                     <button
@@ -1348,7 +1355,7 @@ ${isInitialGeneration ? `
 
             {showExportModal && (
                 <Modal isOpen={showExportModal} title="导出文本" onClose={() => setShowExportModal(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => { navigator.clipboard.writeText(exportText); addToast('已复制', 'success'); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">复制全文</button>{Capacitor.isNativePlatform() ? (<button onClick={handleNativeShare} className="flex-1 py-3 bg-slate-800 text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>文件分享</button>) : (<button onClick={handleWebFileDownload} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>下载文本</button>)}</div>}>
-                    <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-2"><div className="text-[10px] text-slate-400">已自动复制到剪贴板。如果分享失败，请直接手动复制。</div><textarea value={exportText} readOnly className="w-full h-40 bg-transparent border-none text-[10px] font-mono text-slate-600 resize-none focus:ring-0 leading-relaxed select-all" onClick={(e) => e.currentTarget.select()} /></div>
+                    <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-2"><div className="text-[10px] text-slate-400">已自动复制到剪贴板。如果分享失败，请直接使用下方复制按钮。</div><textarea value={exportText} readOnly className="w-full h-40 bg-transparent border-none text-[10px] font-mono text-slate-600 resize-none focus:ring-0 leading-relaxed" /></div>
                 </Modal>
             )}
 

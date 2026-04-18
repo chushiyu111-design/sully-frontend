@@ -3,6 +3,7 @@ import React,{ useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { safeResponseJson } from '../../utils/safeApi';
 import Modal from '../../components/os/Modal';
+import { getGuardedInputProps } from '../../utils/inputGuards';
 import { getSecondaryApiConfig,setSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { readJsonStorage,safeLocalStorageGet,safeLocalStorageSet,writeJsonStorage } from '../../utils/storage';
 
@@ -172,12 +173,12 @@ const SubApiSettings: React.FC = () => {
 
                     <div>
                         <label className="text-[10px] font-bold text-[#b0a48a] uppercase tracking-widest mb-1.5 block pl-1">URL</label>
-                        <input type="text" value={subUrl} onChange={e => setSubUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="text" value={subUrl} onChange={e => setSubUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'url', field: 'secondary-api-url' })} />
                     </div>
 
                     <div>
                         <label className="text-[10px] font-bold text-[#b0a48a] uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                        <input type="password" value={subKey} onChange={e => setSubKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="password" value={subKey} onChange={e => setSubKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'secret', field: 'secondary-api-key' })} />
                     </div>
 
                     <div>

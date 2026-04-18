@@ -3,6 +3,7 @@ import React,{ useState,useRef,useEffect } from 'react';
 import { useOS } from '../../context/OSContext';
 import { CharacterProfile,SpriteConfig,SkinSet } from '../../types';
 import { processImage } from '../../utils/file';
+import { getGuardedInputProps } from '../../utils/inputGuards';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -566,6 +567,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                                     onChange={e => setSkinUrlInput(e.target.value)}
                                     placeholder="https://example.com/sprite.png"
                                     className="w-full px-3 py-2.5 bg-slate-100 rounded-xl text-sm outline-none focus:ring-1 focus:ring-primary/30"
+                                    {...getGuardedInputProps({ kind: 'url', field: 'date-settings-sprite-url' })}
                                 />
                             </div>
                             {skinUrlInput && skinUrlInput.startsWith('http') && (

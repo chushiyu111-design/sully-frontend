@@ -284,7 +284,7 @@ const WorldbookApp: React.FC = () => {
                                             {previewBookId === book.id && (
                                                 <div className="px-4 pb-4 pt-0 animate-fade-in">
                                                     <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent mb-3"></div>
-                                                    <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap font-light select-text">
+                                                    <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap font-light">
                                                         {book.content || <span className="italic text-slate-400">暂无内容...</span>}
                                                     </p>
                                                 </div>

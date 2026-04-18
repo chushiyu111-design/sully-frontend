@@ -9,6 +9,7 @@ import {
   type MemoryEmbeddingEngineId,
   type MemoryEmbeddingEngineStatus,
 } from '../../utils/backendClient';
+import { getGuardedInputProps } from '../../utils/inputGuards';
 import {
     EMBEDDING_ENGINES,
     getEmbeddingConfig,
@@ -496,6 +497,7 @@ const EmbeddingSettings: React.FC = () => {
                         onChange={(event) => setEmbeddingUrl(event.target.value)}
                         placeholder={getDefaultBaseUrl(engineId)}
                         className="w-full bg-white/70 border border-[#d9e7f6]/70 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                        {...getGuardedInputProps({ kind: 'url', field: 'embedding-base-url' })}
                     />
                 </div>
 
@@ -507,6 +509,7 @@ const EmbeddingSettings: React.FC = () => {
                         onChange={(event) => setEmbeddingKey(event.target.value)}
                         placeholder="sk-..."
                         className="w-full bg-white/70 border border-[#d9e7f6]/70 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                        {...getGuardedInputProps({ kind: 'secret', field: 'embedding-api-key' })}
                     />
                     <a
                         href="https://cloud.siliconflow.cn/account/ak"

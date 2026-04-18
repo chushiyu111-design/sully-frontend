@@ -2,6 +2,7 @@
 import React,{ useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { STT_PROVIDER_DEFAULTS } from '../../types/stt';
+import { getGuardedInputProps } from '../../utils/inputGuards';
 import type { SttProvider } from '../../types/stt';
 
 /** 识别语言选项 */
@@ -98,6 +99,7 @@ const SttSettings: React.FC = () => {
                         onChange={e => setSttGroqKey(e.target.value)}
                         placeholder="gsk_..."
                         className="w-full bg-white/60 border border-[#d4e4f7]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                        {...getGuardedInputProps({ kind: 'secret', field: 'stt-groq-key' })}
                     />
                     <a href={STT_PROVIDER_DEFAULTS.groq.registerUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#7b8db8] hover:underline mt-1.5 inline-block pl-1">
                         → 免费获取 Groq Key
@@ -113,6 +115,7 @@ const SttSettings: React.FC = () => {
                         onChange={e => setSttSiliconKey(e.target.value)}
                         placeholder="sk-..."
                         className="w-full bg-white/60 border border-[#d4e4f7]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
+                        {...getGuardedInputProps({ kind: 'secret', field: 'stt-siliconflow-key' })}
                     />
                     <a href={STT_PROVIDER_DEFAULTS.siliconflow.registerUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#7b8db8] hover:underline mt-1.5 inline-block pl-1">
                         → 免费获取硅基流动 Key

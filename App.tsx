@@ -5,6 +5,19 @@ import { OSProvider } from './context/OSContext';
 import PhoneShell from './components/PhoneShell';
 import { startKeepAlive,startBackendHeartbeat } from './utils/keepAlive';
 
+const EDITABLE_SELECTION_SELECTOR = 'input:not([readonly]), textarea:not([readonly]), select, [contenteditable="true"], [data-allow-text-selection="true"]';
+
+function getSelectionTargetElement(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) return target;
+  if (target instanceof Node) return target.parentElement;
+  return null;
+}
+
+function canSelectText(target: EventTarget | null): boolean {
+  const element = getSelectionTargetElement(target);
+  return Boolean(element?.closest(EDITABLE_SELECTION_SELECTOR));
+}
+
 /**
  * 检测是否运行在 PWA (已安装到桌面) 模式
  */
@@ -58,21 +71,34 @@ const App: React.FC = () => {
   useEffect(() => {
     startKeepAlive();
     startBackendHeartbeat();
-    if (!isPwaMode()) return;
-    if (!isFullscreenEnabled()) return;
 
-    // 积极维护全屏状态：任何点击或触摸（用户手势）都会尝试恢复全屏
-    // 这是为了解决 Android 侧滑返回、键盘收起时意外退出全屏的 Bug
-    const ensureFullscreen = () => {
-      requestSystemFullscreen();
+    const preventNonEditableSelection = (event: Event) => {
+      if (!canSelectText(event.target)) {
+        event.preventDefault();
+      }
     };
 
-    document.addEventListener('click', ensureFullscreen, { capture: true, passive: true });
-    document.addEventListener('touchstart', ensureFullscreen, { capture: true, passive: true });
+    document.addEventListener('selectstart', preventNonEditableSelection);
+
+    if (isPwaMode() && isFullscreenEnabled()) {
+      // 积极维护全屏状态：任何点击或触摸（用户手势）都会尝试恢复全屏
+      // 这是为了解决 Android 侧滑返回、键盘收起时意外退出全屏的 Bug
+      const ensureFullscreen = () => {
+        requestSystemFullscreen();
+      };
+
+      document.addEventListener('click', ensureFullscreen, { capture: true, passive: true });
+      document.addEventListener('touchstart', ensureFullscreen, { capture: true, passive: true });
+
+      return () => {
+        document.removeEventListener('selectstart', preventNonEditableSelection);
+        document.removeEventListener('click', ensureFullscreen, { capture: true } as any);
+        document.removeEventListener('touchstart', ensureFullscreen, { capture: true } as any);
+      };
+    }
 
     return () => {
-      document.removeEventListener('click', ensureFullscreen, { capture: true } as any);
-      document.removeEventListener('touchstart', ensureFullscreen, { capture: true } as any);
+      document.removeEventListener('selectstart', preventNonEditableSelection);
     };
   }, []);
 

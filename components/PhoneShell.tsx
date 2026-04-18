@@ -116,7 +116,7 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
                 : '检测到 chunk 加载失败。为了避免死循环，这一标签页不会再自动重试，请手动刷新应用。'
               : '应用运行时遇到了一个未处理错误。'}
           </p>
-          <p className="text-xs text-slate-400 font-mono bg-black/30 p-3 rounded max-w-full overflow-auto max-h-40 select-text break-all whitespace-pre-wrap">
+          <p className="text-xs text-slate-400 font-mono bg-black/30 p-3 rounded max-w-full overflow-auto max-h-40 break-all whitespace-pre-wrap">
             {errorText}
           </p>
           <button

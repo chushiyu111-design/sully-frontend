@@ -1,5 +1,6 @@
 
 import React,{ useState } from 'react';
+import { getGuardedInputProps } from '../../../utils/inputGuards';
 import type { TtsFormState } from './useTtsForm';
 
 interface Props {
@@ -63,9 +64,9 @@ const TtsPreprocessSection: React.FC<Props> = ({
             {preprocessEnabled && (
                 <div className="space-y-2">
                     <div><label className="text-[10px] font-bold text-[#b8aaa0] uppercase block mb-1">API Base URL</label>
-                        <input type="text" value={preprocessApiBase} onChange={e => set('preprocessApiBase', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#e5ddf0]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="https://api.openai.com/v1 或其他兼容接口" /></div>
+                        <input type="text" value={preprocessApiBase} onChange={e => set('preprocessApiBase', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#e5ddf0]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="https://api.openai.com/v1 或其他兼容接口" {...getGuardedInputProps({ kind: 'url', field: 'tts-preprocess-base-url' })} /></div>
                     <div><label className="text-[10px] font-bold text-[#b8aaa0] uppercase block mb-1">API Key</label>
-                        <input type="password" value={preprocessApiKey} onChange={e => set('preprocessApiKey', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#e5ddf0]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="sk-..." /></div>
+                        <input type="password" value={preprocessApiKey} onChange={e => set('preprocessApiKey', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#e5ddf0]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="sk-..." {...getGuardedInputProps({ kind: 'secret', field: 'tts-preprocess-api-key' })} /></div>
                     <div><label className="text-[10px] font-bold text-[#b8aaa0] uppercase block mb-1">模型 <span className="text-[#a18db8] font-normal normal-case">推荐 flash/turbo</span></label>
                         <div className="flex gap-2">
                             <input type="text" value={preprocessModel} onChange={e => set('preprocessModel', e.target.value)} className="flex-1 bg-white/60 backdrop-blur-sm border border-[#e5ddf0]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="gemini-2.0-flash / gpt-4o-mini ..." />

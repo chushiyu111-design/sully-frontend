@@ -339,7 +339,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             <img src={characters.find(c => c.id === activeCharId)?.avatar} className="w-9 h-9 rounded-full border border-white/20 object-cover shadow-sm" />
                             <div className="flex-1">
                                 <div className="text-xs font-bold text-white/50 mb-1.5 uppercase tracking-wide">{characters.find(c => c.id === activeCharId)?.name} 的点评</div>
-                                <p className="text-[15px] text-white/90 leading-relaxed font-light select-text">"{selectedImage.review}"</p>
+                                <p className="text-[15px] text-white/90 leading-relaxed font-light">"{selectedImage.review}"</p>
                             </div>
                         </div>
                         <div className="flex justify-between items-center border-t border-white/5 pt-2 mt-2">

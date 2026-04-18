@@ -6,6 +6,7 @@ import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { processImage } from '../utils/file';
 import { NOVEL_THEMES,analyzeWriterPersonaSimple } from '../utils/novelUtils';
+import { getGuardedInputProps } from '../utils/inputGuards';
 import NovelWriter from '../components/novel/NovelWriter';
 
 const NovelApp: React.FC = () => {
@@ -293,7 +294,7 @@ const NovelApp: React.FC = () => {
                             <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">自定义封面</label>
                             <div className="flex gap-3 items-center">
                                 <div onClick={() => fileInputRef.current?.click()} className="w-16 h-24 bg-slate-100 rounded-md border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer hover:border-slate-500 relative overflow-hidden">{tempCoverImage ? <img src={tempCoverImage} className="w-full h-full object-cover" /> : <span className="text-xs text-slate-400">+</span>}<input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleCoverUpload} /></div>
-                                <div className="flex-1 space-y-2"><input value={coverInputUrl} onChange={e => setCoverInputUrl(e.target.value)} onBlur={handleCoverUrlBlur} placeholder="粘贴图片链接..." className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-slate-400" />{tempCoverImage && <button onClick={() => { setTempCoverImage(''); setCoverInputUrl(''); }} className="text-xs text-red-400 underline">清除封面</button>}</div>
+                                <div className="flex-1 space-y-2"><input value={coverInputUrl} onChange={e => setCoverInputUrl(e.target.value)} onBlur={handleCoverUrlBlur} placeholder="粘贴图片链接..." className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-slate-400" {...getGuardedInputProps({ kind: 'url', field: 'novel-cover-url' })} />{tempCoverImage && <button onClick={() => { setTempCoverImage(''); setCoverInputUrl(''); }} className="text-xs text-red-400 underline">清除封面</button>}</div>
                             </div>
                         </div>
                     </section>

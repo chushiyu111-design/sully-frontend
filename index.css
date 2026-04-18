@@ -291,6 +291,7 @@ body {
   /* Prevent text selection to feel like an app */
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
   height: 100vh;
   height: 100dvh;
   /* iOS Fix */
@@ -307,11 +308,22 @@ body {
   overscroll-behavior: contain;
 }
 
-/* Re-enable selection for inputs */
-input,
-textarea {
+/* Re-enable selection only for real editable controls */
+input:not([readonly]),
+textarea:not([readonly]),
+select,
+[contenteditable="true"],
+[data-allow-text-selection="true"] {
   user-select: text;
   -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+input[readonly],
+textarea[readonly] {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .no-scrollbar::-webkit-scrollbar {

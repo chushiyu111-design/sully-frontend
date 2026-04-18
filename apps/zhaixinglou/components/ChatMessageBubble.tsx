@@ -194,7 +194,7 @@ const ParagraphBubble: React.FC<ParagraphBubbleProps> = ({
                 )}
 
                 <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap select-text transition-all ${isUser
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap transition-all ${isUser
                         ? 'bg-[#d4af37]/20 text-[#e5d08f] rounded-br-md border border-[#d4af37]/30'
                         : isSelectionMode
                             ? isSelected

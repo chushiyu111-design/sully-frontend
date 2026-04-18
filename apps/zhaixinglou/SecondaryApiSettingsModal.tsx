@@ -6,6 +6,7 @@
 import React,{ useState } from 'react';
 import { SecondaryAPIConfig,SecondaryApiPreset } from './zhaixinglouStore';
 import { fetchSecondaryModels,testSecondaryConnection } from './zhaixinglouApi';
+import { getGuardedInputProps } from '../../utils/inputGuards';
 
 interface Props {
     isOpen: boolean;
@@ -118,6 +119,7 @@ const SecondaryApiSettingsModal: React.FC<Props> = ({
                             onChange={e => setLocalBaseUrl(e.target.value)}
                             placeholder="https://api.openai.com/v1"
                             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white/90 text-sm placeholder-white/20 focus:outline-none focus:border-white/30 focus:bg-white/8 transition-colors"
+                            {...getGuardedInputProps({ kind: 'url', field: 'zhaixinglou-secondary-api-url' })}
                         />
                     </div>
 
@@ -130,6 +132,7 @@ const SecondaryApiSettingsModal: React.FC<Props> = ({
                             onChange={e => setLocalApiKey(e.target.value)}
                             placeholder="sk-..."
                             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white/90 text-sm placeholder-white/20 focus:outline-none focus:border-white/30 focus:bg-white/8 transition-colors"
+                            {...getGuardedInputProps({ kind: 'secret', field: 'zhaixinglou-secondary-api-key' })}
                         />
                     </div>
 

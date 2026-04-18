@@ -225,7 +225,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
                 )}
 
                 {/* Layer 4: Text Content */}
-                <div className="relative z-10 leading-relaxed whitespace-pre-wrap select-text" style={{ color: styleConfig.textColor, overflowWrap: 'break-word', wordBreak: 'normal', fontSize: styleConfig.fontSize ? `${styleConfig.fontSize}px` : '15px', textShadow: styleConfig.textShadow || undefined }}>
+                <div className="relative z-10 leading-relaxed whitespace-pre-wrap" style={{ color: styleConfig.textColor, overflowWrap: 'break-word', wordBreak: 'normal', fontSize: styleConfig.fontSize ? `${styleConfig.fontSize}px` : '15px', textShadow: styleConfig.textShadow || undefined }}>
                     {renderMarkdown(displayContent)}
                 </div>
 

@@ -4,6 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { XhsStockImage } from '../types';
 import ConfirmDialog from '../components/os/ConfirmDialog';
+import { getGuardedInputProps } from '../utils/inputGuards';
 
 const XhsStockApp: React.FC = () => {
     const { closeApp, addToast } = useOS();
@@ -83,6 +84,7 @@ const XhsStockApp: React.FC = () => {
                     onChange={e => { setNewUrl(e.target.value); setPreviewOk(null); }}
                     placeholder="https://your-image-host.com/image.jpg"
                     className="w-full px-4 py-3 rounded-2xl bg-white border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-transparent placeholder:text-slate-300"
+                    {...getGuardedInputProps({ kind: 'url', field: 'xhs-stock-image-url' })}
                 />
             </div>
 

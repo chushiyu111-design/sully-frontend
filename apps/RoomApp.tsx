@@ -7,6 +7,7 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { getGuardedInputProps } from '../utils/inputGuards';
 import { ASSET_LIBRARY,WALLPAPER_PRESETS,FLOOR_PRESETS,DEFAULT_FURNITURE,SULLY_FURNITURE,FLOOR_HORIZON,ItemInteraction } from './room/roomAssets';
 import { renderNotebookContent } from './room/NotebookRenderer';
 
@@ -1062,7 +1063,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                         <div className="flex-1 space-y-2">
                             <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">图片 URL (推荐图床)</label>
-                                <input value={customItemUrl} onChange={e => setCustomItemUrl(e.target.value)} placeholder="https://..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-purple-500" />
+                                <input value={customItemUrl} onChange={e => setCustomItemUrl(e.target.value)} placeholder="https://..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-purple-500" {...getGuardedInputProps({ kind: 'url', field: 'room-custom-item-url' })} />
                             </div>
                             <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">物品名称</label>
@@ -1133,7 +1134,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     <div>
                         <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-2">布局数据 (Layout JSON)</h4>
                         <div className="bg-slate-100 rounded-xl p-3 border border-slate-200 mb-2">
-                            <pre className="text-[10px] text-slate-600 font-mono h-20 overflow-y-auto whitespace-pre-wrap select-all">
+                            <pre className="text-[10px] text-slate-600 font-mono h-20 overflow-y-auto whitespace-pre-wrap">
                                 {JSON.stringify(items, null, 2)}
                             </pre>
                         </div>
@@ -1143,7 +1144,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     <div>
                         <h4 className="text-[10px] font-bold text-red-400 uppercase mb-2">Prompt 调试 (Debugger)</h4>
                         <div className="bg-slate-100 rounded-xl p-3 border border-slate-200 mb-2">
-                            <pre className="text-[10px] text-slate-600 font-mono h-20 overflow-y-auto whitespace-pre-wrap select-all">
+                            <pre className="text-[10px] text-slate-600 font-mono h-20 overflow-y-auto whitespace-pre-wrap">
                                 {lastPrompt || "(暂无数据，请先尝试进入房间)"}
                             </pre>
                         </div>

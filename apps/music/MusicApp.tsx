@@ -1595,6 +1595,156 @@ const QrLoginModal = ({
   );
 };
 
+/* ─── 播放器皮肤系统 ─────────────────────────── */
+
+type PlayerSkinEntry = {
+  id: string;
+  name: string;
+  /** null = 封面模糊模式 */
+  file: string | null;
+};
+
+const BUILTIN_SKINS: PlayerSkinEntry[] = [
+  { id: 'rain',      name: '听雨', file: '/music-skins/skin-rain.jpg' },
+  { id: 'sparkle',   name: '波光', file: '/music-skins/skin-sparkle.jpg' },
+  { id: 'firework',  name: '花火', file: '/music-skins/skin-firework.jpg' },
+  { id: 'snow-cat',  name: '初雪', file: '/music-skins/skin-snow-cat.jpg' },
+  { id: 'ribbon',    name: '丝绒', file: '/music-skins/skin-ribbon.jpg' },
+  { id: 'butterfly', name: '蝶渊', file: '/music-skins/skin-butterfly.jpg' },
+  { id: 'umbrella',  name: '雨幕', file: '/music-skins/skin-umbrella.jpg' },
+  { id: 'cover-blur', name: '封面', file: null },
+];
+
+const SKIN_STORAGE_KEY = 'music_player_skin';
+const CUSTOM_SKIN_DB = 'music_custom_skins';
+const CUSTOM_SKIN_STORE = 'skins';
+
+function openCustomSkinDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(CUSTOM_SKIN_DB, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(CUSTOM_SKIN_STORE)) {
+        database.createObjectStore(CUSTOM_SKIN_STORE, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadCustomSkins(): Promise<PlayerSkinEntry[]> {
+  try {
+    const database = await openCustomSkinDb();
+    return new Promise((resolve) => {
+      const transaction = database.transaction(CUSTOM_SKIN_STORE, 'readonly');
+      const store = transaction.objectStore(CUSTOM_SKIN_STORE);
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const entries = (request.result || []).map((record: { id: string; name: string; blob: Blob }) => ({
+          id: record.id,
+          name: record.name,
+          file: URL.createObjectURL(record.blob),
+        }));
+        resolve(entries);
+      };
+      request.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function saveCustomSkin(name: string, blob: Blob): Promise<PlayerSkinEntry> {
+  const id = `custom-${Date.now()}`;
+  const database = await openCustomSkinDb();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction(CUSTOM_SKIN_STORE, 'readwrite');
+    const store = transaction.objectStore(CUSTOM_SKIN_STORE);
+    const request = store.put({ id, name, blob });
+    request.onsuccess = () => resolve({ id, name, file: URL.createObjectURL(blob) });
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function getRandomSkinId(): string {
+  // 只从有壁纸的皮肤中随机选（排除封面模糊）
+  const wallpaperSkins = BUILTIN_SKINS.filter((skin) => skin.file !== null);
+  const index = Math.floor(Math.random() * wallpaperSkins.length);
+  return wallpaperSkins[index].id;
+}
+
+const IconSkin = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" /><circle cx="12" cy="12" r="4" /><path d="M2 12h4M18 12h4M12 2v4M12 18v4" /></svg>;
+
+const SkinPicker = ({
+  skins,
+  activeSkinId,
+  onSelect,
+  onUpload,
+  onClose,
+}: {
+  skins: PlayerSkinEntry[];
+  activeSkinId: string;
+  onSelect: (id: string) => void;
+  onUpload: (file: File) => void;
+  onClose: () => void;
+}) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <div className="music-skin-picker-backdrop" onClick={onClose} />
+      <div className="music-skin-picker-panel">
+        <div className="music-skin-picker-header">
+          <div className="music-skin-picker-title">播放器皮肤</div>
+          <button type="button" className="music-skin-picker-close" onClick={onClose}>×</button>
+        </div>
+        <div className="music-skin-picker-scroll">
+          {skins.map((skin) => (
+            <div key={skin.id} className="music-skin-picker-item" onClick={() => onSelect(skin.id)}>
+              <div className={`music-skin-picker-thumb ${activeSkinId === skin.id ? 'active' : ''}`}>
+                {skin.file ? (
+                  <img src={skin.file} alt={skin.name} />
+                ) : (
+                  <div style={{
+                    width: '100%',
+                    height: '100%',
+                    background: 'linear-gradient(135deg, #667eea, #764ba2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'rgba(255,255,255,0.7)',
+                    fontSize: 18,
+                  }}>♪</div>
+                )}
+              </div>
+              <div className={`music-skin-picker-label ${activeSkinId === skin.id ? 'active' : ''}`}>{skin.name}</div>
+            </div>
+          ))}
+          <div className="music-skin-picker-item" onClick={() => fileInputRef.current?.click()}>
+            <div className="music-skin-picker-upload">
+              <span>+</span>
+              <span className="music-skin-picker-upload-label">上传</span>
+            </div>
+            <div className="music-skin-picker-label">自定义</div>
+          </div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) onUpload(file);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }}
+        />
+      </div>
+    </>
+  );
+};
+
 const FullPlayer = ({
   playable,
   isPlaying,
@@ -1624,24 +1774,65 @@ const FullPlayer = ({
 }) => {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const cover = getPlayableCover(playable);
-  const backgroundStyle = cover ? { backgroundImage: `url(${cover})` } : { background: getFallbackGradient(playable.id) };
   const displayDuration = duration > 0 ? duration : playable.duration / 1000;
+
+  // ── 皮肤系统 ──
+  const [activeSkinId, setActiveSkinId] = useState<string>(() => {
+    // 每次打开随机一个皮肤
+    return getRandomSkinId();
+  });
+  const [customSkins, setCustomSkins] = useState<PlayerSkinEntry[]>([]);
+  const [showSkinPicker, setShowSkinPicker] = useState(false);
+
+  // 加载自定义皮肤
+  useEffect(() => {
+    void loadCustomSkins().then(setCustomSkins);
+  }, []);
+
+  const allSkins = useMemo(() => [...BUILTIN_SKINS, ...customSkins], [customSkins]);
+  const activeSkin = allSkins.find((skin) => skin.id === activeSkinId) || BUILTIN_SKINS[0];
+  const isSkinMode = activeSkin.file !== null;
+
+  // 背景样式
+  const backgroundStyle = isSkinMode
+    ? { backgroundImage: `url(${activeSkin.file})` }
+    : cover
+      ? { backgroundImage: `url(${cover})` }
+      : { background: getFallbackGradient(playable.id) };
 
   // 提取封面主色调用于氛围光
   const dominantColor = useDominantColor(cover);
   const ambientStyle = dominantColor
     ? {
-        background: `radial-gradient(ellipse at 30% 20%, rgba(${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}, 0.5) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}, 0.3) 0%, transparent 50%)`,
+        background: `radial-gradient(ellipse at 30% 20%, rgba(${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}, 0.4) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}, 0.25) 0%, transparent 50%)`,
       }
     : undefined;
-  const coverShadow = dominantColor
-    ? `0 20px 60px rgba(${dominantColor.r}, ${dominantColor.g}, ${dominantColor.b}, 0.5), 0 8px 24px rgba(0,0,0,0.3)`
-    : undefined;
+
+  function handleSkinSelect(id: string): void {
+    setActiveSkinId(id);
+    try { localStorage.setItem(SKIN_STORAGE_KEY, id); } catch { /* ignore */ }
+  }
+
+  async function handleSkinUpload(file: File): Promise<void> {
+    try {
+      const entry = await saveCustomSkin(file.name.replace(/\.[^.]+$/, ''), file);
+      setCustomSkins((previous) => [...previous, entry]);
+      setActiveSkinId(entry.id);
+      try { localStorage.setItem(SKIN_STORAGE_KEY, entry.id); } catch { /* ignore */ }
+    } catch (error) {
+      console.error('[MusicApp] Failed to save custom skin:', error);
+    }
+  }
 
   return (
     <div className="music-player-page">
-      {/* Layer 0+1: 封面极致模糊 */}
-      <div className="music-player-bg" style={backgroundStyle} />
+      {/* Layer 0: 皮肤壁纸 / 封面模糊 */}
+      <div
+        className={`music-player-bg ${isSkinMode ? 'music-player-bg--skin' : 'music-player-bg--cover'}`}
+        style={backgroundStyle}
+      />
+      {/* Layer 1: 暗化遮罩 */}
+      {isSkinMode ? <div className="music-player-dim" /> : null}
       {/* Layer 2: 封面色氛围光 */}
       <div className="music-player-ambient" style={ambientStyle} />
       {/* Layer 3: 暗角 */}
@@ -1657,25 +1848,32 @@ const FullPlayer = ({
           >
             <IconDown />
           </button>
-          <div className="music-player-header-copy">
-            {/* 留空以保持布局平衡，去除刻板的标题文字 */}
-          </div>
-          <div className="music-player-header-spacer" />
+          <div className="music-player-header-copy" />
+          <button
+            type="button"
+            className="music-player-header-button"
+            aria-label="播放器皮肤"
+            onClick={() => setShowSkinPicker(true)}
+          >
+            <IconSkin />
+          </button>
         </div>
 
-        {/* Hero 封面 */}
+        {/* 旋转唱片 */}
         <div className="music-player-cover-area">
-          <div
-            className={`music-player-hero-cover ${isPlaying ? 'music-player-hero-cover--playing' : 'music-player-hero-cover--paused'}`}
-            style={coverShadow ? { '--cover-shadow': coverShadow } as React.CSSProperties : undefined}
-          >
-            {cover ? (
-              <img src={cover} alt={playable.name} />
-            ) : (
-              <span className="music-player-hero-cover-note">
-                {isSongPlayable(playable) ? '♪' : '播'}
-              </span>
-            )}
+          <div className={`music-player-vinyl-halo ${isPlaying ? 'music-player-vinyl-halo--playing' : ''}`}>
+            <div className={`music-player-disc ${isPlaying ? '' : 'music-player-disc--paused'}`}>
+              <div className="music-player-disc-cover">
+                {cover ? (
+                  <img src={cover} alt={playable.name} />
+                ) : (
+                  <div className="music-player-disc-note">
+                    {isSongPlayable(playable) ? '♪' : '播'}
+                  </div>
+                )}
+              </div>
+              <div className="music-player-disc-center" />
+            </div>
           </div>
         </div>
 
@@ -1729,6 +1927,17 @@ const FullPlayer = ({
           <div className="music-ctrl-btn" onClick={onNext}><IconNext /></div>
         </div>
       </div>
+
+      {/* 皮肤选择器 */}
+      {showSkinPicker ? (
+        <SkinPicker
+          skins={allSkins}
+          activeSkinId={activeSkinId}
+          onSelect={handleSkinSelect}
+          onUpload={(file) => { void handleSkinUpload(file); }}
+          onClose={() => setShowSkinPicker(false)}
+        />
+      ) : null}
     </div>
   );
 };

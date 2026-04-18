@@ -8,10 +8,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
 import { getDB } from '../storage/healthDB';
-import type { CyclePrediction, MedicationLog, MonthCycleStat, PeriodLog } from '../lunarTides/cycleTypes';
+import type { MedicationLog, MonthCycleStat, PeriodLog } from '../lunarTides/cycleTypes';
 import { FLOW_LABELS, MEDICATIONS, MEDICATION_MAP, type FlowIntensity } from '../lunarTides/cycleTypes';
 import {
-    addDays,
     computeCycleLengths,
     daysUntil,
     getCurrentPhase,
@@ -410,7 +409,7 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
                                     <RechartsYAxis tick={{ fontSize: 10, fill: 'var(--hs-text-muted)' }} domain={[0, 'auto']} />
                                     <RechartsTooltip
                                         contentStyle={{ background: '#E8E8E8', border: 'none', borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: 12 }}
-                                        formatter={(value: number) => [`${value} 天`, '周期长度']}
+                                        formatter={(value: any) => [`${value} 天`, '周期长度']}
                                     />
                                     <RechartsReferenceLine y={prediction?.predictedCycleLength || 28} stroke="var(--hs-primary)" strokeDasharray="4 4" />
                                     <RechartsBar dataKey="cycleLength" radius={[6, 6, 0, 0]} maxBarSize={24}>

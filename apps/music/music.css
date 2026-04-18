@@ -793,9 +793,9 @@
   z-index: 4;
 }
 
-/* 玻璃模式下隐藏封面图 */
+/* 玻璃模式下透出部分底色，不隐藏封面图 */
 .music-player-disc--glass .music-player-disc-cover {
-  opacity: 0;
+  opacity: 0.9;
 }
 
 /* 玻璃模式下的中心轴 — 实色黑胶核心 */
@@ -1985,4 +1985,65 @@
   .music-modal-card {
     padding: 18px;
   }
+}
+
+/* ─── Web/Mobile 玻璃底部面板 ─────────────────────────── */
+.music-player-bottom-panel {
+  display: flex;
+  flex-direction: column;
+  margin: 0 16px 24px;
+  border-radius: 36px;
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  padding: 16px 0;
+}
+
+.music-player-bottom-panel--glass {
+  background: rgba(255, 255, 255, 0.05); /* 极低基础透明度 */
+  backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
+  -webkit-backdrop-filter: blur(48px) saturate(200%) brightness(1.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 24px 16px;
+  box-shadow: 
+    0 24px 48px rgba(0, 0, 0, 0.2), 
+    inset 0 1px 1px rgba(255, 255, 255, 0.4), /* 顶部高光厚度 */
+    inset 0 0 32px rgba(255, 255, 255, 0.05); /* 全局内发光 */
+  /* 防止子内容溢出破坏玻璃模糊边框 */
+  overflow: hidden;
+  position: relative;
+}
+
+/* 液态光泽高光，跟圆盘类似 */
+.music-player-bottom-panel--glass::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 50px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.music-player-bottom-panel--glass::after {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: -10%;
+  width: 50%;
+  height: 140%;
+  background: radial-gradient(ellipse at top left, rgba(255, 255, 255, 0.15), transparent 70%);
+  transform: rotate(-15deg);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 确保内部元素在高光之上 */
+.music-player-bottom-panel > * {
+  position: relative;
+  z-index: 1;
 }

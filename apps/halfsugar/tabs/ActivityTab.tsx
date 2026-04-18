@@ -78,24 +78,30 @@ const ActivityTab: React.FC = () => {
 
             {showModal && (
                 <BottomSheetModal title="记录运动" onClose={() => setShowModal(false)}>
+                    {/* Free text input for custom exercise */}
+                    <div className="hs-free-input-row">
+                        <input
+                            type="text"
+                            className="hs-form-input"
+                            value={customName}
+                            onChange={(e) => { setCustomName(e.target.value); if (e.target.value.trim()) setExerciseType('custom'); }}
+                            placeholder="输入运动名称，如：爬山、瑜伽"
+                            maxLength={20}
+                        />
+                    </div>
+                    <div className="hs-free-input-label">或选择类型</div>
+
+                    {/* Exercise type grid */}
                     <div className="hs-exercise-grid">
-                        {Object.entries(MET_TABLE).map(([key, item]) => (
-                            <button key={key} type="button" className={`hs-exercise-option ${exerciseType === key ? 'active' : ''}`} onClick={() => setExerciseType(key)}>
+                        {Object.entries(MET_TABLE).filter(([key]) => key !== 'custom').map(([key, item]) => (
+                            <button key={key} type="button" className={`hs-exercise-option ${exerciseType === key ? 'active' : ''}`} onClick={() => { setExerciseType(key); setCustomName(''); }}>
                                 <span className="hs-exercise-emoji"><span className="hs-emoji">{item.icon}</span></span>
                                 <span>{item.label}</span>
                             </button>
                         ))}
                     </div>
-                    {isCustom && (
-                        <input
-                            type="text"
-                            className="hs-form-input"
-                            value={customName}
-                            onChange={(e) => setCustomName(e.target.value)}
-                            placeholder="运动名称，如：爬山"
-                            maxLength={20}
-                        />
-                    )}
+
+                    {/* Duration input */}
                     <div className="hs-form-input-with-unit">
                         <input type="number" inputMode="numeric" className="hs-form-input" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} placeholder="30" />
                         <span className="hs-unit">min</span>

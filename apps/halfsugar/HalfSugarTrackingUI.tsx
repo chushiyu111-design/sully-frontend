@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     computeBMI,
     computeDailyCalorieGoal,
-    getBMICategory,
     type GoalType,
     type HealthAwareUserProfile,
     type HealthGoal,
@@ -27,11 +26,11 @@ interface GoalFieldDefinition {
 }
 
 const GOAL_FIELD_DEFINITIONS: GoalFieldDefinition[] = [
-    { key: 'dailyCalories', goalType: 'daily_calories', label: '热量上限', unit: 'kcal' },
-    { key: 'dailyProtein', goalType: 'daily_protein', label: '蛋白质下限', unit: 'g' },
-    { key: 'dailyCarbs', goalType: 'daily_carbs', label: '碳水上限', unit: 'g' },
-    { key: 'dailyFat', goalType: 'daily_fat', label: '脂肪上限', unit: 'g' },
-    { key: 'dailyFiber', goalType: 'daily_fiber', label: '膳食纤维下限', unit: 'g' },
+    { key: 'dailyCalories', goalType: 'daily_calories', label: '每日热量参考', unit: 'kcal' },
+    { key: 'dailyProtein', goalType: 'daily_protein', label: '蛋白质参考', unit: 'g' },
+    { key: 'dailyCarbs', goalType: 'daily_carbs', label: '碳水参考', unit: 'g' },
+    { key: 'dailyFat', goalType: 'daily_fat', label: '脂肪参考', unit: 'g' },
+    { key: 'dailyFiber', goalType: 'daily_fiber', label: '纤维参考', unit: 'g' },
 ];
 
 function parsePositiveNumber(value: string): number | null {
@@ -60,9 +59,7 @@ function getGoalValue(goals: HealthGoal[], goalType: GoalType): number | undefin
     return goals.find((goal) => goal.goalType === goalType)?.targetValue;
 }
 
-function getBmiBadgeClassName(bmi: number): string {
-    if (bmi >= 28) return 'hs-bmi-badge danger';
-    if (bmi >= 24) return 'hs-bmi-badge warning';
+function getBmiBadgeClassName(_bmi: number): string {
     return 'hs-bmi-badge';
 }
 
@@ -207,8 +204,8 @@ export const OnboardingView: React.FC<{
     return (
         <div className="hs-onboarding hs-animate-fade-in">
             <div className="hs-onboarding-illustration"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="42" height="42" style={{ color: 'var(--hs-primary-dark)' }}><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.97ZM5.25 4.97l-2.62 10.726c-.122.499.106 1.028.589 1.202a5.989 5.989 0 0 0 2.031.352 5.989 5.989 0 0 0 2.031-.352c.483-.174.711-.703.59-1.202L5.25 4.971Z" /></svg></div>
-            <h1 className="hs-onboarding-title">让我了解你</h1>
-            <p className="hs-onboarding-subtitle">填写基础信息，获得个性化建议</p>
+            <h1 className="hs-onboarding-title">关于我</h1>
+            <p className="hs-onboarding-subtitle">记录下来，随时可以修改</p>
             <div className="hs-form-group">
                 <label className="hs-form-label">性别</label>
                 <div className="hs-gender-toggle">
@@ -237,15 +234,15 @@ export const OnboardingView: React.FC<{
 
             <div className="hs-goal-section">
                 <div className="hs-section-title" style={{ padding: 0, marginBottom: 10 }}>
-                    <span>目标设置</span>
-                    <span>半糖主义</span>
+                    <span>我的参考值</span>
+                    <span></span>
                 </div>
                 <div className="hs-goal-row">
                     <div className="hs-goal-label" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <span>目标体重</span>
                         {targetBmi && (
                             <span className={getBmiBadgeClassName(targetBmi)}>
-                                BMI {targetBmi} · {getBMICategory(targetBmi)}
+                                BMI {targetBmi}
                             </span>
                         )}
                     </div>
@@ -294,7 +291,7 @@ export const OnboardingView: React.FC<{
             </div>
 
             <button type="button" className="hs-submit-btn" onClick={handleSubmit} disabled={!isValid || isSaving}>
-                {initialProfile.isSetup ? '保存设置' : '开始使用'}
+                {initialProfile.isSetup ? '保存' : '好了，开始记录'}
             </button>
         </div>
     );

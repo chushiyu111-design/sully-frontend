@@ -81,10 +81,10 @@ const NutritionTab: React.FC = () => {
 
             {recommendations.length > 0 && (
                 <div className="hs-recommendation-section hs-animate-fade-in" style={{ marginTop: 8 }}>
-                    <div className="hs-section-title">营养建议</div>
+                    <div className="hs-section-title">营养参考</div>
                     {recommendations.map((rec) => (
                         <div key={rec.nutrient} className="hs-recommendation-card">
-                            <div className="hs-rec-header">{rec.label}还差 {Math.round(rec.gap)}g</div>
+                            <div className="hs-rec-header">{rec.label} {Math.round(rec.current)} / {Math.round(rec.target)}g</div>
                             <div className="hs-rec-foods">
                                 {rec.foods.slice(0, 3).map((food) => (
                                     <span key={food.name} className="hs-rec-food-chip">{food.name}</span>

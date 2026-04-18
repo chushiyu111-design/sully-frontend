@@ -6,6 +6,13 @@ import { useHalfSugar, parsePositiveNumber } from '../HalfSugarContext';
 import { BottomSheetModal } from '../HalfSugarTrackingUI';
 import { estimateCaloriesBurned, MET_TABLE } from '../types';
 
+/** Renders a monochrome SVG icon from a path string */
+const ExerciseIcon: React.FC<{ d: string }> = ({ d }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} width="20" height="20">
+        <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+);
+
 const ActivityTab: React.FC = () => {
     const {
         todayExercises, todayExerciseCalories, latestKnownWeightKg,
@@ -15,9 +22,12 @@ const ActivityTab: React.FC = () => {
     const [showModal, setShowModal] = useState(false);
     const [exerciseType, setExerciseType] = useState(Object.keys(MET_TABLE)[0] || 'walking_slow');
     const [durationMinutes, setDurationMinutes] = useState('');
+    const [customName, setCustomName] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
     const selectedMeta = MET_TABLE[exerciseType] || Object.values(MET_TABLE)[0];
+    const isCustom = exerciseType === 'custom';
+
     const previewCalories = useMemo(() => {
         const dur = parsePositiveNumber(durationMinutes);
         return dur && selectedMeta ? estimateCaloriesBurned(selectedMeta.met, latestKnownWeightKg, dur) : 0;
@@ -26,17 +36,20 @@ const ActivityTab: React.FC = () => {
     const handleSave = async () => {
         const dur = parsePositiveNumber(durationMinutes);
         if (!dur) { addToast('请输入运动时长', 'error'); return; }
+        if (isCustom && !customName.trim()) { addToast('请输入运动名称', 'error'); return; }
         setIsSaving(true);
-        const ok = await handleSaveExercise(exerciseType, dur);
+        const ok = await handleSaveExercise(isCustom ? `custom:${customName.trim()}` : exerciseType, dur);
         setIsSaving(false);
-        if (ok) { setShowModal(false); setDurationMinutes(''); }
+        if (ok) { setShowModal(false); setDurationMinutes(''); setCustomName(''); }
     };
+
+    const totalMinutes = todayExercises.reduce((sum, e) => sum + e.durationMinutes, 0);
 
     return (
         <div className="hs-tab-content no-scrollbar">
             <div className="hs-section-title">
                 <span>今日运动</span>
-                <span>{todayExerciseCalories > 0 ? `−${todayExerciseCalories} kcal` : ''}</span>
+                <span>{totalMinutes > 0 ? `${totalMinutes} 分钟` : ''}</span>
             </div>
 
             {todayExercises.length > 0 ? (
@@ -59,12 +72,12 @@ const ActivityTab: React.FC = () => {
                 <span>＋</span> 记录运动
             </button>
 
-            {/* Exercise type reference grid */}
+            {/* Exercise type reference grid — monochrome icons */}
             <div className="hs-section-title"><span>运动类型</span></div>
             <div className="hs-exercise-grid" style={{ margin: '0 20px 20px' }}>
-                {Object.entries(MET_TABLE).map(([key, item]) => (
+                {Object.entries(MET_TABLE).filter(([key]) => key !== 'custom').map(([key, item]) => (
                     <div key={key} className="hs-exercise-option" style={{ cursor: 'default', opacity: 0.7 }}>
-                        <span className="hs-exercise-emoji">{item.emoji}</span>
+                        <span className="hs-exercise-emoji"><ExerciseIcon d={item.icon} /></span>
                         <span>{item.label}</span>
                     </div>
                 ))}
@@ -75,11 +88,21 @@ const ActivityTab: React.FC = () => {
                     <div className="hs-exercise-grid">
                         {Object.entries(MET_TABLE).map(([key, item]) => (
                             <button key={key} type="button" className={`hs-exercise-option ${exerciseType === key ? 'active' : ''}`} onClick={() => setExerciseType(key)}>
-                                <span className="hs-exercise-emoji">{item.emoji}</span>
+                                <span className="hs-exercise-emoji"><ExerciseIcon d={item.icon} /></span>
                                 <span>{item.label}</span>
                             </button>
                         ))}
                     </div>
+                    {isCustom && (
+                        <input
+                            type="text"
+                            className="hs-form-input"
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value)}
+                            placeholder="运动名称，如：爬山"
+                            maxLength={20}
+                        />
+                    )}
                     <div className="hs-form-input-with-unit">
                         <input type="number" inputMode="numeric" className="hs-form-input" value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} placeholder="30" />
                         <span className="hs-unit">min</span>

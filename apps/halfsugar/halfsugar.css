@@ -226,6 +226,15 @@
     letter-spacing: 0.01em;
 }
 
+.hs-ring-narration {
+    font-size: 12px;
+    color: var(--hs-text-muted);
+    margin-top: 12px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    text-align: center;
+}
+
 /* ── Macro Nutrient Cards — Frosted Glass ── */
 .hs-macros {
     display: flex;
@@ -301,6 +310,23 @@
     align-items: center;
     justify-content: space-between;
     letter-spacing: 0.01em;
+}
+
+.hs-section-title > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.hs-track-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.hs-track-title svg,
+.hs-section-title svg {
+    color: var(--hs-text-muted);
 }
 
 /* ── Meal Section ── */
@@ -1406,7 +1432,7 @@
 }
 
 .hs-modal-body {
-    padding: 0 20px 24px;
+    padding: 0 20px 80px;
     display: flex;
     flex-direction: column;
     gap: 16px;

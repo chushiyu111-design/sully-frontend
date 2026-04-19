@@ -191,10 +191,8 @@ async function callDirectVisionApi(
                     ],
                 },
             ],
-            response_format: { type: 'json_object' },
             temperature: 0.2,
-            max_tokens: 1200,
-            max_output_tokens: 1200,
+            max_tokens: 2000,
             stream: false,
         }),
     });
@@ -259,10 +257,8 @@ async function callDirectTextEstimate(
             { role: 'system', content: FOOD_ESTIMATION_PROMPT },
             { role: 'user', content: buildFoodEstimateUserPrompt(foodName) },
         ],
-        response_format: { type: 'json_object' },
         temperature: 0.2,
-        max_tokens: 1200,
-        max_output_tokens: 1200,
+        max_tokens: 2000,
         stream: false,
     };
 

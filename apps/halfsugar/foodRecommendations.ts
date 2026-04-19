@@ -240,14 +240,27 @@ export function getThemedSuggestion(): string | null {
     const now = new Date();
     const day = now.getDay(); // 0=Sun
     const month = now.getMonth() + 1;
+    const hour = now.getHours();
 
-    if (day === 4) return '疯狂星期四，来份炸鸡 🍗';
-    if (day === 5) return '周五了，奶茶犒劳一下自己 🧋';
-    if (day === 6) return '周末快乐，吃点好的 🎉';
-    if (day === 0) return '周日慢慢来，享受一顿好的 ☕';
+    // 1. Time-based priorities
+    if (hour >= 22 || hour <= 3) return '夜深了，喝杯热牛奶早点休息哦 🥛';
+    if (hour >= 14 && hour <= 16) return '下午茶时间！奖励自己一块小甜点吧 🍰';
+    if (hour >= 6 && hour <= 9) return '早安！记得吃一顿温暖丰盛的早餐 🍳';
 
-    if (month >= 6 && month <= 8) return '天热了，来根冰棍降降温 🍦';
-    if (month >= 11 || month <= 2) return '天冷了，来碗热汤暖暖 🍜';
+    // 2. Day-of-week based
+    if (day === 1) return '周一辛苦啦，用热气腾腾的美食开启新的一天吧 ☀️';
+    if (day === 3) return '周三啦，吃点坚果或者水果放松一下身体 🍎';
+    if (day === 4) return '疯狂星期四，来份炸鸡开心一下 🍗';
+    if (day === 5 && hour >= 17) return '终于周五啦！今晚吃顿大餐庆祝一下吧 🍲';
+    if (day === 5) return '快乐周五，点杯奶茶犒劳一下自己吧 🧋';
+    if (day === 6) return '周末快乐！去吃顿想了很久的美食吧 🎉';
+    if (day === 0) return '周日的早晨，睡到自然醒，吃一顿丰盛的Brunch 🥞';
+
+    // 3. Seasonal based
+    if (month >= 6 && month <= 8) return '天气好热，来杯冰饮或者吃点西瓜降降温 🍉';
+    if (month >= 11 || month <= 2) return '天冷了，最适合捧着个热气腾腾的烤红薯 🍠';
+    if (month >= 9 && month <= 10) return '秋风起，喝杯温热的茶，吃点糖炒栗子 🌰';
+    if (month >= 3 && month <= 5) return '春暖花开，吃点清爽的无负担美食吧 🥗';
 
     return null;
 }

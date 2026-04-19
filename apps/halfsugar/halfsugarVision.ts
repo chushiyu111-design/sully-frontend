@@ -191,6 +191,7 @@ async function callDirectVisionApi(
                     ],
                 },
             ],
+            response_format: { type: 'json_object' },
             temperature: 0.2,
             max_tokens: 1200,
             max_output_tokens: 1200,
@@ -249,24 +250,29 @@ function buildFoodEstimateUserPrompt(foodName: string): string {
 async function callDirectTextEstimate(
     foodName: string,
     apiConfig: VisionApiConfig,
+    _retryCount = 0,
 ): Promise<VisionResult> {
-    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    const endpoint = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const body = {
+        model: apiConfig.model,
+        messages: [
+            { role: 'system', content: FOOD_ESTIMATION_PROMPT },
+            { role: 'user', content: buildFoodEstimateUserPrompt(foodName) },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+        max_tokens: 1200,
+        max_output_tokens: 1200,
+        stream: false,
+    };
+
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiConfig.apiKey}`,
         },
-        body: JSON.stringify({
-            model: apiConfig.model,
-            messages: [
-                { role: 'system', content: FOOD_ESTIMATION_PROMPT },
-                { role: 'user', content: buildFoodEstimateUserPrompt(foodName) },
-            ],
-            temperature: 0.2,
-            max_tokens: 800,
-            max_output_tokens: 800,
-            stream: false,
-        }),
+        body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -281,7 +287,17 @@ async function callDirectTextEstimate(
     }
 
     const data = await safeResponseJson(response);
-    return extractVisionPayload(data);
+
+    try {
+        return extractVisionPayload(data);
+    } catch (parseError) {
+        // Retry once on parse failure (LLM can be non-deterministic)
+        if (_retryCount < 1) {
+            console.warn('[callDirectTextEstimate] Parse failed, retrying...', parseError);
+            return callDirectTextEstimate(foodName, apiConfig, _retryCount + 1);
+        }
+        throw parseError;
+    }
 }
 
 /**

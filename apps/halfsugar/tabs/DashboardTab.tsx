@@ -4,6 +4,7 @@
 import React from 'react';
 import { useHalfSugar } from '../HalfSugarContext';
 import { CalorieRing } from '../components/CalorieRing';
+import { getThemedSuggestion } from '../foodRecommendations';
 import { MacroBar } from '../components/MacroBar';
 import { formatDurationMinutes } from '../types';
 
@@ -12,15 +13,17 @@ const DashboardTab: React.FC = () => {
         activeCalorieTarget, caloriesConsumed, proteinConsumed, carbsConsumed, fatConsumed, fiberConsumed,
         nutrientTargets, recommendations, isMealsLoading, isTrackingLoading,
         latestWeight, latestBmi, todaySleep,
-        todayExercises, setActiveTab,
+        todayExercises, todayExerciseCalories, setActiveTab,
     } = useHalfSugar();
 
     // Show total exercise duration instead of negative kcal
     const totalExerciseMinutes = todayExercises.reduce((sum, e) => sum + e.durationMinutes, 0);
 
+    const themedSuggestion = getThemedSuggestion();
+
     return (
         <div className="hs-tab-content no-scrollbar">
-            <CalorieRing consumed={caloriesConsumed} target={activeCalorieTarget} />
+            <CalorieRing consumed={caloriesConsumed} exerciseBurned={todayExerciseCalories} target={activeCalorieTarget} />
 
             <div className="hs-macro-grid">
                 <MacroBar label="蛋白" value={proteinConsumed} target={nutrientTargets.protein} color="var(--hs-sage)" />
@@ -83,10 +86,13 @@ const DashboardTab: React.FC = () => {
 
             {recommendations.length > 0 && (
                 <div className="hs-recommendation-section hs-animate-fade-in">
-                    <div className="hs-section-title">今日参考</div>
+                    <div className="hs-section-title">
+                        <span>今日食谱灵感</span>
+                        {themedSuggestion && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--hs-primary-dark)' }}>{themedSuggestion}</span>}
+                    </div>
                     {recommendations.map((rec) => (
                         <div key={rec.nutrient} className="hs-recommendation-card">
-                            <div className="hs-rec-header">{rec.label} 还差 {Math.round(rec.gap)}g</div>
+                            <div className="hs-rec-header" style={{ color: 'var(--hs-text)' }}>今天可以来点补充 <span style={{ color: 'var(--hs-primary-dark)' }}>{rec.label}</span></div>
                             <div className="hs-rec-foods">
                                 {rec.foods.slice(0, 3).map((food) => (
                                     <span key={food.name} className="hs-rec-food-chip">{food.name}</span>

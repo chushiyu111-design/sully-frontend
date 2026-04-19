@@ -41,10 +41,10 @@ import {
     type FoodItem,
     type ExerciseRecord,
     type HealthGoal,
-    type HealthProfile,
     type HealthAwareUserProfile,
     getCurrentISOWeekKey,
     getCurrentMonthKey,
+    computeGuidelineNutrients,
 
     type HealthSummary,
     MEAL_TYPES,
@@ -365,14 +365,18 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // ── Derived Values ──
 
-    const calorieTarget = useMemo(() => computeCalorieTarget(userProfile), [userProfile.healthBirthYear, userProfile.healthGender, userProfile.healthHeight, userProfile.healthWeight]);
+    const calorieTarget = useMemo(() => computeCalorieTarget(userProfile), [userProfile.healthBirthYear, userProfile.healthGender, userProfile.healthHeight, userProfile.healthWeight, userProfile.healthActivityLevel]);
     const activeCalorieTarget = useMemo(() => getGoalValue(goals, 'daily_calories') || calorieTarget, [calorieTarget, goals]);
-    const nutrientTargets = useMemo(() => ({
-        protein: getGoalValue(goals, 'daily_protein') || DEFAULT_NUTRIENT_TARGETS.protein,
-        carbs: getGoalValue(goals, 'daily_carbs') || DEFAULT_NUTRIENT_TARGETS.carbs,
-        fat: getGoalValue(goals, 'daily_fat') || DEFAULT_NUTRIENT_TARGETS.fat,
-        fiber: getGoalValue(goals, 'daily_fiber') || DEFAULT_NUTRIENT_TARGETS.fiber,
-    }), [goals]);
+    
+    const nutrientTargets = useMemo(() => {
+        const minimums = computeGuidelineNutrients(healthProfile.gender as any, activeCalorieTarget);
+        return {
+            protein: Math.max(getGoalValue(goals, 'daily_protein') || minimums.protein, minimums.protein),
+            carbs: Math.max(getGoalValue(goals, 'daily_carbs') || minimums.carbs, minimums.carbs),
+            fat: Math.max(getGoalValue(goals, 'daily_fat') || minimums.fat, minimums.fat),
+            fiber: Math.max(getGoalValue(goals, 'daily_fiber') || minimums.fiber, minimums.fiber),
+        };
+    }, [activeCalorieTarget, goals, healthProfile.gender]);
 
     const caloriesConsumed = useMemo(() => meals.reduce((s, m) => s + m.totalCalories, 0), [meals]);
     const proteinConsumed = useMemo(() => meals.reduce((s, m) => s + m.totalProtein, 0), [meals]);
@@ -408,6 +412,7 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             healthBirthYear: parseInt(profile.birthYear, 10),
             healthSetupDone: true,
             healthShareBodyInfo: shareBodyInfo,
+            healthActivityLevel: profile.activityLevel,
         } as any);
         setHealthProfile({ ...profile, isSetup: true });
         try {

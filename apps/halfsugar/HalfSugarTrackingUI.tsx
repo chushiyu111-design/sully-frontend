@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import {
+    ACTIVITY_LEVELS,
+    type ActivityLevel,
     computeBMI,
     computeDailyCalorieGoal,
+    computeGuidelineNutrients,
     type GoalType,
     type HealthAwareUserProfile,
     type HealthGoal,
@@ -106,6 +109,7 @@ export const OnboardingView: React.FC<{
     const [height, setHeight] = useState(initialProfile.height);
     const [weight, setWeight] = useState(initialProfile.weight);
     const [birthYear, setBirthYear] = useState(initialProfile.birthYear);
+    const [activityLevel, setActivityLevel] = useState<ActivityLevel>(initialProfile.activityLevel || 'light');
     const [goals, setGoals] = useState<GoalFormState>(initialGoals);
     const [shareBodyInfo, setShareBodyInfo] = useState(initialShareBodyInfo);
     const [weightTargetTouched, setWeightTargetTouched] = useState(hasPersistedGoals);
@@ -117,6 +121,7 @@ export const OnboardingView: React.FC<{
         setHeight(initialProfile.height);
         setWeight(initialProfile.weight);
         setBirthYear(initialProfile.birthYear);
+        setActivityLevel(initialProfile.activityLevel || 'light');
         setGoals(initialGoals);
         setShareBodyInfo(initialShareBodyInfo);
         setWeightTargetTouched(hasPersistedGoals);
@@ -128,6 +133,7 @@ export const OnboardingView: React.FC<{
         initialProfile.gender,
         initialProfile.height,
         initialProfile.weight,
+        initialProfile.activityLevel,
         initialShareBodyInfo,
     ]);
 
@@ -136,8 +142,9 @@ export const OnboardingView: React.FC<{
         height,
         weight,
         birthYear,
+        activityLevel,
         isSetup: true,
-    }), [birthYear, gender, height, weight]);
+    }), [birthYear, gender, height, weight, activityLevel]);
 
     const weightValue = parsePositiveNumber(weight);
     const heightValue = parsePositiveNumber(height);
@@ -194,12 +201,26 @@ export const OnboardingView: React.FC<{
 
     const handleSubmit = () => {
         if (!isValid || isSaving) return;
+        
+        // Enforce Chinese Dietary Guidelines bottom lines
+        const baseCal = suggestedDailyCalories;
+        const minimums = computeGuidelineNutrients(gender as any, baseCal);
+        
+        const finalGoals = { ...goals };
+        if (parsePositiveNumber(finalGoals.dailyProtein)! < minimums.protein) finalGoals.dailyProtein = String(minimums.protein);
+        if (parsePositiveNumber(finalGoals.dailyCarbs)! < minimums.carbs) finalGoals.dailyCarbs = String(minimums.carbs);
+        if (parsePositiveNumber(finalGoals.dailyFat)! < minimums.fat) finalGoals.dailyFat = String(minimums.fat);
+        if (parsePositiveNumber(finalGoals.dailyFiber)! < minimums.fiber) finalGoals.dailyFiber = String(minimums.fiber);
+
         void onComplete({
-            profile: { gender, height, weight, birthYear, isSetup: true },
-            goals,
+            profile: { gender, height, weight, birthYear, activityLevel, isSetup: true },
+            goals: finalGoals,
             shareBodyInfo,
         });
     };
+
+    const baseCal = suggestedDailyCalories;
+    const minimums = computeGuidelineNutrients(gender as any, baseCal);
 
     return (
         <div className="hs-onboarding hs-animate-fade-in">
@@ -231,6 +252,24 @@ export const OnboardingView: React.FC<{
                 <label className="hs-form-label">出生年份</label>
                 <input type="number" inputMode="numeric" className="hs-form-input" value={birthYear} onChange={(event) => setBirthYear(event.target.value)} placeholder="1998" min="1940" max={currentYear} />
             </div>
+            
+            <div className="hs-form-group">
+                <label className="hs-form-label">日常活动强度</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {ACTIVITY_LEVELS.map(level => (
+                        <button
+                            key={level.key}
+                            type="button"
+                            className={`hs-gender-btn ${activityLevel === level.key ? 'active' : ''}`}
+                            style={{ height: 'auto', padding: '12px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}
+                            onClick={() => setActivityLevel(level.key)}
+                        >
+                            <span style={{ fontSize: '15px', fontWeight: 600 }}>{level.label}</span>
+                            <span style={{ fontSize: '12px', fontWeight: 400, opacity: 0.7 }}>{level.desc}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
 
             <div className="hs-goal-section">
                 <div className="hs-section-title" style={{ padding: 0, marginBottom: 10 }}>
@@ -257,19 +296,30 @@ export const OnboardingView: React.FC<{
                     <span className="hs-goal-unit">kg</span>
                 </div>
 
-                {GOAL_FIELD_DEFINITIONS.map((field) => (
-                    <div key={field.goalType} className="hs-goal-row">
-                        <div className="hs-goal-label">{field.label}</div>
-                        <input
-                            type="number"
-                            inputMode="decimal"
-                            className="hs-goal-input"
-                            value={goals[field.key]}
-                            onChange={(event) => handleGoalChange(field.key, event.target.value)}
-                        />
-                        <span className="hs-goal-unit">{field.unit}</span>
-                    </div>
-                ))}
+                {GOAL_FIELD_DEFINITIONS.map((field) => {
+                    let minNote = '';
+                    if (field.key === 'dailyProtein') minNote = `底线: ${minimums.protein}g`;
+                    if (field.key === 'dailyCarbs') minNote = `底线: ${minimums.carbs}g`;
+                    if (field.key === 'dailyFat') minNote = `底线: ${minimums.fat}g`;
+                    if (field.key === 'dailyFiber') minNote = `底线: ${minimums.fiber}g`;
+
+                    return (
+                        <div key={field.goalType} className="hs-goal-row">
+                            <div className="hs-goal-label" style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span>{field.label}</span>
+                                {minNote && <span style={{ fontSize: 10, color: '#f5a623' }}>{minNote}</span>}
+                            </div>
+                            <input
+                                type="number"
+                                inputMode="decimal"
+                                className="hs-goal-input"
+                                value={goals[field.key]}
+                                onChange={(event) => handleGoalChange(field.key, event.target.value)}
+                            />
+                            <span className="hs-goal-unit">{field.unit}</span>
+                        </div>
+                    );
+                })}
 
                 <div className="hs-goal-row">
                     <div className="hs-goal-label" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

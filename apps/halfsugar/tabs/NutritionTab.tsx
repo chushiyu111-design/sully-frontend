@@ -100,10 +100,10 @@ const NutritionTab: React.FC = () => {
 
             {recommendations.length > 0 && (
                 <div className="hs-recommendation-section hs-animate-fade-in" style={{ marginTop: 8 }}>
-                    <div className="hs-section-title">营养参考</div>
+                    <div className="hs-section-title">食谱灵感</div>
                     {recommendations.map((rec) => (
                         <div key={rec.nutrient} className="hs-recommendation-card">
-                            <div className="hs-rec-header">{rec.label} 还差 {Math.round(rec.gap)}g</div>
+                            <div className="hs-rec-header" style={{ color: 'var(--hs-text)' }}>今天可以来点补充 <span style={{ color: 'var(--hs-primary-dark)' }}>{rec.label}</span></div>
                             <div className="hs-rec-foods">
                                 {rec.foods.slice(0, 3).map((food) => (
                                     <span key={food.name} className="hs-rec-food-chip">{food.name}</span>

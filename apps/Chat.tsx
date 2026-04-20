@@ -368,6 +368,7 @@ const Chat: React.FC = () => {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
                     .filter(m => m.metadata?.source !== 'date')
+                    .filter(m => (m.type as string) !== 'health_signal')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'))
                     .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream');
                 setAllHistoryMessages(filtered);
@@ -1154,6 +1155,7 @@ const Chat: React.FC = () => {
 
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date')
+        .filter(m => (m.type as string) !== 'health_signal')  // 半糖健康感知：永远不在聊天UI显示
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
         .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => {

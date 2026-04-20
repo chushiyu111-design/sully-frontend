@@ -108,6 +108,13 @@ export interface UserProfile {
     name: string;
     avatar: string;
     bio: string;
+    // HalfSugar health fields (persisted by updateUserProfile)
+    healthGender?: 'male' | 'female';
+    healthHeight?: number;
+    healthWeight?: number;
+    healthBirthYear?: number;
+    healthSetupDone?: boolean;
+    healthShareBodyInfo?: boolean;
 }
 
 export interface Toast {

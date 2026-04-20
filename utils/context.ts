@@ -66,7 +66,21 @@ export const ContextBuilder = {
         // 3. 用户画像 (User Profile)
         context += `### 互动对象 (User)\n`;
         context += `- 名字: ${user.name}\n`;
-        context += `- 设定/备注: ${user.bio || '无'}\n\n`;
+        context += `- 设定/备注: ${user.bio || '无'}\n`;
+
+        // 当半糖主义开关打开时，注入身体基本信息
+        if (user.healthShareBodyInfo && user.healthHeight) {
+            const genderLabel = user.healthGender === 'female' ? '女' : '男';
+            let bodyLine = `- 身体信息: ${genderLabel}，身高${user.healthHeight}cm`;
+            if (user.healthWeight) {
+                bodyLine += `，体重${user.healthWeight}kg`;
+                const heightM = user.healthHeight / 100;
+                const bmi = Math.round((user.healthWeight / (heightM * heightM)) * 10) / 10;
+                bodyLine += `，BMI ${bmi}`;
+            }
+            context += bodyLine + '\n';
+        }
+        context += '\n';
 
         // 4. 印象档案 (Private Impression)
         if (char.impression) {

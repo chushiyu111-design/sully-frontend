@@ -24,6 +24,15 @@ const NutritionTab: React.FC = () => {
     const [recordingMealType, setRecordingMealType] = useState<MealTypeDefinition | null>(null);
     const [editingMeal, setEditingMeal] = useState<MealRecord | null>(null);
 
+    const activeMealType = MEAL_TYPES[activeMealIdx];
+    const activeRecords = mealsByType[activeMealType.key] || [];
+
+    // Compute meal-type-aware recommendations
+    const mealRecommendations = useMemo(
+        () => getRecommendations(computeNutrientGaps(meals, nutrientTargets), activeMealType.key),
+        [meals, nutrientTargets, activeMealType.key],
+    );
+
     const handleOpenMealRecord = (mealType: MealTypeDefinition, meal: MealRecord | null = null) => {
         setRecordingMealType(mealType);
         setEditingMeal(meal);
@@ -47,15 +56,6 @@ const NutritionTab: React.FC = () => {
             />
         );
     }
-
-    const activeMealType = MEAL_TYPES[activeMealIdx];
-    const activeRecords = mealsByType[activeMealType.key] || [];
-
-    // Compute meal-type-aware recommendations
-    const mealRecommendations = useMemo(
-        () => getRecommendations(computeNutrientGaps(meals, nutrientTargets), activeMealType.key),
-        [meals, nutrientTargets, activeMealType.key],
-    );
 
     return (
         <div className="hs-tab-content no-scrollbar">

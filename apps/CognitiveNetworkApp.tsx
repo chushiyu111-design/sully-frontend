@@ -475,7 +475,11 @@ const CognitiveNetworkApp: React.FC = () => {
                 method: 'POST', headers: fullHeaders(),
                 body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
             });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            if (!resp.ok) {
+                let detail = `HTTP ${resp.status}`;
+                try { const body = await resp.json(); detail = body?.message || body?.error || detail; } catch {}
+                throw new Error(detail);
+            }
             const result: DistillResult = await resp.json();
             setDistillResult(result);
             if (result.l1Created > 0 || result.l1Merged > 0 || result.l1Deduped > 0) {
@@ -503,7 +507,11 @@ const CognitiveNetworkApp: React.FC = () => {
                 headers: fullHeaders(),
                 body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
             });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            if (!resp.ok) {
+                let detail = `HTTP ${resp.status}`;
+                try { const body = await resp.json(); detail = body?.message || body?.error || detail; } catch {}
+                throw new Error(detail);
+            }
 
             const result: DistillResult = await resp.json();
             setDistillResult(result);

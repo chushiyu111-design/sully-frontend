@@ -403,6 +403,26 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // ── Callbacks ──
 
+    /**
+     * 当半糖分享开关打开时，向聊天历史注入一条隐形 health_signal 消息。
+     * AI 可以在 buildMessageHistory 中看到，但 Chat UI 会过滤掉。
+     */
+    const injectHealthSignal = useCallback(async (signalText: string) => {
+        const shareEnabled = (userProfile as any).healthShareBodyInfo === true;
+        if (!shareEnabled || !activeCharacterId) return;
+        try {
+            const { DB } = await import('../../utils/db');
+            await DB.saveMessage({
+                charId: activeCharacterId,
+                role: 'system',
+                type: 'health_signal' as any,
+                content: signalText,
+            });
+        } catch (e) {
+            console.warn('[HalfSugar] Health signal injection failed:', e);
+        }
+    }, [activeCharacterId, userProfile]);
+
     const handleOnboardingComplete = useCallback(async ({ profile, goals: nextGoalForm, shareBodyInfo }: { profile: HealthProfile; goals: GoalFormState; shareBodyInfo: boolean }) => {
         const nextGoals = buildGoalRecords(nextGoalForm, goals);
         const wasSetup = isHealthSetup;
@@ -438,13 +458,18 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const next = sortMealsByCreatedAtDesc([persisted, ...mealsRef.current.filter((e) => e.id !== persisted.id)]);
             mealsRef.current = next; setMeals(next);
             addToast('餐食已保存', 'success');
+            const mealLabel = MEAL_TYPES.find(mt => mt.key === meal.type)?.label || '餐食';
+            const foodNames = meal.foods.map(f => f.name).join('、');
+            void injectHealthSignal(
+                `[生活感知] TA${mealLabel}吃了${foodNames}，约${Math.round(meal.totalCalories)}千卡`
+            );
             return true;
         } catch (error) {
             mealsRef.current = prev; setMeals(prev);
             addToast(`保存失败：${getErrorMessage(error, '请稍后重试')}`, 'error');
             return false;
         }
-    }, [addToast]);
+    }, [addToast, injectHealthSignal]);
 
     const handleDeleteMeal = useCallback(async (mealId: string) => {
         const prev = mealsRef.current;
@@ -545,12 +570,16 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
             setWeightRecords((prev) => sortWeightRecordsByLatest([saved, ...prev.filter((r) => r.id !== saved.id)]));
             addToast('体重已保存', 'success');
+            const timeLabel = timeOfDay === 'morning' ? '早上' : '晚上';
+            void injectHealthSignal(
+                `[生活感知] TA${timeLabel}称了体重：${Math.round(wv * 10) / 10}kg`
+            );
             return true;
         } catch (error) {
             addToast(`保存体重失败：${getErrorMessage(error, '请稍后重试')}`, 'error');
             return false;
         }
-    }, [addToast, todayDate, weightRecords]);
+    }, [addToast, injectHealthSignal, todayDate, weightRecords]);
 
     const handleDeleteWeight = useCallback(async (recordId: string) => {
         try {
@@ -587,12 +616,15 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
             setTodayExercises((prev) => [saved, ...prev.filter((r) => r.id !== saved.id)].sort((a, b) => b.createdAt - a.createdAt));
             addToast('运动已保存', 'success');
+            void injectHealthSignal(
+                `[生活感知] TA做了${label}${Math.round(durationMin)}分钟，消耗约${Math.round(estimateCaloriesBurned(metValue, latestKnownWeightKg, durationMin))}千卡`
+            );
             return true;
         } catch (error) {
             addToast(`保存运动失败：${getErrorMessage(error, '请稍后重试')}`, 'error');
             return false;
         }
-    }, [addToast, latestKnownWeightKg, todayDate]);
+    }, [addToast, injectHealthSignal, latestKnownWeightKg, todayDate]);
 
     const handleDeleteExercise = useCallback(async (exerciseId: string) => {
         try {
@@ -616,12 +648,18 @@ export const HalfSugarProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
             setTodaySleep(saved);
             addToast('睡眠已保存', 'success');
+            const hours = Math.floor(dur / 60);
+            const mins = dur % 60;
+            const qualityLabel = quality === 'good' ? '质量不错' : quality === 'fair' ? '质量一般' : '没太睡好';
+            void injectHealthSignal(
+                `[生活感知] TA昨晚${sleepTime}睡、${wakeTime}醒，睡了${hours}小时${mins > 0 ? mins + '分钟' : ''}，${qualityLabel}`
+            );
             return true;
         } catch (error) {
             addToast(`保存睡眠失败：${getErrorMessage(error, '请稍后重试')}`, 'error');
             return false;
         }
-    }, [addToast, todayDate, todaySleep]);
+    }, [addToast, injectHealthSignal, todayDate, todaySleep]);
 
     const handleDeleteSleep = useCallback(async () => {
         if (!todaySleep) return false;

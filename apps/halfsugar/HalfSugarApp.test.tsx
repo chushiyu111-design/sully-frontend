@@ -18,6 +18,7 @@ import {
     saveGoal,
 } from './halfsugarTrackingApi';
 import { estimateFoodByName, identifyFoodFromImage } from './halfsugarVision';
+import { DB } from '../../utils/db';
 import type { MealRecord } from './types';
 
 vi.mock('../../context/OSContext', () => ({
@@ -61,6 +62,12 @@ vi.mock('./halfsugarVision', () => ({
     identifyFoodFromImage: vi.fn(),
 }));
 
+vi.mock('../../utils/db', () => ({
+    DB: {
+        saveMessage: vi.fn(),
+    },
+}));
+
 const mockedUseOS = vi.mocked(useOS);
 const mockedFetchMeals = vi.mocked(fetchMeals);
 const mockedSaveMeal = vi.mocked(saveMeal);
@@ -75,6 +82,7 @@ const mockedFetchGoals = vi.mocked(fetchGoals);
 const mockedSaveGoal = vi.mocked(saveGoal);
 const mockedEstimateFoodByName = vi.mocked(estimateFoodByName);
 const mockedIdentifyFoodFromImage = vi.mocked(identifyFoodFromImage);
+const mockedSaveMessage = vi.mocked(DB.saveMessage);
 const defaultApiConfig = {
     apiKey: 'test-key',
     baseUrl: 'https://example.com/v1',
@@ -115,6 +123,14 @@ function createMeal(overrides: Partial<MealRecord> = {}): MealRecord {
     };
 }
 
+async function clickOnboardingSubmit(): Promise<void> {
+    const submitButton = screen.getByText('好了，开始记录') as HTMLButtonElement;
+    await waitFor(() => {
+        expect(submitButton.disabled).toBe(false);
+    });
+    fireEvent.click(submitButton);
+}
+
 describe('HalfSugarApp', () => {
     const addToast = vi.fn();
     const closeApp = vi.fn();
@@ -136,6 +152,7 @@ describe('HalfSugarApp', () => {
         mockedFetchGoals.mockResolvedValue([]);
         mockedFetchSummaries.mockResolvedValue([]);
         mockedFetchFavorites.mockResolvedValue([]);
+        mockedSaveMessage.mockResolvedValue(1);
         mockedGenerateSummary.mockResolvedValue({
             id: 'summary-1',
             periodType: 'weekly',
@@ -192,8 +209,8 @@ describe('HalfSugarApp', () => {
     it('shows onboarding on first open when health setup is missing', () => {
         render(<HalfSugarApp />);
 
-        expect(screen.getByText('让我了解你')).toBeTruthy();
-        expect(screen.getByText('开始使用')).toBeTruthy();
+        expect(screen.getByText('关于我')).toBeTruthy();
+        expect(screen.getByText('好了，开始记录')).toBeTruthy();
         expect(mockedFetchMeals).not.toHaveBeenCalled();
     });
 
@@ -204,22 +221,23 @@ describe('HalfSugarApp', () => {
         fireEvent.change(screen.getByPlaceholderText('170'), { target: { value: '170' } });
         fireEvent.change(screen.getAllByPlaceholderText('65')[0], { target: { value: '70' } });
         fireEvent.change(screen.getByPlaceholderText('1998'), { target: { value: '2000' } });
-        fireEvent.click(screen.getByText('开始使用'));
+        await clickOnboardingSubmit();
 
-        expect(updateUserProfile).toHaveBeenCalledWith({
+        expect(updateUserProfile).toHaveBeenCalledWith(expect.objectContaining({
             healthGender: 'male',
             healthHeight: 170,
             healthWeight: 70,
             healthBirthYear: 2000,
             healthSetupDone: true,
             healthShareBodyInfo: false,
-        });
+            healthActivityLevel: 'light',
+        }));
         await waitFor(() => {
             expect(addToast).toHaveBeenCalledWith('基础信息与目标已保存', 'success');
         });
 
         await waitFor(() => {
-            expect(screen.getByText(/热量目标/)).toBeTruthy();
+            expect(screen.getByText('摄入 kcal')).toBeTruthy();
         });
     });
 
@@ -231,23 +249,34 @@ describe('HalfSugarApp', () => {
         fireEvent.change(screen.getAllByPlaceholderText('65')[0], { target: { value: '55' } });
         fireEvent.change(screen.getByPlaceholderText('1998'), { target: { value: '1999' } });
         fireEvent.click(screen.getByLabelText('让角色感知健康数据'));
-        fireEvent.click(screen.getByText('开始使用'));
+        await clickOnboardingSubmit();
 
         await waitFor(() => {
-            expect(updateUserProfile).toHaveBeenCalledWith({
+            expect(updateUserProfile).toHaveBeenCalledWith(expect.objectContaining({
                 healthGender: 'female',
                 healthHeight: 165,
                 healthWeight: 55,
                 healthBirthYear: 1999,
                 healthSetupDone: true,
                 healthShareBodyInfo: true,
-            });
+                healthActivityLevel: 'light',
+            }));
         });
     });
 
     it('computes the calorie target from BMR instead of using a hardcoded default', async () => {
         const currentYear = new Date().getFullYear();
-        const expectedTarget = Math.round((10 * 70 + 6.25 * 170 - 5 * (currentYear - 2000) + 5) * 1.4);
+        const expectedTarget = Math.round((10 * 70 + 6.25 * 170 - 5 * (currentYear - 2000) + 5) * 1.375);
+        const consumed = 700;
+        mockedFetchMeals.mockResolvedValue([
+            createMeal({
+                foods: [{ id: 'food-target', name: '测试餐', calories: consumed, protein: 20, carbs: 80, fat: 20 }],
+                totalCalories: consumed,
+                totalProtein: 20,
+                totalCarbs: 80,
+                totalFat: 20,
+            }),
+        ]);
 
         mockedUseOS.mockReturnValue({
             addToast,
@@ -273,7 +302,13 @@ describe('HalfSugarApp', () => {
         await waitFor(() => {
             expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
         });
-        expect(screen.getByText(`剩余 ${expectedTarget.toLocaleString('zh-CN')}`)).toBeTruthy();
+        await waitFor(() => {
+            const intakeCircle = document.querySelector<SVGCircleElement>('.hs-ring-progress.hs-ring-intake');
+            expect(intakeCircle).toBeTruthy();
+            const outerCircumference = 2 * Math.PI * 72;
+            const expectedOffset = outerCircumference * (1 - consumed / expectedTarget);
+            expect(Number(intakeCircle?.getAttribute('stroke-dashoffset'))).toBeCloseTo(expectedOffset, 3);
+        });
     });
 
     it('renders multiple same-type meal records separately after loading today meals', async () => {
@@ -331,14 +366,19 @@ describe('HalfSugarApp', () => {
 
         render(<HalfSugarApp />);
 
-        fireEvent.click(screen.getByLabelText('饮食'));
+        fireEvent.click(screen.getByLabelText('饮食记录'));
 
         await waitFor(() => {
             expect(screen.getByText(/牛奶/)).toBeTruthy();
         });
         expect(screen.getByText(/吐司/)).toBeTruthy();
+        expect(screen.getAllByText('再记一份')).toHaveLength(1);
+
+        fireEvent.click(screen.getByRole('button', { name: /午餐/ }));
+        await waitFor(() => {
+            expect(screen.getByText(/鸡胸肉沙拉/)).toBeTruthy();
+        });
         expect(screen.getByText(/鸡胸肉沙拉/)).toBeTruthy();
-        expect(screen.getAllByText('再记一份')).toHaveLength(2);
     });
 
     it('shows an error toast when meal loading fails', async () => {
@@ -401,9 +441,10 @@ describe('HalfSugarApp', () => {
         render(<HalfSugarApp />);
 
         await waitFor(() => {
-            expect(screen.getByText('今日建议')).toBeTruthy();
+            expect(screen.getByText('今日食谱灵感')).toBeTruthy();
         });
-        expect(screen.getByText(/蛋白质还差/)).toBeTruthy();
+        expect(screen.getAllByText(/今天可以来点补充/).length).toBeGreaterThan(0);
+        expect(screen.getByText('蛋白质')).toBeTruthy();
     });
 
     it('estimates nutrition from a food name and keeps manual fields behind the custom toggle', async () => {
@@ -451,7 +492,7 @@ describe('HalfSugarApp', () => {
             expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
         });
 
-        fireEvent.click(screen.getByLabelText('饮食'));
+        fireEvent.click(screen.getByLabelText('饮食记录'));
         fireEvent.click(screen.getByText(/记录早餐/));
 
         expect(screen.queryByPlaceholderText('热量')).toBeNull();
@@ -538,7 +579,7 @@ describe('HalfSugarApp', () => {
             expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
         });
 
-        fireEvent.click(screen.getByLabelText('饮食'));
+        fireEvent.click(screen.getByLabelText('饮食记录'));
         fireEvent.click(screen.getByText(/记录早餐/));
         expect(screen.getByText('拍照')).toBeTruthy();
         expect(screen.getByText('相册')).toBeTruthy();
@@ -619,7 +660,7 @@ describe('HalfSugarApp', () => {
             expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
         });
 
-        fireEvent.click(screen.getByLabelText('饮食'));
+        fireEvent.click(screen.getByLabelText('饮食记录'));
         fireEvent.click(screen.getByText(/记录早餐/));
         const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
         expect(fileInput).toBeTruthy();
@@ -636,6 +677,69 @@ describe('HalfSugarApp', () => {
         expect(screen.getByText('AI')).toBeTruthy();
 
         vi.stubGlobal('FileReader', OriginalFileReader);
+    });
+
+    it('injects a hidden health signal after saving a meal when sharing is enabled', async () => {
+        mockedUseOS.mockReturnValue({
+            addToast,
+            closeApp,
+            updateUserProfile,
+            apiConfig: defaultApiConfig,
+            activeCharacterId: 'char-1',
+            characters: [{ id: 'char-1', name: '糯米' }],
+            userProfile: {
+                name: 'User',
+                avatar: 'avatar.png',
+                bio: 'bio',
+                healthGender: 'female',
+                healthHeight: 165,
+                healthWeight: 55,
+                healthBirthYear: 1998,
+                healthSetupDone: true,
+                healthShareBodyInfo: true,
+            },
+        } as any);
+
+        render(<HalfSugarApp />);
+
+        await waitFor(() => {
+            expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
+        });
+
+        fireEvent.click(screen.getByLabelText('饮食记录'));
+        fireEvent.click(screen.getByText(/记录早餐/));
+        fireEvent.click(screen.getByText('自定义'));
+        fireEvent.change(screen.getByPlaceholderText('食物名称 (如: 红烧肉)'), {
+            target: { value: '酸奶' },
+        });
+        fireEvent.change(screen.getByPlaceholderText('热量'), {
+            target: { value: '120' },
+        });
+        fireEvent.click(screen.getByText('添加'));
+
+        await waitFor(() => {
+            expect(screen.getByText('酸奶')).toBeTruthy();
+        });
+
+        const headerButtons = document.querySelectorAll<HTMLButtonElement>('.hs-header .hs-back-btn');
+        const saveButton = headerButtons[headerButtons.length - 1];
+        expect(saveButton).toBeTruthy();
+        await waitFor(() => {
+            expect(saveButton.disabled).toBe(false);
+        });
+        fireEvent.click(saveButton);
+
+        await waitFor(() => {
+            expect(mockedSaveMeal).toHaveBeenCalled();
+        });
+        await waitFor(() => {
+            expect(mockedSaveMessage).toHaveBeenCalledWith(expect.objectContaining({
+                charId: 'char-1',
+                role: 'system',
+                type: 'health_signal',
+                content: '[生活感知] TA早餐吃了酸奶，约120千卡',
+            }));
+        });
     });
 
     it('renders the latest summary preview and generates a weekly summary with active character context', async () => {
@@ -687,9 +791,8 @@ describe('HalfSugarApp', () => {
         fireEvent.click(screen.getByLabelText('趋势'));
 
         await waitFor(() => {
-            expect(screen.getByText('📊 健康总结')).toBeTruthy();
+            expect(screen.getByText(/上周的记录已经很扎实啦/)).toBeTruthy();
         });
-        expect(screen.getByText(/上周的记录已经很扎实啦/)).toBeTruthy();
 
         fireEvent.click(screen.getByText('生成周报'));
 

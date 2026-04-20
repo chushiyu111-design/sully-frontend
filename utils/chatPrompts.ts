@@ -846,6 +846,9 @@ Step 5 — 最后检查
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
                 }
+                else if ((m.type as string) === 'health_signal') {
+                    content = `${timeStr} ${m.content}`;
+                }
                 else if (m.type === 'emoji') {
                     const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;

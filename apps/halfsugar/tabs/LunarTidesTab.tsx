@@ -76,6 +76,7 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
     const [periodStartDate, setPeriodStartDate] = useState(formatLocalDateKey());
     const [periodEndDate, setPeriodEndDate] = useState('');
     const [periodFlow, setPeriodFlow] = useState<FlowIntensity>('medium');
+    const [editingPeriod, setEditingPeriod] = useState<PeriodLog | null>(null); // null = new record
 
     // Medication form
     const [medKey, setMedKey] = useState(MEDICATIONS[0].key);
@@ -86,6 +87,11 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
     });
 
     const todayDate = useMemo(() => formatLocalDateKey(), []);
+
+    // Find the latest ongoing period (no endDate)
+    const ongoingPeriod = useMemo(() => {
+        return [...periods].reverse().find((p) => !p.endDate && !p.isOutlier) || null;
+    }, [periods]);
 
     // ── Load Data ──
     useEffect(() => {
@@ -173,15 +179,51 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
 
     // ── Callbacks ──
 
+    /** Open "new period" modal */
+    const openNewPeriodModal = useCallback(() => {
+        setEditingPeriod(null);
+        setPeriodStartDate(formatLocalDateKey());
+        setPeriodEndDate('');
+        setPeriodFlow('medium');
+        setShowPeriodModal(true);
+    }, []);
+
+    /** Open "edit period" modal for an existing record */
+    const openEditPeriodModal = useCallback((log: PeriodLog) => {
+        setEditingPeriod(log);
+        setPeriodStartDate(log.startDate);
+        setPeriodEndDate(log.endDate || '');
+        setPeriodFlow(log.flowIntensity || 'medium');
+        setShowPeriodModal(true);
+    }, []);
+
+    /** Mark the ongoing period as ended (today) */
+    const handleEndOngoingPeriod = useCallback(async (log: PeriodLog) => {
+        const now = Date.now();
+        const updated: PeriodLog = { ...log, endDate: formatLocalDateKey(), updatedAt: now };
+        try {
+            const db = await getDB();
+            await db.put('periods', updated);
+            setPeriods((prev) =>
+                prev.map((p) => (p.id === updated.id ? updated : p)),
+            );
+            addToast('经期已标记结束', 'success');
+        } catch {
+            addToast('保存失败', 'error');
+        }
+    }, [addToast]);
+
+    /** Save new or edited period record */
     const handleSavePeriod = useCallback(async () => {
         const now = Date.now();
+        const isEdit = Boolean(editingPeriod);
         const newLog: PeriodLog = {
-            id: `period-${now}-${Math.random().toString(36).slice(2, 8)}`,
+            id: editingPeriod?.id || `period-${now}-${Math.random().toString(36).slice(2, 8)}`,
             startDate: periodStartDate,
             endDate: periodEndDate || undefined,
             flowIntensity: periodFlow,
-            isOutlier: false,
-            createdAt: now,
+            isOutlier: editingPeriod?.isOutlier || false,
+            createdAt: editingPeriod?.createdAt || now,
             updatedAt: now,
         };
 
@@ -191,24 +233,27 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
             const updated = [...periods.filter((p) => p.id !== newLog.id), newLog]
                 .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-            // Check for outlier
-            const cycles = computeCycleLengths(updated);
-            if (cycles.length >= 3) {
-                const lastCycle = cycles[cycles.length - 1];
-                const allLengths = cycles.map((c) => c.length);
-                if (isOutlierCycle(lastCycle.length, allLengths)) {
-                    setShowOutlierConfirm({ cycleLength: lastCycle.length, logId: newLog.id });
+            // Check for outlier (only on new records)
+            if (!isEdit) {
+                const cycles = computeCycleLengths(updated);
+                if (cycles.length >= 3) {
+                    const lastCycle = cycles[cycles.length - 1];
+                    const allLengths = cycles.map((c) => c.length);
+                    if (isOutlierCycle(lastCycle.length, allLengths)) {
+                        setShowOutlierConfirm({ cycleLength: lastCycle.length, logId: newLog.id });
+                    }
                 }
             }
 
             setPeriods(updated);
             setShowPeriodModal(false);
+            setEditingPeriod(null);
             setPeriodEndDate('');
-            addToast('经期记录已保存', 'success');
+            addToast(isEdit ? '经期记录已更新' : '经期记录已保存', 'success');
         } catch {
             addToast('保存失败', 'error');
         }
-    }, [addToast, periodEndDate, periodFlow, periodStartDate, periods]);
+    }, [addToast, editingPeriod, periodEndDate, periodFlow, periodStartDate, periods]);
 
     const handleConfirmOutlier = useCallback(async (confirm: boolean) => {
         if (!showOutlierConfirm) return;
@@ -353,23 +398,53 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
 
             {/* ── Period History + Add ── */}
             <div className="hs-section-title"><span><span className="hs-emoji">🩸</span> 经期记录</span></div>
-            <button type="button" className="hs-meal-add hs-animate-fade-in" onClick={() => setShowPeriodModal(true)}>
-                <span>＋</span> 记录经期
+
+            {/* Ongoing period banner */}
+            {ongoingPeriod && (
+                <div className="hs-track-card hs-animate-fade-in" style={{ margin: '0 20px 12px', border: '1px solid var(--hs-rose)', borderRadius: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--hs-text)' }}>
+                                经期进行中 🩸
+                            </div>
+                            <div className="hs-track-subtitle">
+                                {ongoingPeriod.startDate} 开始 · {ongoingPeriod.flowIntensity ? FLOW_LABELS[ongoingPeriod.flowIntensity].label : ''}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            className="hs-submit-btn"
+                            style={{ fontSize: 12, padding: '8px 14px', borderRadius: 10, whiteSpace: 'nowrap' }}
+                            onClick={() => handleEndOngoingPeriod(ongoingPeriod)}
+                        >
+                            标记结束
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            <button type="button" className="hs-meal-add hs-animate-fade-in" onClick={openNewPeriodModal}>
+                <span>＋</span> {ongoingPeriod ? '补记其他经期' : '经期来了'}
             </button>
 
             {periods.length > 0 && (
                 <div className="hs-track-list" style={{ margin: '8px 20px 16px' }}>
                     {[...periods].reverse().slice(0, 8).map((p) => (
                         <div key={p.id} className="hs-track-list-item" style={p.isOutlier ? { opacity: 0.5, textDecoration: 'line-through' } : undefined}>
-                            <div>
+                            <button
+                                type="button"
+                                style={{ flex: 1, background: 'none', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                onClick={() => openEditPeriodModal(p)}
+                            >
                                 <div className="hs-track-list-title">
                                     {p.startDate}{p.endDate ? ` → ${p.endDate}` : ' (进行中)'}
                                 </div>
                                 <div className="hs-track-subtitle">
                                     {p.flowIntensity ? FLOW_LABELS[p.flowIntensity].label : ''}
                                     {p.isOutlier ? ' · 已标记为异常' : ''}
+                                    {!p.endDate && !p.isOutlier ? ' · 点击编辑' : ''}
                                 </div>
-                            </div>
+                            </button>
                             <button type="button" className="hs-track-delete-btn" onClick={() => handleDeletePeriod(p.id)}>删除</button>
                         </div>
                     ))}
@@ -425,17 +500,19 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
                 </>
             )}
 
-            {/* ── Period Modal ── */}
+            {/* ── Period Modal (New or Edit) ── */}
             {showPeriodModal && (
-                <BottomSheetModal title="记录经期" onClose={() => setShowPeriodModal(false)}>
+                <BottomSheetModal title={editingPeriod ? '编辑经期' : '记录经期'} onClose={() => { setShowPeriodModal(false); setEditingPeriod(null); }}>
                     <div className="hs-form-group">
                         <label className="hs-form-label">开始日期</label>
                         <input type="date" className="hs-form-input" value={periodStartDate} onChange={(e) => setPeriodStartDate(e.target.value)} />
                     </div>
-                    <div className="hs-form-group" style={{ marginTop: 12 }}>
-                        <label className="hs-form-label">结束日期（可留空）</label>
-                        <input type="date" className="hs-form-input" value={periodEndDate} onChange={(e) => setPeriodEndDate(e.target.value)} />
-                    </div>
+                    {editingPeriod && (
+                        <div className="hs-form-group" style={{ marginTop: 12 }}>
+                            <label className="hs-form-label">结束日期（可留空）</label>
+                            <input type="date" className="hs-form-input" value={periodEndDate} onChange={(e) => setPeriodEndDate(e.target.value)} />
+                        </div>
+                    )}
                     <div className="hs-form-group" style={{ marginTop: 12 }}>
                         <label className="hs-form-label">流量</label>
                         <div className="hs-quality-row">
@@ -446,7 +523,9 @@ const LunarTidesTab: React.FC<Props> = ({ addToast }) => {
                             ))}
                         </div>
                     </div>
-                    <button type="button" className="hs-submit-btn hs-modal-submit-btn" onClick={handleSavePeriod} style={{ marginTop: 16 }}>保存</button>
+                    <button type="button" className="hs-submit-btn hs-modal-submit-btn" onClick={handleSavePeriod} style={{ marginTop: 16 }}>
+                        {editingPeriod ? '保存修改' : '保存'}
+                    </button>
                 </BottomSheetModal>
             )}
 

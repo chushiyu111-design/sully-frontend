@@ -295,9 +295,29 @@ export const VectorMemoryExtractor = {
             const OVERLAP = 10;
             const WINDOW_STRIDE = WINDOW_SIZE - OVERLAP;
             const resumeCheckpoint = options?.checkpoint?.charId === charId ? options.checkpoint : null;
-            const effectiveStartIdx = resumeCheckpoint
-                ? Math.min(Math.max(resumeCheckpoint.nextStartIdx, boundedStartIdx), boundedEndIdx + 1)
-                : boundedStartIdx;
+            const effectiveStartIdx = (() => {
+                if (!resumeCheckpoint) return boundedStartIdx;
+
+                if (typeof resumeCheckpoint.nextStartMessageId === 'number') {
+                    const messageIdIdx = filteredMsgs.findIndex(m => m.id === resumeCheckpoint.nextStartMessageId);
+                    if (messageIdIdx >= boundedStartIdx && messageIdIdx <= boundedEndIdx) {
+                        return messageIdIdx;
+                    }
+                }
+
+                if ((resumeCheckpoint.nextStartTimestamp || 0) > 0) {
+                    const timestampIdx = filteredMsgs.findIndex((m, idx) => (
+                        idx >= boundedStartIdx &&
+                        idx <= boundedEndIdx &&
+                        (m.timestamp || 0) >= (resumeCheckpoint.nextStartTimestamp || 0)
+                    ));
+                    if (timestampIdx !== -1) {
+                        return timestampIdx;
+                    }
+                }
+
+                return Math.min(Math.max(resumeCheckpoint.nextStartIdx, boundedStartIdx), boundedEndIdx + 1);
+            })();
 
             if (effectiveStartIdx > boundedEndIdx) {
                 return resumeCheckpoint ? resumeCheckpoint.totalCreated + resumeCheckpoint.totalUpdated : 0;
@@ -381,13 +401,17 @@ export const VectorMemoryExtractor = {
                     window.messages[window.messages.length - 1]?.timestamp || 0,
                 );
                 processedWindows++;
+                const nextWindowStartIdx = Math.min(window.startIdx + WINDOW_STRIDE, boundedEndIdx + 1);
+                const nextWindowStartMessage = filteredMsgs[nextWindowStartIdx];
 
                 options?.onCheckpoint?.({
                     version: 1,
                     charId,
                     rangeStartIdx: boundedStartIdx,
                     rangeEndIdx: boundedEndIdx,
-                    nextStartIdx: Math.min(window.startIdx + WINDOW_STRIDE, boundedEndIdx + 1),
+                    nextStartIdx: nextWindowStartIdx,
+                    nextStartMessageId: typeof nextWindowStartMessage?.id === 'number' ? nextWindowStartMessage.id : null,
+                    nextStartTimestamp: nextWindowStartMessage?.timestamp || 0,
                     totalCreated,
                     totalUpdated,
                     processedWindows,

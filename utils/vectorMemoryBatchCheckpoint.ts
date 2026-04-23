@@ -4,6 +4,8 @@ export interface VectorMemoryBatchCheckpoint {
     rangeStartIdx: number;
     rangeEndIdx: number;
     nextStartIdx: number;
+    nextStartMessageId?: number | null;
+    nextStartTimestamp?: number;
     totalCreated: number;
     totalUpdated: number;
     processedWindows: number;
@@ -34,6 +36,8 @@ function normalizeCheckpoint(raw: unknown, charId: string): VectorMemoryBatchChe
     if (!isFiniteNumber(checkpoint.totalWindows) || !isFiniteNumber(checkpoint.lastProcessedTimestamp)) return null;
     if (!isFiniteNumber(checkpoint.updatedAt)) return null;
     if (checkpoint.status !== 'running' && checkpoint.status !== 'paused') return null;
+    const nextStartMessageId = isFiniteNumber(checkpoint.nextStartMessageId) ? checkpoint.nextStartMessageId : null;
+    const nextStartTimestamp = isFiniteNumber(checkpoint.nextStartTimestamp) ? checkpoint.nextStartTimestamp : 0;
 
     return {
         version: 1,
@@ -41,6 +45,8 @@ function normalizeCheckpoint(raw: unknown, charId: string): VectorMemoryBatchChe
         rangeStartIdx: checkpoint.rangeStartIdx,
         rangeEndIdx: checkpoint.rangeEndIdx,
         nextStartIdx: checkpoint.nextStartIdx,
+        nextStartMessageId,
+        nextStartTimestamp,
         totalCreated: checkpoint.totalCreated,
         totalUpdated: checkpoint.totalUpdated,
         processedWindows: checkpoint.processedWindows,
@@ -83,6 +89,8 @@ export function createVectorMemoryBatchCheckpoint(input: {
     rangeStartIdx: number;
     rangeEndIdx: number;
     nextStartIdx?: number;
+    nextStartMessageId?: number | null;
+    nextStartTimestamp?: number;
     totalCreated?: number;
     totalUpdated?: number;
     processedWindows?: number;
@@ -103,6 +111,8 @@ export function createVectorMemoryBatchCheckpoint(input: {
         rangeStartIdx,
         rangeEndIdx,
         nextStartIdx,
+        nextStartMessageId: input.nextStartMessageId ?? null,
+        nextStartTimestamp: input.nextStartTimestamp ?? 0,
         totalCreated: input.totalCreated ?? 0,
         totalUpdated: input.totalUpdated ?? 0,
         processedWindows: input.processedWindows ?? 0,

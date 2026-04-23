@@ -16,6 +16,14 @@ import {
   type CloudHormoneBackfillItem,
 } from '../../utils/backendClient';
 import {
+    clearVectorMemoryBatchCheckpoint,
+    createVectorMemoryBatchCheckpoint,
+    loadVectorMemoryBatchCheckpoint,
+    saveVectorMemoryBatchCheckpoint,
+    type VectorMemoryBatchCheckpoint,
+    withCheckpointStatus,
+} from '../../utils/vectorMemoryBatchCheckpoint';
+import {
     getCharacterRefinePrompts,
     getSecondaryApiConfig,
     hasCloudSyncTarget,
@@ -108,6 +116,7 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
     const abortRef = useRef<AbortController | null>(null);
     const [isAborting, setIsAborting] = useState(false);
+    const [batchCheckpoint, setBatchCheckpoint] = useState<VectorMemoryBatchCheckpoint | null>(null);
 
     // --- 情感基因溯源 State ---
     const [isBackfilling, setIsBackfilling] = useState(false);
@@ -142,6 +151,41 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
     }, [memories]);
 
     // Initial Loads
+    const syncBatchCheckpoint = (checkpoint: VectorMemoryBatchCheckpoint | null) => {
+        if (checkpoint) {
+            saveVectorMemoryBatchCheckpoint(checkpoint);
+        } else if (formData?.id) {
+            clearVectorMemoryBatchCheckpoint(formData.id);
+        }
+        setBatchCheckpoint(checkpoint);
+    };
+
+    const pausedBatchCheckpoint = useMemo(() => {
+        if (!batchCheckpoint || batchCheckpoint.status !== 'paused') return null;
+        if (batchCheckpoint.nextStartIdx > batchCheckpoint.rangeEndIdx) return null;
+        return batchCheckpoint;
+    }, [batchCheckpoint]);
+
+    const describeBatchCheckpoint = (checkpoint: VectorMemoryBatchCheckpoint): string => {
+        const rangeTotal = Math.max(0, checkpoint.rangeEndIdx - checkpoint.rangeStartIdx + 1);
+        const processedCount = Math.max(
+            0,
+            Math.min(checkpoint.nextStartIdx, checkpoint.rangeEndIdx + 1) - checkpoint.rangeStartIdx,
+        );
+        const nextRecord = Math.min(checkpoint.nextStartIdx + 1, checkpoint.rangeEndIdx + 1);
+        const nextTimeText = (checkpoint.nextStartTimestamp || 0) > 0
+            ? new Date(checkpoint.nextStartTimestamp || 0).toLocaleString('zh-CN', {
+                month: 'numeric',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            })
+            : '';
+
+        return `已完成 ${checkpoint.processedWindows}/${checkpoint.totalWindows || '?'} 个窗口，约 ${processedCount}/${rangeTotal} 条记录；将从第 ${nextRecord} 条${nextTimeText ? `（约 ${nextTimeText}）` : ''}继续。`;
+    };
+
     useEffect(() => {
         const savedPrompts = getCharacterRefinePrompts();
         if (savedPrompts.length > 0) {
@@ -155,8 +199,45 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
             DB.getMessagesByCharId(formData.id).then(msgs => {
                 const chatMsgs = msgs.filter(m => (m.role === 'user' || m.role === 'assistant') && (m.type === 'text' || m.type === 'call_log'));
                 setTotalMsgCount(chatMsgs.length);
+                const savedCheckpoint = loadVectorMemoryBatchCheckpoint(formData.id);
+                const restoredCheckpoint = savedCheckpoint ? withCheckpointStatus(savedCheckpoint, 'paused') : null;
+                if (restoredCheckpoint) {
+                    const maxIdx = Math.max(chatMsgs.length - 1, 0);
+                    if (chatMsgs.length === 0 || restoredCheckpoint.rangeStartIdx > maxIdx) {
+                        clearVectorMemoryBatchCheckpoint(formData.id);
+                        setBatchCheckpoint(null);
+                        setBatchStart('1');
+                        setBatchEnd(String(chatMsgs.length));
+                        return;
+                    }
+
+                    const clampedCheckpoint = createVectorMemoryBatchCheckpoint({
+                        charId: restoredCheckpoint.charId,
+                        rangeStartIdx: Math.min(restoredCheckpoint.rangeStartIdx, maxIdx),
+                        rangeEndIdx: Math.min(restoredCheckpoint.rangeEndIdx, maxIdx),
+                        nextStartIdx: Math.min(restoredCheckpoint.nextStartIdx, maxIdx + 1),
+                        nextStartMessageId: restoredCheckpoint.nextStartMessageId,
+                        nextStartTimestamp: restoredCheckpoint.nextStartTimestamp,
+                        totalCreated: restoredCheckpoint.totalCreated,
+                        totalUpdated: restoredCheckpoint.totalUpdated,
+                        processedWindows: restoredCheckpoint.processedWindows,
+                        totalWindows: restoredCheckpoint.totalWindows,
+                        lastProcessedTimestamp: restoredCheckpoint.lastProcessedTimestamp,
+                        status: 'paused',
+                    });
+
+                    setBatchCheckpoint(clampedCheckpoint);
+                    saveVectorMemoryBatchCheckpoint(clampedCheckpoint);
+                    setBatchStart(String(clampedCheckpoint.rangeStartIdx + 1));
+                    setBatchEnd(String(clampedCheckpoint.rangeEndIdx + 1));
+                    return;
+                }
+                setBatchCheckpoint(null);
+                setBatchStart('1');
                 setBatchEnd(String(chatMsgs.length));
             }).catch(() => {});
+        } else {
+            setBatchCheckpoint(null);
         }
     }, [formData?.id, formData?.vectorMemoryEnabled]);
 
@@ -390,7 +471,8 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
         );
     };
 
-    const handleBatchChat = async () => {
+    const handleBatchChat = async (mode: 'start' | 'resume' = 'start') => {
+        if (!formData?.id) return;
         const embKey = getEmbeddingConfig().apiKey;
         if (!embKey) { addToast('请先在设置中配置 Embedding API Key', 'error'); return; }
 
@@ -399,27 +481,80 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
 
         if (!extractConfig?.apiKey) { addToast('请先在设置中配置 API（主 API 或副 API）', 'error'); return; }
 
-        setIsBatching(true);
-        const ctrl = new AbortController();
-        abortRef.current = ctrl;
-
         const startVal = Math.max(1, parseInt(batchStart) || 1);
         const endVal = Math.min(totalMsgCount, parseInt(batchEnd) || totalMsgCount);
+        if (totalMsgCount <= 0 || endVal < startVal) {
+            addToast('当前范围内没有可提取的聊天记录', 'info');
+            return;
+        }
+
+        const resumeCheckpoint = mode === 'resume' ? pausedBatchCheckpoint : null;
+        const initialCheckpoint = resumeCheckpoint
+            ? withCheckpointStatus(resumeCheckpoint, 'running')
+            : createVectorMemoryBatchCheckpoint({
+                charId: formData.id,
+                rangeStartIdx: startVal - 1,
+                rangeEndIdx: endVal - 1,
+                status: 'running',
+            });
+        let latestCheckpoint = initialCheckpoint;
+
+        syncBatchCheckpoint(initialCheckpoint);
+        setIsBatching(true);
+        setIsAborting(false);
+        setBatchProgress(mode === 'resume' ? '正在恢复上次进度…' : '正在加载消息记录…');
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
 
         try {
             const total = await VectorMemoryExtractor.batchExtractFromMessages(
                 formData.id,
-                startVal - 1,
-                endVal - 1,
+                initialCheckpoint.rangeStartIdx,
+                initialCheckpoint.rangeEndIdx,
                 extractConfig,
                 embKey,
                 formData.name || 'AI',
                 (w, tw, mc) => setBatchProgress(`窗口 ${w}/${tw}，已提取 ${mc} 条记忆`),
-                ctrl.signal
+                ctrl.signal,
+                undefined,
+                {
+                    checkpoint: resumeCheckpoint ?? undefined,
+                    onCheckpoint: (checkpoint) => {
+                        latestCheckpoint = checkpoint;
+                        syncBatchCheckpoint(checkpoint);
+                    },
+                },
             );
-            addToast(`批量提取完成！共创建 ${total} 条向量记忆`, 'success');
+            if (latestCheckpoint.nextStartIdx <= latestCheckpoint.rangeEndIdx) {
+                const pausedCheckpoint = withCheckpointStatus(latestCheckpoint, 'paused');
+                syncBatchCheckpoint(pausedCheckpoint);
+                addToast(`本轮已暂停，可从第 ${pausedCheckpoint.nextStartIdx + 1} 条附近继续`, 'info');
+                return;
+            }
+
+            syncBatchCheckpoint(null);
+            if (total > 0) {
+                addToast(`批量提取完成！共创建 ${total} 条向量记忆`, 'success');
+            } else {
+                addToast('本轮提取完成，但没有生成新的可搜存向量记忆', 'info');
+            }
         } catch (e: any) {
-            if (e.name !== 'AbortError') addToast(`批量提取失败: ${e.message}`, 'error');
+            const canResume = latestCheckpoint.nextStartIdx <= latestCheckpoint.rangeEndIdx;
+            if (canResume) {
+                syncBatchCheckpoint(withCheckpointStatus(latestCheckpoint, 'paused'));
+            }
+            if (e.name === 'AbortError') {
+                if (canResume) {
+                    addToast(`已保存断点，可从第 ${latestCheckpoint.nextStartIdx + 1} 条附近继续`, 'info');
+                }
+                return;
+            }
+            addToast(
+                canResume
+                    ? `批量提取失败，但已保留断点：${e.message}`
+                    : `批量提取失败: ${e.message}`,
+                'error',
+            );
         } finally {
             setIsBatching(false);
             setIsAborting(false);
@@ -963,6 +1098,34 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                         {/* Batch Operations */}
                         <div className="bg-white/60 backdrop-blur-md rounded-3xl p-4 border border-white shadow-sm space-y-3">
                             <h4 className="text-[11px] font-bold text-slate-700 tracking-widest uppercase">存档沉淀与提取</h4>
+                            {pausedBatchCheckpoint && (
+                                <div className="bg-amber-50/80 border border-amber-100 rounded-2xl p-3 space-y-2">
+                                    <div>
+                                        <p className="text-[10px] font-bold text-amber-700">发现上次未完成的提取任务</p>
+                                        <p className="text-[9px] text-amber-600 mt-1 leading-relaxed">{describeBatchCheckpoint(pausedBatchCheckpoint)}</p>
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2">
+                                        <button
+                                            onClick={() => {
+                                                syncBatchCheckpoint(null);
+                                                setBatchStart('1');
+                                                setBatchEnd(String(totalMsgCount));
+                                            }}
+                                            disabled={isBatching}
+                                            className="py-1 px-3 rounded-xl text-[10px] font-bold text-slate-500 bg-white border border-slate-200 active:scale-95 transition-all shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                                        >
+                                            丢弃断点
+                                        </button>
+                                        <button
+                                            onClick={() => handleBatchChat('resume')}
+                                            disabled={isBatching}
+                                            className="py-1 px-3 rounded-xl text-[10px] font-bold text-white bg-amber-500 active:scale-95 transition-all shadow-sm hover:bg-amber-400 disabled:opacity-50"
+                                        >
+                                            继续提取
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                             <div className="space-y-2">
                                 <p className="text-[10px] text-slate-500 font-medium">1. 增量补充向量记忆 (消耗 Token)</p>
                                 <div className="flex items-center justify-between gap-2 bg-slate-50/50 p-2 rounded-2xl border border-white">
@@ -972,8 +1135,8 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                                         <input type="number" min={1} max={totalMsgCount} value={batchEnd} onChange={e => setBatchEnd(e.target.value)} className="w-14 bg-white border border-slate-100 rounded-lg px-1 py-1 text-[10px] text-center font-mono focus:outline-emerald-400" />
                                         <span className="text-[9px] text-slate-400 ml-1 whitespace-nowrap">条历史记录</span>
                                     </div>
-                                    <button onClick={handleBatchChat} disabled={isBatching} className="py-1 px-3 rounded-xl text-[10px] font-bold text-white bg-slate-800 active:scale-95 transition-all shadow-sm hover:bg-slate-700 disabled:opacity-50 whitespace-nowrap">
-                                        开始提取
+                                    <button onClick={() => handleBatchChat('start')} disabled={isBatching} className="py-1 px-3 rounded-xl text-[10px] font-bold text-white bg-slate-800 active:scale-95 transition-all shadow-sm hover:bg-slate-700 disabled:opacity-50 whitespace-nowrap">
+                                        {pausedBatchCheckpoint ? '重新开始' : '开始提取'}
                                     </button>
                                 </div>
                             </div>

@@ -477,6 +477,7 @@ function normalizeUserAccount(value: unknown): NeteaseUserAccount | null {
         nickname,
         avatarUrl: readCoverUrl(profile),
         backgroundUrl: normalizeUrl(profile.backgroundUrl) || undefined,
+        signature: readString(profile.signature) || undefined,
         follows: readNumber(profile.follows) ?? 0,
         followeds: readNumber(profile.followeds) ?? 0,
         eventCount: readNumber(profile.eventCount) ?? 0,

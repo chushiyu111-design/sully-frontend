@@ -1049,52 +1049,60 @@
 
 .music-player-progress-bar {
   width: 100%;
-  height: 6px;
-  padding: 12px 0;
-  margin: -12px 0;
-  background: rgba(255,255,255,0.12);
-  background-clip: content-box;
-  border-radius: 3px;
+  height: 28px;
   position: relative;
   cursor: pointer;
-  overflow: hidden;
-  transition: height 0.15s ease;
+}
+
+/* 轨道底色 — 细实线 */
+.music-player-progress-bar::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 3px;
+  background: rgba(255,255,255,0.18);
+  border-radius: 2px;
 }
 
 .music-player-progress-fill {
-  height: 100%;
-  background: rgba(255,255,255,0.85);
-  border-radius: 3px;
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 3px;
+  background: #c4a882;
+  border-radius: 2px;
   transition: width 0.15s linear;
-  box-shadow: 0 0 8px rgba(255,255,255,0.2);
 }
 
 .music-player-progress-dot {
   position: absolute;
-  right: -8px;
+  right: -7px;
   top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   background: #fff;
   border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 12px rgba(255,255,255,0.15);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.3);
 }
 
-.music-player-progress-bar.dragging {
-  height: 8px;
+.music-player-progress-bar.dragging::before {
+  height: 4px;
 }
 
 .music-player-progress-bar.dragging .music-player-progress-fill {
+  height: 4px;
   transition: none;
 }
 
 .music-player-progress-bar.dragging .music-player-progress-dot {
-  width: 20px;
-  height: 20px;
-  right: -10px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.4), 0 0 16px rgba(255,255,255,0.2);
+  width: 18px;
+  height: 18px;
+  right: -9px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
 }
 
 .music-player-time {
@@ -1405,7 +1413,7 @@
   line-height: 1.4;
 }
 
-/* ─── 我的页面 — 暖灰液态玻璃重构 ──────────────────── */
+/* ─── 我的页面 — 个人主页重构 ──────────────────── */
 
 /* 色彩系统 */
 .music-profile-page {
@@ -1421,16 +1429,16 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   background: var(--mp-bg);
+  font-family: var(--app-font), sans-serif;
 }
 
 /* ── Hero 个人资料区 ──────────────────────── */
 .music-profile-header {
-  padding: 0 0 24px;
+  padding: 0 0 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   position: relative;
-  min-height: 220px;
+  min-height: 180px;
 }
 
 .music-profile-bg {
@@ -1447,22 +1455,36 @@
   position: absolute;
   inset: 0;
   background: linear-gradient(to bottom,
-    rgba(246,244,241,0.15) 0%,
-    rgba(246,244,241,0.5) 60%,
-    rgba(246,244,241,0.95) 100%
+    rgba(246,244,241,0) 0%,
+    rgba(246,244,241,0.08) 70%,
+    rgba(246,244,241,0.55) 100%
   );
-  backdrop-filter: blur(40px) saturate(1.2);
-  -webkit-backdrop-filter: blur(40px) saturate(1.2);
+}
+
+/* ── 横向布局 : 头像左 + 信息右 ── */
+.mp-profile-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 0 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.mp-profile-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
 }
 
 .music-profile-avatar {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   background: #ddd;
   overflow: hidden;
-  position: relative;
-  z-index: 1;
   border: 2.5px solid var(--mp-accent);
   box-shadow: 0 0 0 3px rgba(196,168,130,0.15), 0 4px 16px rgba(0,0,0,0.08);
 }
@@ -1473,64 +1495,73 @@
   object-fit: cover;
 }
 
-.music-profile-name {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--mp-text);
-  margin-top: 12px;
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  letter-spacing: 0.01em;
-}
-
 .music-vip-badge {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font-size: 10px;
+  font-size: 9px;
   padding: 2px 8px;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--mp-accent), #b89668);
   color: #fff;
   font-weight: 600;
   letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
-/* 毛玻璃统计 pills */
+.mp-profile-info {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.music-profile-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--mp-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+.mp-profile-signature {
+  font-size: 13px;
+  color: var(--mp-text);
+  margin-top: 5px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* 毛玻璃统计 — 精简文字式 */
 .music-profile-stats {
   display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  position: relative;
-  z-index: 1;
+  gap: 16px;
+  margin-top: 10px;
 }
 
 .music-profile-stat {
   text-align: center;
-  padding: 8px 16px;
-  border-radius: 24px;
-  background: rgba(255,255,255,0.5);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.6);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
 }
 
 .music-profile-stat-num {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 800;
   color: var(--mp-text);
   display: block;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
 .music-profile-stat-label {
   font-size: 11px;
-  color: var(--mp-text-secondary);
-  font-weight: 400;
-  margin-top: 1px;
+  color: var(--mp-text);
+  font-weight: 500;
+  margin-top: 3px;
 }
 
 /* ── Toolbar ──────────────────────────────── */
@@ -1550,52 +1581,156 @@
   gap: 10px;
 }
 
-/* ── 「我喜欢的音乐」大卡片 — 封面模糊背景 ── */
+/* 编辑资料按钮 */
+.mp-edit-profile-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--mp-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mp-edit-profile-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── 照片画廊 (歌单封面倾斜卡片) ── */
+.mp-photo-gallery {
+  padding: 16px 0 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.mp-photo-scroll {
+  display: flex;
+  gap: 10px;
+  padding: 8px 20px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.mp-photo-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.mp-photo-card {
+  flex-shrink: 0;
+  width: 120px;
+  height: 160px;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.06);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+}
+
+.mp-photo-card:active {
+  transform: scale(0.95) !important;
+}
+
+.mp-photo-card:nth-child(1) { transform: rotate(-3deg); }
+.mp-photo-card:nth-child(2) { transform: rotate(1.5deg) translateY(-4px); }
+.mp-photo-card:nth-child(3) { transform: rotate(-2deg) translateY(2px); }
+.mp-photo-card:nth-child(4) { transform: rotate(2.5deg) translateY(-6px); }
+.mp-photo-card:nth-child(5) { transform: rotate(-1deg); }
+.mp-photo-card:nth-child(6) { transform: rotate(2deg) translateY(-3px); }
+
+.mp-photo-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-photo-card-img {
+  width: 100%;
+  height: 100%;
+}
+
+.mp-photo-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── 「我喜欢的音乐」大卡片 — 白底浮层 ── */
 .mp-liked-card {
   position: relative;
   margin: 12px 16px 0;
   z-index: 1;
-  border-radius: 20px;
-  overflow: hidden;
+  border-radius: 16px;
   cursor: pointer;
   min-height: 80px;
+  background: rgba(255,255,255,0.88);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.mp-liked-card:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
 }
 
 .mp-liked-bg {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  filter: blur(20px) brightness(1.05) saturate(1.2);
-  transform: scale(1.2);
-  z-index: 0;
+  display: none;
 }
 
 .mp-liked-glass {
   position: relative;
-  z-index: 1;
-  background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  border: 1px solid rgba(255,255,255,0.65);
 }
 
 .mp-liked-inner {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 20px 16px;
+  gap: 16px;
+  padding: 16px;
 }
 
 .mp-liked-left {
-  width: 44px;
-  height: 44px;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #ece8e3;
+}
+
+.mp-liked-cover {
+  width: 100%;
+  height: 100%;
+}
+
+.mp-liked-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mp-liked-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(212,165,165,0.85);
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  border-radius: 12px;
-  background: rgba(212,165,165,0.12);
+  color: #fff;
+  font-size: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
 
 .mp-liked-heart {
@@ -1619,7 +1754,27 @@
 .mp-liked-count {
   font-size: 12px;
   color: var(--mp-text-secondary);
-  margin-top: 2px;
+  margin-top: 3px;
+}
+
+.mp-liked-play-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--mp-text);
+  margin-top: 6px;
+  font-weight: 500;
+  padding: 3px 10px 3px 8px;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.06);
+}
+
+.mp-liked-play-dot {
+  font-size: 8px;
+  color: var(--mp-accent);
+  line-height: 1;
 }
 
 .mp-liked-arrow {
@@ -1781,6 +1936,95 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── 空歌单状态 ──────────────────────────── */
+.mp-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 24px;
+  text-align: center;
+}
+
+.mp-empty-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+}
+
+.mp-empty-icon svg {
+  width: 64px;
+  height: 64px;
+  color: var(--mp-accent);
+  opacity: 0.35;
+}
+
+.mp-empty-sparkle {
+  position: absolute;
+  font-size: 14px;
+  animation: mp-sparkle-float 2s ease-in-out infinite;
+}
+
+.mp-empty-sparkle:nth-child(1) {
+  top: -4px;
+  left: -8px;
+  animation-delay: 0s;
+}
+
+.mp-empty-sparkle:nth-child(2) {
+  top: 2px;
+  right: -6px;
+  animation-delay: 0.7s;
+}
+
+.mp-empty-sparkle:nth-child(3) {
+  bottom: 8px;
+  right: -10px;
+  animation-delay: 1.3s;
+}
+
+@keyframes mp-sparkle-float {
+  0%, 100% { opacity: 0.5; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+
+.mp-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mp-text);
+  margin-bottom: 4px;
+}
+
+.mp-empty-desc {
+  font-size: 12px;
+  color: var(--mp-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.mp-empty-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 18px;
+  border: none;
+  background: linear-gradient(135deg, var(--mp-accent), var(--mp-accent-rose));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 4px 12px rgba(196,168,130,0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.mp-empty-btn:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(196,168,130,0.2);
 }
 
 /* ── Loading ──────────────────────────────── */

@@ -1613,27 +1613,32 @@ const ProfilePage = ({
             <div className="mp-spinner" />
           </div>
         ) : isLoggedIn && account ? (
-          <>
-            <CoverArt src={account.avatarUrl} alt={account.nickname} seed={account.userId} className="music-profile-avatar" />
-            <div className="music-profile-name">
-              {account.nickname}
+          <div className="mp-profile-row">
+            <div className="mp-profile-left">
+              <CoverArt src={account.avatarUrl} alt={account.nickname} seed={account.userId} className="music-profile-avatar" />
               {account.isVip ? <span className="music-vip-badge">{getVipLabel(account)}</span> : null}
             </div>
-            <div className="music-profile-stats">
-              <div className="music-profile-stat">
-                <span className="music-profile-stat-num">{account.follows}</span>
-                <span className="music-profile-stat-label">关注</span>
-              </div>
-              <div className="music-profile-stat">
-                <span className="music-profile-stat-num">{account.followeds}</span>
-                <span className="music-profile-stat-label">粉丝</span>
-              </div>
-              <div className="music-profile-stat">
-                <span className="music-profile-stat-num">{account.listenSongs}</span>
-                <span className="music-profile-stat-label">听歌</span>
+            <div className="mp-profile-info">
+              <div className="music-profile-name">{account.nickname}</div>
+              {account.signature ? (
+                <div className="mp-profile-signature">{account.signature}</div>
+              ) : null}
+              <div className="music-profile-stats">
+                <div className="music-profile-stat">
+                  <span className="music-profile-stat-num">{account.follows}</span>
+                  <span className="music-profile-stat-label">关注</span>
+                </div>
+                <div className="music-profile-stat">
+                  <span className="music-profile-stat-num">{account.followeds}</span>
+                  <span className="music-profile-stat-label">粉丝</span>
+                </div>
+                <div className="music-profile-stat">
+                  <span className="music-profile-stat-num">{account.listenSongs}</span>
+                  <span className="music-profile-stat-label">听歌</span>
+                </div>
               </div>
             </div>
-          </>
+          </div>
         ) : isLoggedIn ? (
           <div className="mp-login-pending">
             <div className="mp-login-pending-title">{error ? '登录异常' : '登录中，请稍候'}</div>
@@ -1662,28 +1667,38 @@ const ProfilePage = ({
       {/* Logged-in content */}
       {isLoggedIn && account ? (
         <>
-          {/* 「我喜欢的音乐」card - with cover image blurred background */}
-          {likedPlaylist ? (
-            <div className="mp-liked-card" onClick={() => onOpenPlaylist(likedPlaylist)}>
-              {likedPlaylist.coverImgUrl ? (
-                <div className="mp-liked-bg" style={{ backgroundImage: `url(${likedPlaylist.coverImgUrl})` }} />
-              ) : null}
-              <div className="mp-liked-glass">
-                <div className="mp-liked-inner">
-                  <div className="mp-liked-left">
-                    <svg className="mp-liked-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>
+          {/* 歌单封面照片画廊 — 倾斜卡片 */}
+          {userPlaylists.length > 1 ? (
+            <div className="mp-photo-gallery">
+              <div className="mp-photo-scroll">
+                {userPlaylists.slice(0, 6).map((pl) => (
+                  <div key={pl.id} className="mp-photo-card" onClick={() => onOpenPlaylist(pl)}>
+                    <CoverArt src={pl.coverImgUrl} alt={pl.name} seed={pl.id} className="mp-photo-card-img" />
                   </div>
-                  <div className="mp-liked-info">
-                    <div className="mp-liked-title">{likedPlaylist.name}</div>
-                    <div className="mp-liked-count">{likedPlaylist.trackCount} 首</div>
-                  </div>
-                  <svg className="mp-liked-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 18l6-6-6-6" /></svg>
-                </div>
+                ))}
               </div>
             </div>
           ) : null}
 
-
+          {/* 「我喜欢的音乐」card */}
+          {likedPlaylist ? (
+            <div className="mp-liked-card" onClick={() => onOpenPlaylist(likedPlaylist)}>
+              <div className="mp-liked-inner">
+                <div className="mp-liked-left">
+                  <CoverArt src={likedPlaylist.coverImgUrl} alt={likedPlaylist.name} seed={likedPlaylist.id} className="mp-liked-cover" />
+                </div>
+                <div className="mp-liked-info">
+                  <div className="mp-liked-title">{likedPlaylist.name}</div>
+                  <div className="mp-liked-count">{likedPlaylist.trackCount} 首歌曲</div>
+                  <div className="mp-liked-play-all">
+                    <span className="mp-liked-play-dot">▶</span>
+                    播放全部
+                  </div>
+                </div>
+                <svg className="mp-liked-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M9 18l6-6-6-6" /></svg>
+              </div>
+            </div>
+          ) : null}
 
           {/* Playlist tabs */}
           {userPlaylistsLoading ? (
@@ -1700,20 +1715,29 @@ const ProfilePage = ({
                   收藏的歌单 ({collectedPlaylists.length})
                 </button>
               </div>
-              <ul className="mp-playlist-list">
-                {visiblePlaylists.map((playlist) => (
-                  <li key={playlist.id} className="mp-playlist-item" onClick={() => onOpenPlaylist(playlist)}>
-                    <CoverArt src={playlist.coverImgUrl} alt={playlist.name} seed={playlist.id} className="mp-playlist-cover" note="♫" />
-                    <div className="mp-playlist-info">
-                      <div className="mp-playlist-name">{playlist.name}</div>
-                      <div className="mp-playlist-meta">{getPlaylistSubtitle(playlist)}</div>
-                    </div>
-                  </li>
-                ))}
-                {visiblePlaylists.length === 0 ? (
-                  <li style={{ padding: '24px 0', textAlign: 'center', fontSize: 13, color: '#9e9a94' }}>暂无歌单</li>
-                ) : null}
-              </ul>
+              {visiblePlaylists.length > 0 ? (
+                <ul className="mp-playlist-list">
+                  {visiblePlaylists.map((playlist) => (
+                    <li key={playlist.id} className="mp-playlist-item" onClick={() => onOpenPlaylist(playlist)}>
+                      <CoverArt src={playlist.coverImgUrl} alt={playlist.name} seed={playlist.id} className="mp-playlist-cover" note="♫" />
+                      <div className="mp-playlist-info">
+                        <div className="mp-playlist-name">{playlist.name}</div>
+                        <div className="mp-playlist-meta">{getPlaylistSubtitle(playlist)}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="mp-empty-state">
+                  <div className="mp-empty-icon">
+                    <span className="mp-empty-sparkle">✦</span>
+                    <span className="mp-empty-sparkle">✦</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+                  </div>
+                  <div className="mp-empty-title">还没有创建歌单</div>
+                  <div className="mp-empty-desc">创建你的第一个歌单，分享你的音乐品味</div>
+                </div>
+              )}
             </div>
           )}
 

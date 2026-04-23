@@ -152,6 +152,7 @@ export interface NeteaseUserAccount {
     nickname: string;
     avatarUrl: string;
     backgroundUrl?: string;
+    signature?: string;
     follows: number;
     followeds: number;
     eventCount: number;

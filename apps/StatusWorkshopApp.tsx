@@ -348,6 +348,34 @@ ${allowScriptGeneration
         }
     };
 
+    const renderScriptSwitch = (className = 'mt-3') => {
+        if (!activeTemplate || activeTemplate.renderMode !== 'html') return null;
+
+        return (
+            <div className={`flex items-center justify-between gap-3 rounded-2xl border border-white/[0.05] bg-white/[0.03] px-4 py-3 ${className}`}>
+                <div className="min-w-0">
+                    <div className="text-[12px] font-semibold text-white/70">启用脚本</div>
+                    <div className="mt-1 text-[10px] leading-4 text-white/28">仅运行内联 classic script；外链与网络请求会被拦截。</div>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={activeTemplate.allowScripts === true}
+                    onClick={() => updateActiveTemplate({ allowScripts: activeTemplate.allowScripts !== true })}
+                    className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                        activeTemplate.allowScripts === true ? 'bg-emerald-400/70' : 'bg-white/[0.12]'
+                    }`}
+                >
+                    <span
+                        className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                            activeTemplate.allowScripts === true ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                    />
+                </button>
+            </div>
+        );
+    };
+
     const renderPromptTab = () => {
         if (!activeTemplate) {
             return (
@@ -530,6 +558,7 @@ ${allowScriptGeneration
                             </button>
                         ))}
                     </div>
+                    {renderScriptSwitch()}
                 </div>
             </div>
         );
@@ -551,27 +580,7 @@ ${allowScriptGeneration
                         <div className="text-[11px] font-semibold tracking-wide text-white/45">HTML 模板</div>
                         <div className="text-[10px] text-white/25">$1, $2, $3… 会按正则捕获组顺序替换</div>
                     </div>
-                    <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.05] bg-white/[0.03] px-4 py-3">
-                        <div className="min-w-0">
-                            <div className="text-[12px] font-semibold text-white/70">启用脚本</div>
-                            <div className="mt-1 text-[10px] leading-4 text-white/28">仅运行内联 classic script；外链与网络请求会被拦截。</div>
-                        </div>
-                        <button
-                            type="button"
-                            role="switch"
-                            aria-checked={activeTemplate.allowScripts === true}
-                            onClick={() => updateActiveTemplate({ allowScripts: activeTemplate.allowScripts !== true })}
-                            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                                activeTemplate.allowScripts === true ? 'bg-emerald-400/70' : 'bg-white/[0.12]'
-                            }`}
-                        >
-                            <span
-                                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
-                                    activeTemplate.allowScripts === true ? 'translate-x-6' : 'translate-x-1'
-                                }`}
-                            />
-                        </button>
-                    </div>
+                    {renderScriptSwitch('mb-3')}
                     <textarea
                         value={activeTemplate.htmlTemplate || ''}
                         onChange={e => updateActiveTemplate({ htmlTemplate: e.target.value })}

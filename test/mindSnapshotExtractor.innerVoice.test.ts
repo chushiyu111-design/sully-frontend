@@ -128,5 +128,29 @@ describe('MindSnapshotExtractor.generateInnerVoice', () => {
         );
 
         expect(result?.meta?.html).toBe('<div>G1|G9|G10|G11|$12</div>');
+        expect(result?.meta?.allowScripts).not.toBe(true);
+    });
+
+    it('marks custom status cards as script-enabled only when the template opts in', async () => {
+        mockFetchContent('<status>Text: ready</status>');
+
+        const result = await MindSnapshotExtractor.generateCustomCard(
+            baseCharacter,
+            '我会提前看材料。',
+            currentMsgs as any,
+            apiConfig,
+            {
+                id: 'tpl-script',
+                name: 'script template',
+                systemPrompt: '输出 status 字段。',
+                extractRegex: '<status>\\s*Text:\\s*(.*?)\\s*<\\/status>',
+                htmlTemplate: '<div id="root">$1</div><script>document.getElementById("root").dataset.ready = "yes";</script>',
+                allowScripts: true,
+                renderMode: 'html',
+            },
+        );
+
+        expect(result?.meta?.html).toContain('<script>');
+        expect(result?.meta?.allowScripts).toBe(true);
     });
 });

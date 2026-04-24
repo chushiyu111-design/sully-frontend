@@ -1291,7 +1291,9 @@ ${aiReply.slice(0, 500)}
             cardData = {
                 cardType: 'freeform',
                 body: bodyText,
-                meta: { html: finalHtml },
+                meta: template.allowScripts === true
+                    ? { html: finalHtml, allowScripts: true }
+                    : { html: finalHtml },
                 style: { mood: '' },
             };
         } else {

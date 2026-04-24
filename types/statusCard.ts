@@ -65,6 +65,7 @@ export interface CustomStatusTemplate {
     systemPrompt: string;           // 用户自定义的 system prompt（告诉副模型输出什么格式）
     extractRegex: string;           // 用户自定义的提取正则（从 AI 输出中提取渲染内容）
     htmlTemplate?: string;          // 用户自定义的 HTML 模板（支持 $1, $2 等正则捕获组替换）
+    allowScripts?: boolean;         // 是否允许该模板在沙箱 iframe 内执行内联脚本，默认关闭
     renderMode: 'html' | 'text';    // 渲染方式：html=iframe沙箱，text=纯文本卡片
     fields?: TemplateField[];       // 可视化编辑器字段定义
     cardStyle?: CardAppearance;     // 卡片外观参数

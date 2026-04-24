@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { CustomStatusTemplate } from '../types/statusCard';
+import { STATUS_CARD_IFRAME_SHELL } from '../components/chat/statusCardIframe';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 
 type TabId = 'prompt' | 'html';
@@ -10,85 +11,9 @@ type GeneratorField = {
     desc: string;
 };
 
-type DebouncedPreviewUpdate = ((html: string) => void) & {
+type DebouncedPreviewUpdate = ((html: string, allowScripts?: boolean) => void) & {
     cancel: () => void;
 };
-
-const PREVIEW_SHELL = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-html, body {
-    margin: 0;
-    padding: 0;
-    background: transparent;
-}
-body {
-    min-height: 100%;
-}
-#root {
-    width: 100%;
-}
-</style>
-</head>
-<body>
-<div id="styles"></div>
-<div id="root"></div>
-<script>
-(function () {
-    var root = document.getElementById('root');
-    var styles = document.getElementById('styles');
-
-    function reportHeight() {
-        var nextHeight = Math.max(
-            document.documentElement.scrollHeight || 0,
-            document.body.scrollHeight || 0,
-            root ? root.scrollHeight || 0 : 0
-        );
-        parent.postMessage({ type: 'preview-height', height: nextHeight }, '*');
-    }
-
-    window.addEventListener('message', function (e) {
-        if (!e.data || e.data.type !== 'preview-update') return;
-
-        var html = typeof e.data.html === 'string' ? e.data.html : '';
-
-        try {
-            var parsed = new DOMParser().parseFromString(html, 'text/html');
-            var headNodes = [];
-
-            if (parsed.head && parsed.head.children) {
-                Array.prototype.forEach.call(parsed.head.children, function (node) {
-                    if (node && typeof node.outerHTML === 'string') {
-                        headNodes.push(node.outerHTML);
-                    }
-                });
-            }
-
-            styles.innerHTML = headNodes.join('');
-            root.innerHTML = parsed.body && parsed.body.innerHTML ? parsed.body.innerHTML : html;
-            document.body.style.cssText = 'margin:0;background:transparent;';
-
-            if (parsed.body && parsed.body.getAttribute('style')) {
-                document.body.style.cssText += parsed.body.getAttribute('style');
-            }
-        } catch (error) {
-            styles.innerHTML = '';
-            root.innerHTML = html;
-            document.body.style.cssText = 'margin:0;background:transparent;';
-        }
-
-        requestAnimationFrame(function () {
-            requestAnimationFrame(reportHeight);
-        });
-    });
-
-    reportHeight();
-})();
-</script>
-</body>
-</html>`;
 
 const DEFAULT_GENERATOR_FIELDS: GeneratorField[] = [
     { name: '时间', desc: '当前时间 HH:MM' },
@@ -103,6 +28,7 @@ function createEmptyTemplate(index: number): CustomStatusTemplate {
         systemPrompt: '',
         extractRegex: '',
         htmlTemplate: '',
+        allowScripts: false,
         renderMode: 'html',
     };
 }
@@ -118,6 +44,7 @@ function escapeHtml(value: string): string {
 
 const StatusWorkshopApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, addToast, updateCharacter } = useOS();
+    const frameChannel = useId().replace(/:/g, '_');
 
     const activeChar = useMemo(
         () => characters.find(c => c.id === activeCharacterId),
@@ -247,12 +174,12 @@ const StatusWorkshopApp: React.FC = () => {
     const debouncedUpdate = useMemo<DebouncedPreviewUpdate>(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
 
-        const send = ((html: string) => {
+        const send = ((html: string, allowScripts = false) => {
             if (timer) clearTimeout(timer);
 
             timer = setTimeout(() => {
                 previewRef.current?.contentWindow?.postMessage(
-                    { type: 'preview-update', html },
+                    { type: 'preview-update', channel: frameChannel, html, allowScripts },
                     '*',
                 );
             }, 200);
@@ -266,12 +193,13 @@ const StatusWorkshopApp: React.FC = () => {
         };
 
         return send;
-    }, []);
+    }, [frameChannel]);
 
     useEffect(() => {
-        const handleMessage = (event: MessageEvent<{ type?: string; height?: number }>) => {
+        const handleMessage = (event: MessageEvent<{ type?: string; channel?: string; height?: number }>) => {
             if (event.source !== previewRef.current?.contentWindow) return;
             if (event.data?.type !== 'preview-height') return;
+            if (event.data.channel !== frameChannel) return;
 
             const nextHeight = typeof event.data.height === 'number'
                 ? Math.min(Math.max(event.data.height + 16, 220), 560)
@@ -282,11 +210,14 @@ const StatusWorkshopApp: React.FC = () => {
 
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, []);
+    }, [frameChannel]);
 
     useEffect(() => {
         if (!previewReady) return;
-        debouncedUpdate(buildPreviewHtml(activeTemplate));
+        debouncedUpdate(
+            buildPreviewHtml(activeTemplate),
+            activeTemplate?.renderMode === 'html' && activeTemplate.allowScripts === true,
+        );
     }, [activeTemplate, buildPreviewHtml, debouncedUpdate, previewReady]);
 
     useEffect(() => () => debouncedUpdate.cancel(), [debouncedUpdate]);
@@ -338,6 +269,8 @@ const StatusWorkshopApp: React.FC = () => {
             const fieldListStr = validFields
                 .map(field => `- ${field.name}: ${field.desc}`)
                 .join('\n');
+            const targetTemplate = templates.find(template => template.id === targetTemplateId);
+            const allowScriptGeneration = targetTemplate?.allowScripts === true;
 
             const prompt = `你是一个前端开发专家和 UI 设计师。用户想要一个聊天状态栏卡片模板。
 用户描述的风格：「${genDescription || '简约深色风格'}」
@@ -353,7 +286,10 @@ ${fieldListStr}
 - 只输出 JSON，不要多余文字
 - HTML 必须是完整可渲染的
 - systemPrompt 要清晰告诉 AI 输出格式
-- extractRegex 要能正确匹配 systemPrompt 要求的格式`;
+- extractRegex 要能正确匹配 systemPrompt 要求的格式
+${allowScriptGeneration
+    ? '- 当前方案已启用脚本：可以写少量内联 <script> 做轻量交互，点击事件请用 addEventListener 绑定；不要使用外链脚本、module、onclick 等事件属性、网络请求、弹窗或死循环'
+    : '- 当前方案未启用脚本：不要生成 <script>、onclick 等事件属性，只使用 HTML/CSS'}`;
 
             const baseUrl = (config.baseUrl || '').replace(/\/+$/, '');
             const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -615,6 +551,27 @@ ${fieldListStr}
                         <div className="text-[11px] font-semibold tracking-wide text-white/45">HTML 模板</div>
                         <div className="text-[10px] text-white/25">$1, $2, $3… 会按正则捕获组顺序替换</div>
                     </div>
+                    <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.05] bg-white/[0.03] px-4 py-3">
+                        <div className="min-w-0">
+                            <div className="text-[12px] font-semibold text-white/70">启用脚本</div>
+                            <div className="mt-1 text-[10px] leading-4 text-white/28">仅运行内联 classic script；外链与网络请求会被拦截。</div>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={activeTemplate.allowScripts === true}
+                            onClick={() => updateActiveTemplate({ allowScripts: activeTemplate.allowScripts !== true })}
+                            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                                activeTemplate.allowScripts === true ? 'bg-emerald-400/70' : 'bg-white/[0.12]'
+                            }`}
+                        >
+                            <span
+                                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                                    activeTemplate.allowScripts === true ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                            />
+                        </button>
+                    </div>
                     <textarea
                         value={activeTemplate.htmlTemplate || ''}
                         onChange={e => updateActiveTemplate({ htmlTemplate: e.target.value })}
@@ -784,7 +741,7 @@ ${fieldListStr}
                             <div className="flex min-h-[200px] items-center justify-center overflow-hidden rounded-[28px] border border-white/[0.05] bg-[#06060d] px-3 py-5 sm:min-h-[220px]">
                                 <iframe
                                     ref={previewRef}
-                                    srcDoc={PREVIEW_SHELL}
+                                    srcDoc={STATUS_CARD_IFRAME_SHELL}
                                     sandbox="allow-scripts"
                                     title="状态栏预览"
                                     className="w-full rounded-[24px] border-0 bg-transparent"

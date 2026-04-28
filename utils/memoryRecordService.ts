@@ -8,6 +8,7 @@ import type {
     TtsConfig,
     UserProfile,
 } from '../types';
+import { pinyin } from 'pinyin-pro';
 import { DB } from './db';
 import { masterMemoryRecordAudio } from './memoryRecordMastering';
 import { MinimaxMusic, type MinimaxMusicGenerateResult } from './minimaxMusic';
@@ -104,6 +105,7 @@ const REQUIRED_LYRIC_SECTIONS = [
 const DEFAULT_MUSIC_PROMPT = 'intimate cinematic pop ballad, warm vocal, soft piano, light drums, bittersweet and private';
 const MEMORY_RECORD_LLM_MAX_TOKENS = 16000;
 const INCOMPLETE_LYRICS_WARNING = '歌词返回不完整（可能是 max_tokens 截断），已改用本地兜底草稿';
+const RHYME_FALLBACK_WARNING = '歌词押韵验收未通过，已改用本地押韵兜底草稿';
 
 export const MEMORY_RECORD_MODE_COPY: Record<MemoryRecordMode, { label: string; detail: string }> = {
     blind_box: {
@@ -216,15 +218,108 @@ function getLyricSectionNames(lyrics: string): Set<string> {
     return new Set(sections);
 }
 
+function getRequiredLyricSectionNames(): string[] {
+    return REQUIRED_LYRIC_SECTIONS.map(section => normalizeLyricSectionName(section.replace(/^\[|\]$/g, '')));
+}
+
+function getLyricSections(lyrics: string): Map<string, string[]> {
+    const sections = new Map<string, string[]>();
+    let currentSection = '';
+
+    lyrics.split(/\r?\n/).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line) return;
+
+        const sectionMatch = line.match(/^\[([^\]\r\n]+)\]$/);
+        if (sectionMatch) {
+            currentSection = normalizeLyricSectionName(sectionMatch[1] || '');
+            if (!sections.has(currentSection)) sections.set(currentSection, []);
+            return;
+        }
+
+        if (currentSection) {
+            sections.get(currentSection)?.push(line);
+        }
+    });
+
+    return sections;
+}
+
 function isLikelyCompleteLyrics(lyrics: string): boolean {
     const sungLines = lyrics
         .split(/\r?\n/)
         .map(line => line.trim())
         .filter(line => line && !/^\[[^\]]+\]$/.test(line));
     const sections = getLyricSectionNames(lyrics);
+    const hasRequiredSections = getRequiredLyricSectionNames().every(section => sections.has(section));
     const hasChorus = sections.has('chorus') || sections.has('副歌');
     const hasEnding = sections.has('outro') || sections.has('finalchorus') || sections.has('尾奏') || sections.has('结尾');
-    return sungLines.length >= 8 && sections.size >= 4 && hasChorus && hasEnding;
+    return sungLines.length >= 8 && sections.size >= 4 && hasRequiredSections && hasChorus && hasEnding;
+}
+
+function getLineRhymeKey(line: string): string | null {
+    const cleanLine = line
+        .replace(/\([^)]*\)/g, '')
+        .replace(/[“”"'‘’`~!！?？。.,，、;；:：…\s]+$/g, '');
+    const chars = cleanLine.match(/[\u4e00-\u9fff]/g);
+    const lastChar = chars?.[chars.length - 1];
+    if (!lastChar) return null;
+
+    const finalBody = pinyin(lastChar, {
+        toneType: 'none',
+        pattern: 'finalBody',
+        type: 'array',
+        nonZh: 'removed',
+    })[0] || '';
+    const finalTail = pinyin(lastChar, {
+        toneType: 'none',
+        pattern: 'finalTail',
+        type: 'array',
+        nonZh: 'removed',
+    })[0] || '';
+    const rhymeKey = `${finalBody}${finalTail}`.trim();
+    return rhymeKey || null;
+}
+
+function getSectionRhymeKeys(lines: string[]): string[] {
+    return lines
+        .map(getLineRhymeKey)
+        .filter((key): key is string => Boolean(key));
+}
+
+function hasRhymeGroup(lines: string[], minSameRhyme = 3): boolean {
+    const counts = new Map<string, number>();
+    getSectionRhymeKeys(lines).forEach(key => counts.set(key, (counts.get(key) || 0) + 1));
+    return [...counts.values()].some(count => count >= minSameRhyme);
+}
+
+function hasVerseRhyme(lines: string[]): boolean {
+    const keys = getSectionRhymeKeys(lines);
+    if (keys.length < 3) return false;
+    if (hasRhymeGroup(lines, 3)) return true;
+    if (keys.length < 4) return false;
+
+    const [a, b, c, d] = keys;
+    const hasAabb = a === b && c === d;
+    const hasAbab = a === c && b === d;
+    return hasAabb || hasAbab;
+}
+
+function hasAcceptableRhymeScheme(lyrics: string): boolean {
+    const sections = getLyricSections(lyrics);
+    const chorus = sections.get('chorus') || [];
+    const finalChorus = sections.get('finalchorus') || [];
+    const verse1 = sections.get('verse1') || [];
+    const verse2 = sections.get('verse2') || [];
+
+    return hasRhymeGroup(chorus, 3)
+        && hasRhymeGroup(finalChorus, 3)
+        && hasVerseRhyme(verse1)
+        && hasVerseRhyme(verse2);
+}
+
+function isReleaseReadyLyrics(lyrics: string): boolean {
+    return isLikelyCompleteLyrics(lyrics) && hasAcceptableRhymeScheme(lyrics);
 }
 
 function getChoiceFinishReason(data: any): string {
@@ -598,44 +693,55 @@ function buildFallbackDraft(options: CreateMemoryRecordDraftOptions, seeds: Memo
         artistName: charName,
         monologueText: getFallbackMonologue(options),
         lyrics: `[Intro]
-有一段光 留在旧信封
-我把名字 写得很轻
+旧门牌还在
+雨声落下来
 
 [Verse 1]
-晚风，路标，和停顿
-像没关紧的门缝
-你经过的时候
-我听见心里慢慢回声
+你把旧称翻出来
+我把回复删又改
+楼下风吹过站牌
+那句晚安没说白
 
 [Pre Chorus]
-如果回忆会唱歌
-它不必解释太多
+走廊只剩风声徘徊
+折叠床被悄悄撤开
+她把旧照片递过来
+我忽然不敢移开
 
 [Chorus]
-我把这一刻 留给你听
-像把夜色别在衣领
-我们没说完的细节
-在旋律里慢慢透明
+我熟悉每座高台
+却被你一句叫回来
+确实想见越过空白
+我也想压住等待
+算得清一路利害
+偏在你这里认栽
 
 [Verse 2]
-雨停在便利店门口
-灯牌闪得很轻
-你把沉默折起来
-塞进旧外套内里
+办公桌茶凉下来
+凌晨钟声慢半拍
+旧照片还没摊开
+八年忽然坐回来
 
 [Bridge]
-别问它来自哪里
-秘密也可以很真心
+清醒停了一秒
+理智被夜色绊倒
+你说婚礼会很热闹
+旧账翻到最后一页
+我却没能退掉
 
 [Final Chorus]
-我把这一刻 留给你听
-像把拥抱藏进黎明
-等到唱片转到安静
-还是你 还在我心里
+我熟悉每座高台
+却被你一句叫回来
+确实想见越过空白
+我也想压住等待
+后来那个算尽利害
+终于在你这里认栽
 
 [Outro]
-针尖落回黑胶
-余温留在掌心`,
+窗外路灯灭两盏
+对话停在屏幕边
+那扇门关了八年
+后来谁也没反锁`,
         musicPrompt: [
             ...requestParts,
             'intimate cinematic mandopop, warm emotional vocal, piano, muted drums, soft synth pads, bittersweet romance, 78 bpm',
@@ -739,10 +845,13 @@ function buildLyricAuditSystemPrompt(): string {
 - 整首歌必须有至少一处节奏"断裂"——句式突然变短或突然拉长，打破惯性。如果读完从头到尾一个速度一个句式，就是不合格的"平"，必须重新调整。
 
 六、押韵检查（重要）
+- 开始修改前，必须先在内部确定本稿的 Verse 韵脚和 Chorus 韵脚，再围绕这两个韵脚重写或调整句尾。
 - 副歌必须严格押韵，同一段至少 3 行结尾落在同一个韵上
+- [Chorus] 与 [Final Chorus] 都必须满足副歌押韵规则，Final Chorus 不能因为复现 Hook 就放松韵脚。
 - 主歌至少做到隔行押韵（AABB 或 ABAB）
+- [Verse 1] 与 [Verse 2] 都必须有清晰韵脚；至少隔行押韵，或同段 3 行以上落在同一个韵上。
 - 整首歌需要有一个清晰的押韵策略——要么一韵到底，要么 Verse 和 Chorus 各用一种韵——不能每段散乱各押各的
-- 如果找不到明显的韵脚结构，说明押韵不合格，必须重新整理
+- 如果找不到明显的韵脚结构，说明押韵不合格，必须重新整理；押韵不合格时允许大改原稿，不受“保留原句”的限制。
 - 严禁为凑韵生造词语、强行倒装、或塞与上下文无关的句子
 
 七、title 检查
@@ -787,7 +896,7 @@ function buildLyricJsonUserPrompt(input: {
         ? `\n【词作风格参考】\n用户希望歌词贴近以下词作人的审美气质：${input.lyricistReference.trim()}\n请吸收其表达方式的核心特质——如意象选择偏好、断句节奏习惯、叙事角度、用词温度——自然融入当前歌词的语境和记忆中。注意：是借鉴其词作方法论而非抄具体歌词，不要写"模仿某某"的显式标注，也不要复刻其知名作品中的标志性意象或句式。`
         : '';
 
-    return `请在内部完成自检检查（切勿输出检查过程文字），随后直接输出优化后的新 JSON。特别提醒：必须清除所有AI高频烂词（共犯、危险、狂热、沉溺、沦陷等），打破句式套路，确保各段落之间句式节奏有明显差异——杜绝从头"平"到尾。${songRequestBlock}${lyricistBlock}${instructionBlock}
+    return `请在内部完成自检检查（切勿输出检查过程文字），随后直接输出优化后的新 JSON。特别提醒：必须清除所有AI高频烂词（共犯、危险、狂热、沉溺、沦陷等），打破句式套路，确保各段落之间句式节奏有明显差异——杜绝从头"平"到尾。押韵是硬性验收项：请先确定 Verse 与 Chorus 的韵脚；如果当前歌词韵脚散乱，允许大改句尾与句序，直到 [Chorus]、[Final Chorus]、[Verse 1]、[Verse 2] 都有清楚韵脚。${songRequestBlock}${lyricistBlock}${instructionBlock}
 
 【当前歌名】
 ${input.title}
@@ -857,6 +966,9 @@ export async function reviseMemoryRecordLyrics(options: ReviseMemoryRecordLyrics
         console.error('[MemoryRecord] Failed to parse lyric revision JSON. Data:', raw);
         throw new Error('AI 修改歌词返回的 JSON 无法解析，当前歌词已保留');
     }
+    if (!hasAcceptableRhymeScheme(parsed.lyrics)) {
+        throw new Error('AI 修改歌词押韵验收未通过，当前歌词已保留');
+    }
     return parsed;
 }
 
@@ -884,7 +996,7 @@ export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOp
                     { role: 'system', content: prompt.system },
                     { role: 'user', content: prompt.user },
                 ],
-                { temperature: 0.92, maxTokens: MEMORY_RECORD_LLM_MAX_TOKENS, timeoutMs: 150000 },
+                { temperature: 1.5, maxTokens: MEMORY_RECORD_LLM_MAX_TOKENS, timeoutMs: 150000 },
             );
             const parsed = extractJsonTyped(rawDraft, (value) => validateDraftPayload(value, options));
             payload = parsed || buildFallbackDraft(options, allSeeds);
@@ -902,6 +1014,9 @@ export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOp
             }
             if (!isLikelyCompleteLyrics(payload.lyrics)) {
                 error = appendDraftWarning(error, INCOMPLETE_LYRICS_WARNING);
+                payload = buildFallbackDraft(options, allSeeds);
+            } else if (!isReleaseReadyLyrics(payload.lyrics)) {
+                error = appendDraftWarning(error, RHYME_FALLBACK_WARNING);
                 payload = buildFallbackDraft(options, allSeeds);
             }
         } catch (err) {

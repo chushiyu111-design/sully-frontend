@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Blob as NodeBlob } from 'node:buffer';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
+import { pinyin } from 'pinyin-pro';
 import { DB } from '../utils/db';
 import {
     createMemoryRecordDraft,
@@ -112,6 +113,130 @@ function makeRecord(mode: MemoryRecordMode): MemoryRecord {
     };
 }
 
+const releaseReadyLyrics = `[Intro]
+雨声落在门外
+旧伞停在站牌
+
+[Verse 1]
+你把旧称翻出来
+我把回复删又改
+楼下风吹过站牌
+那句晚安没说白
+
+[Pre Chorus]
+走廊只剩风声徘徊
+折叠床被悄悄撤开
+她把旧照片递过来
+我忽然不敢移开
+
+[Chorus]
+靠近一点别走开
+把没说完都唱出来
+晚风停在旧站牌
+我们还是没说拜
+
+[Verse 2]
+办公桌茶凉下来
+凌晨钟声慢半拍
+旧照片还没摊开
+八年忽然坐回来
+
+[Bridge]
+清醒停了一秒
+理智被夜色绊倒
+旧账翻到最后一页
+我却没能退掉
+
+[Final Chorus]
+靠近一点别走开
+把没说完都唱出来
+晚风停在旧站牌
+我们还是没说拜
+
+[Outro]
+雨停以后
+门还留着缝`;
+
+const scatteredRhymeLyrics = `[Intro]
+旧门牌还亮着
+风停在楼下
+
+[Verse 1]
+时区没差十三个小时
+定位径直跳回了京海
+一条带着酒气的语音
+停在八年前的旧称谓
+
+[Pre Chorus]
+走廊只剩风声
+折叠床被撤走
+她递来旧抓拍
+我没找到出口
+
+[Chorus]
+熟知这座城每条向上的路
+却被一句玩笑截断了退路
+确实想见越过八年的空白
+我也想压在三月的结尾
+
+[Verse 2]
+四月凌晨的钟表
+能回答所有问号
+办公桌上凉透的茶水
+顺着荒诞剧本往回追
+
+[Bridge]
+清醒停在这一秒钟
+理智输给深夜胡闹
+旧账翻过最后一页
+心事没有落点
+
+[Final Chorus]
+熟知这座城每条向上的路
+却被一句玩笑截断了退路
+确实想见越过八年的空白
+后来在规则里认了输
+
+[Outro]
+对话框问着睡了没
+那扇门后来没反锁`;
+
+function sectionLines(lyrics: string, sectionName: string): string[] {
+    const target = sectionName.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '');
+    const lines: string[] = [];
+    let current = '';
+
+    lyrics.split(/\r?\n/).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line) return;
+        const sectionMatch = line.match(/^\[([^\]\r\n]+)\]$/);
+        if (sectionMatch) {
+            current = sectionMatch[1].toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '');
+            return;
+        }
+        if (current === target) lines.push(line);
+    });
+
+    return lines;
+}
+
+function lineRhymeKey(line: string): string {
+    const chars = line.match(/[\u4e00-\u9fff]/g) || [];
+    const lastChar = chars[chars.length - 1] || '';
+    const finalBody = pinyin(lastChar, { toneType: 'none', pattern: 'finalBody', type: 'array', nonZh: 'removed' })[0] || '';
+    const finalTail = pinyin(lastChar, { toneType: 'none', pattern: 'finalTail', type: 'array', nonZh: 'removed' })[0] || '';
+    return `${finalBody}${finalTail}`;
+}
+
+function maxRhymeGroupSize(lines: string[]): number {
+    const counts = new Map<string, number>();
+    lines.forEach(line => {
+        const key = lineRhymeKey(line);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Math.max(0, ...counts.values());
+}
+
 describe('memory record draft fallback', () => {
     beforeEach(async () => {
         Object.defineProperty(globalThis, 'indexedDB', { value: new IDBFactory(), configurable: true });
@@ -186,7 +311,7 @@ describe('memory record draft fallback', () => {
             .mockResolvedValueOnce(openAiResponse(JSON.stringify({
                 title: '雨停以后',
                 style_prompt: 'polished intimate mandopop, 76 bpm, warm male vocal, piano and brushed drums',
-                lyrics: '[Intro]\n雨声停在门口\n\n[Verse 1]\n你把伞慢慢收好\n我装作还在找钥匙\n\n[Pre Chorus]\n楼道灯轻轻一闪\n话到嘴边又停住\n\n[Chorus]\n靠近一点点\n再靠近一点点\n别把晚风都说穿\n\n[Verse 2]\n便利店亮着白光\n你袖口沾着水珠\n\n[Bridge]\n沉默绕过肩膀\n像旧票根发烫\n\n[Final Chorus]\n靠近一点点\n再靠近一点点\n把名字唱得很轻\n\n[Outro]\n雨停以后\n门还留着缝',
+                lyrics: releaseReadyLyrics,
             })));
         vi.stubGlobal('fetch', fetchMock);
 
@@ -217,20 +342,21 @@ describe('memory record draft fallback', () => {
         const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
         expect(firstBody.messages[1].content).toContain('【用户写歌需求】');
         expect(firstBody.messages[1].content).toContain('歌曲主题：雨夜重逢');
+        expect(firstBody.temperature).toBe(1.5);
         expect(firstBody.max_tokens).toBe(16000);
         const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+        expect(secondBody.temperature).toBe(0.72);
         expect(secondBody.max_tokens).toBe(16000);
     });
 
     it('keeps the initial draft when lyric self-check returns invalid JSON', async () => {
-        const completeLyrics = '[Intro]\n旧门牌还亮着\n风停在楼下\n\n[Verse 1]\n你把钥匙放回口袋\n我假装没有看见\n\n[Chorus]\n别急着说再见\n让夜色慢一点\n\n[Outro]\n门牌轻轻亮着\n像还在等那天';
         const fetchMock = vi.fn()
             .mockResolvedValueOnce(openAiResponse(JSON.stringify({
                 title: '旧门牌',
                 albumName: '回忆唱片匣',
                 artistName: 'Sully',
                 monologueText: '',
-                lyrics: completeLyrics,
+                lyrics: releaseReadyLyrics,
                 musicPrompt: 'lo-fi mandopop',
                 coverGradient: 'linear-gradient(135deg, #f7d6e0, #2d3142)',
             })))
@@ -254,20 +380,19 @@ describe('memory record draft fallback', () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(draft.title).toBe('旧门牌');
         expect(draft.musicPrompt).toBe('lo-fi mandopop');
-        expect(draft.lyrics).toBe(completeLyrics);
+        expect(draft.lyrics).toBe(releaseReadyLyrics);
         expect(draft.error).toContain('歌词自检/润色 JSON 解析失败');
         expect(mocks.generateWithFallback).not.toHaveBeenCalled();
     });
 
     it('does not replace a complete draft with truncated polished lyrics', async () => {
-        const completeLyrics = '[Intro]\n雨声停在门口\n鞋尖等了一会\n\n[Verse 1]\n你把伞慢慢收好\n我装作还在找钥匙\n\n[Chorus]\n靠近一点点\n别把晚风都说穿\n\n[Outro]\n门还留着缝\n名字轻轻亮着';
         const fetchMock = vi.fn()
             .mockResolvedValueOnce(openAiResponse(JSON.stringify({
                 title: '雨停以后',
                 albumName: '回忆唱片匣',
                 artistName: 'Sully',
                 monologueText: '',
-                lyrics: completeLyrics,
+                lyrics: releaseReadyLyrics,
                 musicPrompt: 'soft mandopop, 76 bpm',
                 coverGradient: 'linear-gradient(135deg, #f7d6e0, #2d3142)',
             })))
@@ -284,9 +409,75 @@ describe('memory record draft fallback', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(draft.title).toBe('雨停以后');
-        expect(draft.lyrics).toBe(completeLyrics);
+        expect(draft.lyrics).toBe(releaseReadyLyrics);
         expect(draft.lyrics).not.toContain('菜单划掉');
         expect(draft.error).toContain('歌词自检/润色 JSON 解析失败');
+    });
+
+    it('falls back when a structurally complete lyric has scattered rhymes', async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(openAiResponse(JSON.stringify({
+                title: '散开的旧称',
+                albumName: '回忆唱片匣',
+                artistName: 'Sully',
+                monologueText: '',
+                lyrics: scatteredRhymeLyrics,
+                musicPrompt: 'soft mandopop, 76 bpm',
+                coverGradient: 'linear-gradient(135deg, #f7d6e0, #2d3142)',
+            })))
+            .mockResolvedValueOnce(openAiResponse(JSON.stringify({
+                title: '散开的旧称',
+                style_prompt: 'soft mandopop, 76 bpm, close vocal, felt piano',
+                lyrics: scatteredRhymeLyrics,
+            })));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const draft = await createMemoryRecordDraft({
+            char,
+            userProfile,
+            mode: 'relationship_theme',
+            memories: [],
+            apiConfig,
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(draft.lyrics).toContain('[Final Chorus]');
+        expect(draft.lyrics).not.toContain('时区没差十三个小时');
+        expect(draft.error).toContain('歌词押韵验收未通过');
+        expect(maxRhymeGroupSize(sectionLines(draft.lyrics, 'Chorus'))).toBeGreaterThanOrEqual(3);
+        expect(maxRhymeGroupSize(sectionLines(draft.lyrics, 'Final Chorus'))).toBeGreaterThanOrEqual(3);
+    });
+
+    it('keeps a structurally complete lyric with acceptable rhymes', async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(openAiResponse(JSON.stringify({
+                title: '旧伞站牌',
+                albumName: '回忆唱片匣',
+                artistName: 'Sully',
+                monologueText: '',
+                lyrics: scatteredRhymeLyrics,
+                musicPrompt: 'soft mandopop, 76 bpm',
+                coverGradient: 'linear-gradient(135deg, #f7d6e0, #2d3142)',
+            })))
+            .mockResolvedValueOnce(openAiResponse(JSON.stringify({
+                title: '旧伞站牌',
+                style_prompt: 'soft mandopop, 76 bpm, close vocal, felt piano',
+                lyrics: releaseReadyLyrics,
+            })));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const draft = await createMemoryRecordDraft({
+            char,
+            userProfile,
+            mode: 'relationship_theme',
+            memories: [],
+            apiConfig,
+        });
+
+        expect(draft.lyrics).toBe(releaseReadyLyrics);
+        expect(draft.error).toBeUndefined();
+        expect(maxRhymeGroupSize(sectionLines(draft.lyrics, 'Chorus'))).toBeGreaterThanOrEqual(3);
+        expect(maxRhymeGroupSize(sectionLines(draft.lyrics, 'Final Chorus'))).toBeGreaterThanOrEqual(3);
     });
 
     it('falls back instead of saving a draft when the provider reports a token cutoff', async () => {
@@ -314,7 +505,7 @@ describe('memory record draft fallback', () => {
         const fetchMock = vi.fn().mockResolvedValue(openAiResponse(JSON.stringify({
             title: '更近一点',
             style_prompt: 'sensual warm R&B, 82 bpm, breathy female vocal, late-night keys',
-            lyrics: '[Intro]\n灯影贴着杯沿\n\n[Verse 1]\n你靠近半步\n我低头笑了一下\n\n[Pre Chorus]\n话不用说太满\n呼吸已经回答\n\n[Chorus]\n更近一点\n再慢一点\n让暧昧停在唇边\n\n[Verse 2]\n电梯停在七楼\n手背碰到衣袖\n\n[Bridge]\n别急着开灯\n夜色替我们点头\n\n[Final Chorus]\n更近一点\n再慢一点\n把名字唱到耳边\n\n[Outro]\n门缝里\n还留着晚风',
+            lyrics: releaseReadyLyrics,
         })));
         vi.stubGlobal('fetch', fetchMock);
 

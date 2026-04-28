@@ -40,6 +40,7 @@
     "motion": "^12.38.0",
     "onnxruntime-web": "^1.24.3",
     "pdfjs-dist": "5.4.624",
+    "pinyin-pro": "^3.28.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^3.8.1",

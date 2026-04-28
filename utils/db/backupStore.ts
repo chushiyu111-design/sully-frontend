@@ -1,4 +1,4 @@
-import { CharacterProfile,FullBackupData,MemoryRecordAudio,SerializedMemoryRecordAudio } from '../../types';
+import { CharacterProfile,FullBackupData,MemoryRecordAudio,SerializedMemoryRecordAudio,SerializedVoiceAudio } from '../../types';
 import {
   openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_THEMES,STORE_EMOJIS,
   STORE_EMOJI_CATEGORIES,STORE_ASSETS,STORE_GALLERY,STORE_USER,
@@ -7,7 +7,7 @@ import {
   STORE_COURSES,STORE_GAMES,STORE_WORLDBOOKS,STORE_NOVELS,
   STORE_BANK_TX,STORE_BANK_DATA,STORE_XHS_ACTIVITIES,STORE_XHS_STOCK,
   STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS,STORE_MEMORY_RECORD_AUDIO,
-  STORE_SCHEDULED,STORE_LETTERS,
+  STORE_SCHEDULED,STORE_LETTERS,STORE_VOICE_AUDIO,
   DB_NAME_CONST
 } from './core';
 
@@ -54,6 +54,22 @@ const serializeMemoryRecordAudio = async (items: MemoryRecordAudio[]): Promise<S
     }));
 };
 
+type VoiceAudioRecord = {
+    msgId: string | number;
+    blob?: Blob;
+    createdAt?: number;
+    mimeType?: string;
+};
+
+const serializeVoiceAudio = async (items: VoiceAudioRecord[]): Promise<SerializedVoiceAudio[]> => {
+    return Promise.all(items.map(async (item) => ({
+        msgId: item.msgId,
+        createdAt: item.createdAt,
+        mimeType: item.mimeType || item.blob?.type,
+        dataUrl: item.blob ? await blobToDataUrl(item.blob) : undefined,
+    })));
+};
+
 const deserializeMemoryRecordAudio = async (items?: SerializedMemoryRecordAudio[]): Promise<MemoryRecordAudio[]> => {
     if (!Array.isArray(items)) return [];
 
@@ -63,6 +79,23 @@ const deserializeMemoryRecordAudio = async (items?: SerializedMemoryRecordAudio[
         restored.push({
             ...item,
             blob: await dataUrlToBlob(item.dataUrl),
+        });
+    }
+    return restored;
+};
+
+const deserializeVoiceAudio = async (items?: SerializedVoiceAudio[]): Promise<VoiceAudioRecord[]> => {
+    if (!Array.isArray(items)) return [];
+
+    const restored: VoiceAudioRecord[] = [];
+    for (const item of items) {
+        if (!item.dataUrl) continue;
+        const blob = await dataUrlToBlob(item.dataUrl);
+        restored.push({
+            msgId: item.msgId,
+            createdAt: item.createdAt,
+            mimeType: item.mimeType || blob.type,
+            blob,
         });
     }
     return restored;
@@ -80,7 +113,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         });
     };
 
-    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, memoryRecords, memoryRecordAudioRaw, scheduledMessages, letters] = await Promise.all([
+    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, memoryRecords, memoryRecordAudioRaw, scheduledMessages, letters, voiceAudioRaw] = await Promise.all([
         getAllFromStore(STORE_CHARACTERS), getAllFromStore(STORE_MESSAGES),
         getAllFromStore(STORE_THEMES), getAllFromStore(STORE_EMOJIS),
         getAllFromStore(STORE_EMOJI_CATEGORIES), getAllFromStore(STORE_ASSETS),
@@ -97,8 +130,10 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         getAllFromStore(STORE_MEMORY_RECORDS),
         getAllFromStore(STORE_MEMORY_RECORD_AUDIO),
         getAllFromStore(STORE_SCHEDULED), getAllFromStore(STORE_LETTERS),
+        getAllFromStore(STORE_VOICE_AUDIO),
     ]);
     const memoryRecordAudio = await serializeMemoryRecordAudio(memoryRecordAudioRaw as MemoryRecordAudio[]);
+    const voiceAudio = await serializeVoiceAudio(voiceAudioRaw as VoiceAudioRecord[]);
 
     const userProfile = userProfiles.length > 0 ? { name: userProfiles[0].name, avatar: userProfiles[0].avatar, bio: userProfiles[0].bio } : undefined;
     const mainState = bankData.find((d: any) => d.id === 'main_state');
@@ -113,6 +148,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         vectorMemories,
         memoryRecords,
         memoryRecordAudio,
+        voiceAudio,
         scheduledMessages, letters
     };
 };
@@ -120,6 +156,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
 export const importFullData = async (data: FullBackupData): Promise<void> => {
     const db = await openDB();
     const importedMemoryRecordAudio = await deserializeMemoryRecordAudio(data.memoryRecordAudio);
+    const importedVoiceAudio = await deserializeVoiceAudio(data.voiceAudio);
 
     const availableStores = [
         STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
@@ -130,7 +167,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
         STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
         STORE_VECTOR_MEMORIES,
         STORE_MEMORY_RECORDS, STORE_MEMORY_RECORD_AUDIO,
-        STORE_SCHEDULED, STORE_LETTERS
+        STORE_SCHEDULED, STORE_LETTERS, STORE_VOICE_AUDIO
     ].filter(name => db.objectStoreNames.contains(name));
 
     const tx = db.transaction(availableStores, 'readwrite');
@@ -145,6 +182,13 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     const mergeStore = (storeName: string, items: any[]) => {
         if (!availableStores.includes(storeName) || !items || items.length === 0) return;
         items.forEach(item => tx.objectStore(storeName).put(item));
+    };
+
+    const replaceStore = (storeName: string, items: any[]) => {
+        if (!availableStores.includes(storeName) || !Array.isArray(items)) return;
+        const store = tx.objectStore(storeName);
+        store.clear();
+        items.forEach(item => store.put(item));
     };
 
     if (data.characters) {
@@ -238,6 +282,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     if (data.vectorMemories) clearAndAdd(STORE_VECTOR_MEMORIES, data.vectorMemories);
     if (data.memoryRecords) clearAndAdd(STORE_MEMORY_RECORDS, data.memoryRecords);
     if (importedMemoryRecordAudio.length > 0) clearAndAdd(STORE_MEMORY_RECORD_AUDIO, importedMemoryRecordAudio);
+    if (Array.isArray(data.voiceAudio)) replaceStore(STORE_VOICE_AUDIO, importedVoiceAudio);
     if (data.scheduledMessages) clearAndAdd(STORE_SCHEDULED, data.scheduledMessages);
     if (data.letters) clearAndAdd(STORE_LETTERS, data.letters);
 

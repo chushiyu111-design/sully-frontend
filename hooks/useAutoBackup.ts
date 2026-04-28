@@ -18,6 +18,7 @@ import {
     uploadCloudBackup,
     isCloudBackupAvailable,
 } from '../utils/cloudBackup';
+import { readSystemBackupIncludeVoiceAudio, SystemBackupMode, SystemBackupOptions } from '../utils/systemBackup';
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 const MAX_BACKUP_BYTES = 500 * 1024 * 1024; // 500 MB
@@ -27,7 +28,7 @@ const MAX_BACKUP_BYTES = 500 * 1024 * 1024; // 500 MB
  * @param isDataLoaded  数据是否加载完毕
  */
 export function useAutoBackup(
-    exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>,
+    exportSystem: (mode: SystemBackupMode, options?: SystemBackupOptions) => Promise<Blob>,
     isDataLoaded: boolean,
 ) {
     const runningRef = useRef(false);
@@ -57,7 +58,9 @@ export function useAutoBackup(
 
             // 2. 生成 ZIP
             console.log('[AutoBackup] 开始生成备份...');
-            const blob = await exportSystem('full');
+            const blob = await exportSystem('full', {
+                includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
+            });
 
             // 3. 预检大小
             if (blob.size > MAX_BACKUP_BYTES) {

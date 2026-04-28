@@ -1,5 +1,5 @@
 
-import { APIConfig,OSTheme,CharacterProfile,ChatTheme,FullBackupData,UserProfile,ApiPreset,GroupProfile,Worldbook,NovelBook,Message,RealtimeConfig,TtsConfig,SttConfig } from '../types';
+import { APIConfig,OSTheme,CharacterProfile,ChatTheme,FullBackupData,UserProfile,ApiPreset,GroupProfile,Worldbook,NovelBook,Message,RealtimeConfig,TtsConfig,SttConfig,BackupMusicAssets,SerializedVoiceAudio } from '../types';
 import { DB } from './db';
 import { buildBackendHeaders,getBackendUrl } from './backendClient';
 import { loadJSZip } from './lazyThirdParty';
@@ -15,6 +15,59 @@ interface JSZipLike {
     generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
 }
 
+export type SystemBackupMode = 'text_only' | 'media_only' | 'full';
+
+export interface SystemBackupOptions {
+    includeVoiceAudio?: boolean;
+}
+
+export const SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY = 'system_backup_include_voice_audio';
+
+export function readSystemBackupIncludeVoiceAudio(): boolean {
+    try {
+        return localStorage.getItem(SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY) === 'true';
+    } catch {
+        return false;
+    }
+}
+
+export function writeSystemBackupIncludeVoiceAudio(value: boolean): void {
+    try {
+        localStorage.setItem(SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY, String(value));
+    } catch {
+        // Keep backup preference writes non-fatal.
+    }
+}
+
+const MUSIC_PROFILE_BG_DB_NAME = 'music_profile_bg_db';
+const MUSIC_PROFILE_BG_STORE = 'backgrounds';
+const MUSIC_PROFILE_BG_KEY = 'custom_bg';
+const MUSIC_CUSTOM_SKIN_DB_NAME = 'music_custom_skins';
+const MUSIC_CUSTOM_SKIN_STORE = 'skins';
+const SULLYOS_UPSTREAM_COMPAT_ASSET_ID = 'sullyos_upstream_compat_payload';
+
+const SULLYOS_UPSTREAM_COMPAT_KEYS = [
+    'songs',
+    'quizSessions',
+    'guidebookSessions',
+    'lifeSimState',
+    'memoryNodes',
+    'memoryVectors',
+    'memoryLinks',
+    'topicBoxes',
+    'anticipations',
+    'eventBoxes',
+    'dailySchedules',
+    'memoryBatches',
+    'pixelHomeAssets',
+    'pixelHomeLayouts',
+] as const;
+
+const SULLYOS_UPSTREAM_MEDIA_COMPAT_KEYS = new Set([
+    'dailySchedules',
+    'pixelHomeAssets',
+    'pixelHomeLayouts',
+]);
 
 // ─── Pure Data Processing Helpers ───────────────────────────────────────
 
@@ -86,16 +139,541 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     });
 }
 
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+    const response = await fetch(dataUrl);
+    return response.blob();
+}
+
+function isBlobLike(value: unknown): value is Blob {
+    return value instanceof Blob
+        || !!value && typeof value === 'object' && typeof (value as Blob).arrayBuffer === 'function';
+}
+
+function getDataUrlMimeType(dataUrl: string): string | undefined {
+    const match = /^data:([^;,]+)/.exec(dataUrl);
+    return match?.[1];
+}
+
+async function serializeBlobOrDataUrl(value: unknown): Promise<{ dataUrl: string; mimeType?: string } | null> {
+    if (typeof value === 'string' && value.startsWith('data:')) {
+        return { dataUrl: value, mimeType: getDataUrlMimeType(value) };
+    }
+
+    if (isBlobLike(value)) {
+        return { dataUrl: await blobToDataUrl(value), mimeType: value.type };
+    }
+
+    return null;
+}
+
 async function serializeMemoryRecordAudioForBackup(items: any[]): Promise<any[]> {
     const serialized = [];
     for (const item of items) {
         const { blob, ...rest } = item || {};
+        const audioAsset = await serializeBlobOrDataUrl(blob || item?.dataUrl);
         serialized.push({
             ...rest,
-            dataUrl: blob instanceof Blob ? await blobToDataUrl(blob) : item?.dataUrl,
+            dataUrl: audioAsset?.dataUrl || item?.dataUrl,
         });
     }
     return serialized;
+}
+
+async function serializeVoiceAudioForBackup(items: any[]): Promise<SerializedVoiceAudio[]> {
+    const serialized: SerializedVoiceAudio[] = [];
+    for (const item of items) {
+        const blob = item?.blob;
+        const audioAsset = await serializeBlobOrDataUrl(blob || item?.dataUrl);
+        serialized.push({
+            msgId: item?.msgId,
+            createdAt: item?.createdAt,
+            mimeType: item?.mimeType || audioAsset?.mimeType,
+            dataUrl: audioAsset?.dataUrl,
+        });
+    }
+    return serialized;
+}
+
+function getLocalStorageItem(key: string): string | undefined {
+    try {
+        return localStorage.getItem(key) || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function getLocalStorageJson<T = any>(key: string): T | undefined {
+    const raw = getLocalStorageItem(key);
+    if (!raw) return undefined;
+    try {
+        return JSON.parse(raw) as T;
+    } catch {
+        return undefined;
+    }
+}
+
+function collectLocalStoragePrefixMap<T>(
+    prefix: string,
+    mapValue: (raw: string, suffix: string, key: string) => T,
+): Record<string, T> | undefined {
+    const result: Record<string, T> = {};
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(prefix)) continue;
+            const raw = localStorage.getItem(key);
+            if (raw === null) continue;
+            result[key.slice(prefix.length)] = mapValue(raw, key.slice(prefix.length), key);
+        }
+    } catch {
+        return undefined;
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function collectLocalStorageFlags(
+    prefixes: string[],
+    allowKey: (key: string) => boolean = () => true,
+): Record<string, string> | undefined {
+    const flags: Record<string, string> = {};
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !allowKey(key) || !prefixes.some(prefix => key.startsWith(prefix))) continue;
+            const raw = localStorage.getItem(key);
+            if (raw !== null) flags[key] = raw;
+        }
+    } catch {
+        return undefined;
+    }
+    return Object.keys(flags).length > 0 ? flags : undefined;
+}
+
+function collectUpstreamStructuredLocalStorage(mode: SystemBackupMode): Partial<FullBackupData> {
+    if (mode !== 'text_only' && mode !== 'full') return {};
+
+    const groupchatLimitRaw = getLocalStorageItem('groupchat_context_limit');
+    const groupchatContextLimit = groupchatLimitRaw ? parseInt(groupchatLimitRaw, 10) : NaN;
+    const braveKey = getLocalStorageItem('browser_brave_key');
+    const useRealSearchRaw = getLocalStorageItem('browser_use_real_search');
+    const browserConfig = braveKey || useRealSearchRaw !== undefined
+        ? { braveKey, useRealSearch: useRealSearchRaw === undefined ? undefined : useRealSearchRaw === 'true' }
+        : undefined;
+
+    const memoryPalaceHighWaterMarks = collectLocalStoragePrefixMap(
+        'mp_lastMsgId_',
+        raw => parseInt(raw || '0', 10),
+    );
+    const chatTranslateEnabledByChar = collectLocalStoragePrefixMap(
+        'chat_translate_enabled_',
+        raw => raw === 'true',
+    );
+
+    return {
+        memoryPalaceConfig: getLocalStorageJson('os_memory_palace_config'),
+        studyApiConfig: getLocalStorageJson('study_api_config'),
+        studyTutorPresets: getLocalStorageJson('study_tutor_presets'),
+        cloudBackupConfig: getLocalStorageJson('os_cloud_backup_config'),
+        remoteVectorConfig: getLocalStorageJson('os_remote_vector_config'),
+        memoryPalaceHighWaterMarks,
+        memoryPalaceFlags: collectLocalStorageFlags(['mp_personality_tried_', 'mp_first_archive_notice_']),
+        chatTranslateSourceLang: getLocalStorageItem('chat_translate_source_lang'),
+        chatTranslateTargetLang: getLocalStorageItem('chat_translate_lang'),
+        chatTranslateEnabledByChar,
+        chatArchivePrompts: getLocalStorageJson('chat_archive_prompts'),
+        chatActiveArchivePromptId: getLocalStorageItem('chat_active_archive_prompt_id'),
+        characterRefinePrompts: getLocalStorageJson('character_refine_prompts'),
+        characterActiveRefinePromptId: getLocalStorageItem('character_active_refine_prompt_id'),
+        scheduleAppTheme: getLocalStorageItem('schedule_app_theme'),
+        groupchatContextLimit: Number.isFinite(groupchatContextLimit) ? groupchatContextLimit : undefined,
+        browserConfig,
+        bm25Mode: getLocalStorageItem('bm25_mode'),
+        lastActiveCharId: getLocalStorageItem('os_last_active_char_id'),
+        eventNotifFlags: collectLocalStorageFlags(['sullyos_']),
+    };
+}
+
+async function collectAssetBackedUpstreamFields(mode: SystemBackupMode): Promise<Partial<FullBackupData>> {
+    if (mode !== 'text_only' && mode !== 'media_only' && mode !== 'full') return {};
+
+    const assets = await DB.getAllAssets();
+    const customIcons: Record<string, string> = {};
+    const appearancePresets: any[] = [];
+
+    for (const asset of assets || []) {
+        if (!asset?.id) continue;
+        if (asset.id.startsWith('icon_') && typeof asset.data === 'string') {
+            customIcons[asset.id.replace('icon_', '')] = asset.data;
+        } else if (asset.id.startsWith('appearance_preset_')) {
+            try {
+                appearancePresets.push(typeof asset.data === 'string' ? JSON.parse(asset.data) : asset.data);
+            } catch {
+                // Ignore malformed legacy appearance preset records.
+            }
+        }
+    }
+
+    appearancePresets.sort((a, b) => (b?.createdAt || 0) - (a?.createdAt || 0));
+    return {
+        customIcons: Object.keys(customIcons).length > 0 ? customIcons : undefined,
+        appearancePresets: appearancePresets.length > 0 ? appearancePresets : undefined,
+    };
+}
+
+function stripUndefinedFields<T extends Record<string, any>>(value: T): T {
+    const cleaned: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (item !== undefined) cleaned[key] = item;
+    }
+    return cleaned as T;
+}
+
+function pickSullyOsCompatPayload(data: Partial<FullBackupData>): Partial<FullBackupData> {
+    const payload: Partial<FullBackupData> = {};
+    for (const key of SULLYOS_UPSTREAM_COMPAT_KEYS) {
+        const value = (data as any)[key];
+        if (value !== undefined) (payload as any)[key] = value;
+    }
+    return payload;
+}
+
+function getEmbeddedCompatPayload(data: Partial<FullBackupData>): Partial<FullBackupData> | undefined {
+    const compatAsset = data.assets?.find(asset => asset?.id === SULLYOS_UPSTREAM_COMPAT_ASSET_ID);
+    if (!compatAsset || typeof compatAsset.data !== 'string') return undefined;
+    try {
+        return JSON.parse(compatAsset.data) as Partial<FullBackupData>;
+    } catch {
+        return undefined;
+    }
+}
+
+async function loadSullyOsCompatPayload(): Promise<Partial<FullBackupData> | undefined> {
+    const raw = await DB.getAsset(SULLYOS_UPSTREAM_COMPAT_ASSET_ID);
+    if (!raw) return undefined;
+    try {
+        return JSON.parse(raw) as Partial<FullBackupData>;
+    } catch {
+        return undefined;
+    }
+}
+
+async function saveSullyOsCompatPayload(data: Partial<FullBackupData>): Promise<void> {
+    const payload = stripUndefinedFields({
+        ...getEmbeddedCompatPayload(data),
+        ...pickSullyOsCompatPayload(data),
+    });
+
+    if (Object.keys(payload).length > 0) {
+        await DB.saveAsset(SULLYOS_UPSTREAM_COMPAT_ASSET_ID, JSON.stringify(payload));
+    } else {
+        await DB.deleteAsset(SULLYOS_UPSTREAM_COMPAT_ASSET_ID);
+    }
+}
+
+function mergeCompatPayloadForExport(
+    backupData: Partial<FullBackupData>,
+    payload: Partial<FullBackupData> | undefined,
+    mode: SystemBackupMode,
+    processObject: (obj: any) => any,
+): void {
+    if (!payload) return;
+
+    for (const key of SULLYOS_UPSTREAM_COMPAT_KEYS) {
+        if ((backupData as any)[key] !== undefined) continue;
+        if (mode === 'media_only' && !SULLYOS_UPSTREAM_MEDIA_COMPAT_KEYS.has(key)) continue;
+
+        const value = (payload as any)[key];
+        if (value === undefined) continue;
+        (backupData as any)[key] = mode === 'text_only' ? stripBase64(value) : processObject(value);
+    }
+}
+
+async function restoreAssetBackedUpstreamFields(data: FullBackupData): Promise<void> {
+    if (data.customIcons === undefined && data.appearancePresets === undefined) return;
+
+    const existingAssets = await DB.getAllAssets();
+    if (Array.isArray(existingAssets)) {
+        for (const asset of existingAssets) {
+            if (data.customIcons !== undefined && asset.id.startsWith('icon_')) {
+                await DB.deleteAsset(asset.id);
+            }
+            if (data.appearancePresets !== undefined && asset.id.startsWith('appearance_preset_')) {
+                await DB.deleteAsset(asset.id);
+            }
+        }
+    }
+
+    if (data.customIcons) {
+        for (const [appId, iconUrl] of Object.entries(data.customIcons)) {
+            if (typeof iconUrl === 'string') {
+                await DB.saveAsset(`icon_${appId}`, iconUrl);
+            }
+        }
+    }
+
+    if (data.appearancePresets) {
+        for (const preset of data.appearancePresets) {
+            if (preset?.id) {
+                await DB.saveAsset(`appearance_preset_${preset.id}`, JSON.stringify(preset));
+            }
+        }
+    }
+}
+
+function restoreUpstreamStructuredLocalStorage(data: FullBackupData): void {
+    const setJson = (key: string, value: unknown) => {
+        if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
+    };
+    const setString = (key: string, value: unknown) => {
+        if (typeof value === 'string') localStorage.setItem(key, value);
+    };
+
+    setJson('os_memory_palace_config', data.memoryPalaceConfig);
+    setJson('study_api_config', data.studyApiConfig);
+    setJson('study_tutor_presets', data.studyTutorPresets);
+    setJson('os_cloud_backup_config', data.cloudBackupConfig);
+    setJson('os_remote_vector_config', data.remoteVectorConfig);
+
+    if (data.memoryPalaceHighWaterMarks) {
+        for (const [charId, hwm] of Object.entries(data.memoryPalaceHighWaterMarks)) {
+            if (typeof hwm === 'number' && hwm > 0) {
+                localStorage.setItem(`mp_lastMsgId_${charId}`, String(hwm));
+            }
+        }
+    }
+
+    if (data.memoryPalaceFlags) {
+        for (const [key, value] of Object.entries(data.memoryPalaceFlags)) {
+            if (typeof value === 'string' && (key.startsWith('mp_personality_tried_') || key.startsWith('mp_first_archive_notice_'))) {
+                localStorage.setItem(key, value);
+            }
+        }
+    }
+
+    setString('chat_translate_source_lang', data.chatTranslateSourceLang);
+    setString('chat_translate_lang', data.chatTranslateTargetLang);
+    if (data.chatTranslateEnabledByChar) {
+        for (const [charId, enabled] of Object.entries(data.chatTranslateEnabledByChar)) {
+            localStorage.setItem(`chat_translate_enabled_${charId}`, enabled ? 'true' : 'false');
+        }
+    }
+    setJson('chat_archive_prompts', data.chatArchivePrompts);
+    setString('chat_active_archive_prompt_id', data.chatActiveArchivePromptId);
+    setJson('character_refine_prompts', data.characterRefinePrompts);
+    setString('character_active_refine_prompt_id', data.characterActiveRefinePromptId);
+
+    setString('schedule_app_theme', data.scheduleAppTheme);
+    if (typeof data.groupchatContextLimit === 'number') {
+        localStorage.setItem('groupchat_context_limit', String(data.groupchatContextLimit));
+    }
+    if (data.browserConfig) {
+        if (typeof data.browserConfig.braveKey === 'string') localStorage.setItem('browser_brave_key', data.browserConfig.braveKey);
+        if (typeof data.browserConfig.useRealSearch === 'boolean') localStorage.setItem('browser_use_real_search', data.browserConfig.useRealSearch ? 'true' : 'false');
+    }
+    setString('bm25_mode', data.bm25Mode);
+    setString('os_last_active_char_id', data.lastActiveCharId);
+
+    if (data.eventNotifFlags) {
+        for (const [key, value] of Object.entries(data.eventNotifFlags)) {
+            if (typeof value === 'string' && key.startsWith('sullyos_')) {
+                localStorage.setItem(key, value);
+            }
+        }
+    }
+}
+
+async function indexedDbNameExists(name: string): Promise<boolean> {
+    if (typeof indexedDB === 'undefined') return false;
+
+    const dbFactory = indexedDB as IDBFactory & {
+        databases?: () => Promise<Array<{ name?: string }>>;
+    };
+
+    if (typeof dbFactory.databases === 'function') {
+        try {
+            const dbs = await dbFactory.databases();
+            return dbs.some(db => db.name === name);
+        } catch {
+            return true;
+        }
+    }
+
+    return true;
+}
+
+async function openExistingIndexedDb(name: string): Promise<IDBDatabase | null> {
+    if (!await indexedDbNameExists(name)) return null;
+
+    return new Promise((resolve) => {
+        const request = indexedDB.open(name);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+        request.onblocked = () => resolve(null);
+    });
+}
+
+async function getAllFromExternalStore(dbName: string, storeName: string): Promise<any[]> {
+    const db = await openExistingIndexedDb(dbName);
+    if (!db) return [];
+
+    try {
+        if (!db.objectStoreNames.contains(storeName)) return [];
+        return await new Promise((resolve: (items: any[]) => void) => {
+            const request = db.transaction(storeName, 'readonly').objectStore(storeName).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => resolve([]);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function getExternalStoreValue(dbName: string, storeName: string, key: string): Promise<unknown> {
+    const db = await openExistingIndexedDb(dbName);
+    if (!db) return undefined;
+
+    try {
+        if (!db.objectStoreNames.contains(storeName)) return undefined;
+        return await new Promise((resolve) => {
+            const request = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(undefined);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function openIndexedDbWithStore(
+    dbName: string,
+    storeName: string,
+    options?: IDBObjectStoreParameters,
+): Promise<IDBDatabase | null> {
+    if (typeof indexedDB === 'undefined') return null;
+
+    const openCurrent = () => new Promise<IDBDatabase | null>((resolve) => {
+        const request = indexedDB.open(dbName);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+    });
+
+    const current = await openCurrent();
+    if (!current) return null;
+    if (current.objectStoreNames.contains(storeName)) return current;
+
+    const nextVersion = current.version + 1;
+    current.close();
+
+    return new Promise((resolve) => {
+        const request = indexedDB.open(dbName, nextVersion);
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) {
+                db.createObjectStore(storeName, options);
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+    });
+}
+
+async function exportMusicAssetsForBackup(mode: SystemBackupMode): Promise<BackupMusicAssets | undefined> {
+    if (mode === 'text_only') return undefined;
+
+    const musicAssets: BackupMusicAssets = {};
+    const profileBlob = await getExternalStoreValue(
+        MUSIC_PROFILE_BG_DB_NAME,
+        MUSIC_PROFILE_BG_STORE,
+        MUSIC_PROFILE_BG_KEY,
+    );
+
+    const profileAsset = await serializeBlobOrDataUrl(profileBlob);
+    if (profileAsset) {
+        musicAssets.profileBackground = {
+            key: MUSIC_PROFILE_BG_KEY,
+            mimeType: profileAsset.mimeType,
+            dataUrl: profileAsset.dataUrl,
+        };
+    }
+
+    const customSkinRecords = await getAllFromExternalStore(MUSIC_CUSTOM_SKIN_DB_NAME, MUSIC_CUSTOM_SKIN_STORE);
+    const customSkins: NonNullable<BackupMusicAssets['customSkins']> = [];
+    for (const record of customSkinRecords) {
+        const skinAsset = await serializeBlobOrDataUrl(record?.blob);
+        if (!record?.id || !skinAsset) continue;
+        customSkins.push({
+            id: String(record.id),
+            name: typeof record.name === 'string' ? record.name : '自定义皮肤',
+            mimeType: skinAsset.mimeType,
+            dataUrl: skinAsset.dataUrl,
+        });
+    }
+
+    if (customSkins.length > 0) {
+        musicAssets.customSkins = customSkins;
+    }
+
+    return musicAssets.profileBackground || musicAssets.customSkins?.length ? musicAssets : undefined;
+}
+
+async function replaceExternalStoreItems(
+    dbName: string,
+    storeName: string,
+    items: Array<{ value: any; key?: IDBValidKey }>,
+    options?: IDBObjectStoreParameters,
+): Promise<void> {
+    const db = await openIndexedDbWithStore(dbName, storeName, options);
+    if (!db) return;
+
+    try {
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            store.clear();
+            for (const item of items) {
+                if (item.key !== undefined) {
+                    store.put(item.value, item.key);
+                } else {
+                    store.put(item.value);
+                }
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function restoreMusicAssetsFromBackup(musicAssets?: BackupMusicAssets): Promise<void> {
+    if (!musicAssets) return;
+
+    const profileItems: Array<{ value: any; key?: IDBValidKey }> = [];
+    if (musicAssets.profileBackground?.dataUrl) {
+        profileItems.push({
+            key: musicAssets.profileBackground.key || MUSIC_PROFILE_BG_KEY,
+            value: await dataUrlToBlob(musicAssets.profileBackground.dataUrl),
+        });
+    }
+    await replaceExternalStoreItems(MUSIC_PROFILE_BG_DB_NAME, MUSIC_PROFILE_BG_STORE, profileItems);
+
+    const skinItems: Array<{ value: any; key?: IDBValidKey }> = [];
+    for (const skin of musicAssets.customSkins || []) {
+        if (!skin.dataUrl) continue;
+        skinItems.push({
+            value: {
+                id: skin.id,
+                name: skin.name,
+                blob: await dataUrlToBlob(skin.dataUrl),
+            },
+        });
+    }
+    await replaceExternalStoreItems(
+        MUSIC_CUSTOM_SKIN_DB_NAME,
+        MUSIC_CUSTOM_SKIN_STORE,
+        skinItems,
+        { keyPath: 'id' },
+    );
 }
 
 /** Restore ZIP asset references back to base64 data URIs */
@@ -142,7 +720,7 @@ async function restoreAssetsFromZip(obj: any, zip: JSZipLike | null): Promise<an
 
 // ─── Store Definitions ──────────────────────────────────────────────────
 
-const ALL_STORES = [
+export const SYSTEM_BACKUP_ALWAYS_STORES = [
     'characters', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
     'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
     'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels',
@@ -153,30 +731,122 @@ const ALL_STORES = [
     'scheduled_messages', 'letters'
 ];
 
+export const SYSTEM_BACKUP_CONDITIONAL_STORES = [
+    'voice_audio',
+];
+
+export const SYSTEM_BACKUP_EXCLUDED_STORES: string[] = [];
+
+const ALL_STORES = SYSTEM_BACKUP_ALWAYS_STORES;
+
 // localStorage keys to include in backup (sub API, embedding, backend, etc.)
-const EXTRA_LS_KEYS = [
+export const SYSTEM_BACKUP_LOCAL_STORAGE_KEYS = [
     'sub_api_key', 'sub_api_base_url', 'sub_api_model', 'sub_api_presets',
+    'os_sub_api_config', 'character_refine_prompts',
     'csyos_backend_token', 'csyos_backend_url',
     'embedding_provider', 'embedding_api_key', 'embedding_base_url', 'embedding_model',
     'embedding_api_key_openai', 'embedding_base_url_openai', 'embedding_model_openai',
     'embedding_api_key_cohere', 'embedding_base_url_cohere', 'embedding_model_cohere',
     'cohere_rerank_api_key', 'cohere_rerank_use_paid',
     'body_signal_mode', 'autonomous_debug',
+    'browser_brave_key', 'browser_use_real_search',
     // Agent config
     'agent_config',
     // 摘星楼 secondary API
     'zhaixinglou_secondary_api_config', 'zhaixinglou_secondary_api_presets', 'zhaixinglou_secondary_models',
     // Misc app settings
     'schedule_app_theme', 'os_haptics_enabled', 'os_last_active_char_id',
+    'os_memory_palace_config', 'os_remote_vector_config', 'os_cloud_backup_config',
+    'study_api_config', 'study_tutor_presets',
+    'chat_archive_prompts', 'chat_active_archive_prompt_id',
+    'character_active_refine_prompt_id',
+    'chat_translate_lang', 'chat_translate_source_lang',
+    'groupchat_context_limit', 'bm25_mode',
+    'os_tts_presets',
+    'netease_music_cookie', 'music_recent_keywords', 'music_liked_songs',
+    'music_profile_bg_setting', 'music_player_skin', 'music_player_glass',
+    'floating_lyrics_settings', 'temporal_pending_events',
+    SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY,
     // User ID
     'csyos_user_id',
 ];
 
-function getStoresToProcess(mode: 'text_only' | 'media_only' | 'full'): string[] {
-    if (mode === 'full') return ALL_STORES;
-    if (mode === 'text_only') return ALL_STORES.filter(s => s !== 'assets' && s !== 'memory_record_audio');
+export const SYSTEM_BACKUP_LOCAL_STORAGE_PREFIXES = [
+    'chat_translate_enabled_',
+    'chat_show_timestamp_',
+    'chat_auto_tts_',
+    'chat_auto_call_',
+    'chat_auto_share_song_',
+    'chat_inject_playback_context_',
+    'mp_lastMsgId_',
+    'mp_personality_tried_',
+    'mp_first_archive_notice_',
+];
+
+export const SYSTEM_BACKUP_EXCLUDED_LOCAL_STORAGE_KEYS = [
+    'csyos_backend_alive',
+    'csyos_backend_runtime_debug',
+    'rerank_dismissed_until',
+    'sullyos_valentine_2026_dismissed',
+    'sullyos_valentine_2026_completed',
+    'sullyos_disclaimer_accepted',
+];
+
+export const SYSTEM_BACKUP_EXCLUDED_LOCAL_STORAGE_PREFIXES = [
+    'vector_memory_batch_checkpoint:',
+];
+
+function getStoresToProcess(mode: SystemBackupMode, options: SystemBackupOptions = {}): string[] {
+    let stores: string[];
+    if (mode === 'full') stores = [...ALL_STORES];
+    else if (mode === 'text_only') stores = ALL_STORES.filter(s => s !== 'assets' && s !== 'memory_record_audio');
     // media_only
-    return ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data', 'memory_records', 'memory_record_audio'];
+    else stores = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data', 'memory_records', 'memory_record_audio'];
+
+    if (options.includeVoiceAudio && mode !== 'text_only' && !stores.includes('voice_audio')) {
+        stores.push('voice_audio');
+    }
+
+    return stores;
+}
+
+function isExcludedLocalStorageKey(key: string): boolean {
+    return SYSTEM_BACKUP_EXCLUDED_LOCAL_STORAGE_KEYS.includes(key)
+        || SYSTEM_BACKUP_EXCLUDED_LOCAL_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+function shouldIncludeLocalStorageKey(key: string): boolean {
+    if (isExcludedLocalStorageKey(key)) return false;
+    return SYSTEM_BACKUP_LOCAL_STORAGE_KEYS.includes(key)
+        || SYSTEM_BACKUP_LOCAL_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+function collectExtraLocalStorageConfig(): Record<string, string> {
+    const extraConfig: Record<string, string> = {};
+
+    const collectKey = (key: string | null) => {
+        if (!key || !shouldIncludeLocalStorageKey(key)) return;
+        try {
+            const val = localStorage.getItem(key);
+            if (val !== null) extraConfig[key] = val;
+        } catch {
+            // Keep backups resilient when storage is unavailable.
+        }
+    };
+
+    for (const key of SYSTEM_BACKUP_LOCAL_STORAGE_KEYS) {
+        collectKey(key);
+    }
+
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            collectKey(localStorage.key(i));
+        }
+    } catch {
+        // Exact-key collection above already captured the stable keys.
+    }
+
+    return extraConfig;
 }
 
 // ─── Export Pipeline ────────────────────────────────────────────────────
@@ -192,9 +862,10 @@ export interface ExportStateSnapshot {
 }
 
 export async function exportSystemData(
-    mode: 'text_only' | 'media_only' | 'full',
+    mode: SystemBackupMode,
     state: ExportStateSnapshot,
-    onProgress: (message: string, progress: number) => void
+    onProgress: (message: string, progress: number) => void,
+    options: SystemBackupOptions = {},
 ): Promise<Blob> {
     onProgress('正在初始化打包引擎...', 0);
 
@@ -205,16 +876,20 @@ export async function exportSystemData(
 
     const processObject = (obj: any) => processObjectForZip(obj, assetsFolder, assetCounter);
 
-    const storesToProcess = getStoresToProcess(mode);
+    const storesToProcess = getStoresToProcess(mode, options);
 
     // Fetch Social App & Room Assets
     const sparkUserBg = await DB.getAsset('spark_user_bg');
     const sparkSocialProfile = await DB.getAsset('spark_social_profile');
     const roomCustomAssets = await DB.getAsset('room_custom_assets_list');
+    const musicAssets = await exportMusicAssetsForBackup(mode);
+    const upstreamStructuredConfig = collectUpstreamStructuredLocalStorage(mode);
+    const assetBackedUpstreamFields = await collectAssetBackedUpstreamFields(mode);
+    const preservedUpstreamCompatPayload = await loadSullyOsCompatPayload();
 
     const backupData: Partial<FullBackupData> = {
         timestamp: Date.now(),
-        version: 2,
+        version: 3,
         apiConfig: (mode === 'text_only' || mode === 'full') ? state.apiConfig : undefined,
         apiPresets: (mode === 'text_only' || mode === 'full') ? state.apiPresets : undefined,
         availableModels: (mode === 'text_only' || mode === 'full') ? state.availableModels : undefined,
@@ -231,7 +906,10 @@ export async function exportSystemData(
         } : undefined,
 
         roomCustomAssets: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
+        musicAssets,
         mediaAssets: [],
+        ...stripUndefinedFields(upstreamStructuredConfig),
+        ...stripUndefinedFields(assetBackedUpstreamFields),
     };
 
     const totalSteps = storesToProcess.length + 3;
@@ -243,10 +921,14 @@ export async function exportSystemData(
         if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = processObject(backupData.socialAppData.userBg);
         if (backupData.roomCustomAssets) backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
         if (backupData.theme) backupData.theme = processObject(backupData.theme);
+        if (backupData.customIcons) backupData.customIcons = processObject(backupData.customIcons);
+        if (backupData.appearancePresets) backupData.appearancePresets = processObject(backupData.appearancePresets);
     } else {
         if (backupData.socialAppData?.userProfile) backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
         if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
         if (backupData.roomCustomAssets) backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
+        if (backupData.customIcons) backupData.customIcons = stripBase64(backupData.customIcons);
+        if (backupData.appearancePresets) backupData.appearancePresets = stripBase64(backupData.appearancePresets);
         if (backupData.theme) {
             const savedPresetDecos = backupData.theme.desktopDecorations
                 ?.filter(d => d.type === 'preset')
@@ -280,6 +962,12 @@ export async function exportSystemData(
             if (storeName === 'memory_record_audio') {
                 processedData = await serializeMemoryRecordAudioForBackup(rawData);
                 backupData.memoryRecordAudio = processedData;
+                continue;
+            }
+
+            if (storeName === 'voice_audio') {
+                processedData = await serializeVoiceAudioForBackup(rawData);
+                backupData.voiceAudio = processedData;
                 continue;
             }
 
@@ -348,6 +1036,7 @@ export async function exportSystemData(
             case 'vector_memories': backupData.vectorMemories = processedData; break;
             case 'memory_records': backupData.memoryRecords = processedData; break;
             case 'memory_record_audio': backupData.memoryRecordAudio = processedData; break;
+            case 'voice_audio': backupData.voiceAudio = processedData; break;
             case 'scheduled_messages': backupData.scheduledMessages = processedData; break;
             case 'letters': backupData.letters = processedData; break;
         }
@@ -355,12 +1044,10 @@ export async function exportSystemData(
         await new Promise(resolve => setTimeout(resolve, 10));
     }
 
+    mergeCompatPayloadForExport(backupData, preservedUpstreamCompatPayload, mode, processObject);
+
     // Collect extra localStorage config keys
-    const extraConfig: Record<string, string> = {};
-    for (const key of EXTRA_LS_KEYS) {
-        const val = localStorage.getItem(key);
-        if (val !== null) extraConfig[key] = val;
-    }
+    const extraConfig = collectExtraLocalStorageConfig();
     if (Object.keys(extraConfig).length > 0) {
         backupData.extraLocalStorageConfig = extraConfig;
     }
@@ -378,7 +1065,7 @@ export async function exportSystemData(
                 if (graphResp.ok) {
                     const graphData = await graphResp.json();
                     if (graphData.ok) {
-                        (backupData as any).graphData = {
+                        backupData.graphData = {
                             relations: graphData.relations || [],
                             l1Memories: graphData.l1Memories || [],
                         };
@@ -469,6 +1156,17 @@ export async function importSystemData(
     }
 
     await DB.importFullData(data);
+    await saveSullyOsCompatPayload(data);
+    await restoreAssetBackedUpstreamFields(data);
+
+    if (data.musicAssets) {
+        try {
+            onProgress('正在恢复音乐素材...', 72);
+            await restoreMusicAssetsFromBackup(data.musicAssets);
+        } catch (e: any) {
+            console.warn('📦 [Import] Music assets restore failed (non-critical):', e.message);
+        }
+    }
 
     // ── Write config to localStorage directly (NO React setState!) ──────
     // All DB data is already written by importFullData above.
@@ -502,6 +1200,7 @@ export async function importSystemData(
     if (data.realtimeConfig) localStorage.setItem('os_realtime_config', JSON.stringify(data.realtimeConfig));
     if (data.ttsConfig) localStorage.setItem('os_tts_config', JSON.stringify(data.ttsConfig));
     if (data.sttConfig) localStorage.setItem('os_stt_config', JSON.stringify(data.sttConfig));
+    restoreUpstreamStructuredLocalStorage(data);
 
     if (data.socialAppData) {
         if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
@@ -522,17 +1221,18 @@ export async function importSystemData(
     }
 
     // ── 恢复后端 graph 数据（语义关联 + 逻辑链 + 认知）──
-    if ((data as any).graphData) {
+    if (data.graphData) {
         try {
             const backendUrl = getBackendUrl();
             if (backendUrl) {
                 onProgress('正在恢复认知网络数据...', 90);
-                const graphData = (data as any).graphData;
+                const graphData = data.graphData;
                 const importResp = await fetch(`${backendUrl}/api/graph/import`, {
                     method: 'POST',
                     headers: buildBackendHeaders(),
                     body: JSON.stringify({
                         relations: graphData.relations || [],
+                        l1Memories: graphData.l1Memories || [],
                     }),
                     signal: safeTimeoutSignal(30000),
                 });

@@ -6,6 +6,7 @@ import { Filesystem,Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import Modal from '../../components/os/Modal';
 import CloudBackupPanel from './CloudBackupPanel';
+import { readSystemBackupIncludeVoiceAudio, writeSystemBackupIncludeVoiceAudio } from '../../utils/systemBackup';
 
 const DataSettings: React.FC = () => {
     const { exportSystem, importSystem, addToast, resetSystem } = useOS();
@@ -13,11 +14,12 @@ const DataSettings: React.FC = () => {
     const [showExportModal, setShowExportModal] = useState(false);
     const [showResetConfirm, setShowResetConfirm] = useState(false);
     const [downloadUrl, setDownloadUrl] = useState<string>('');
+    const [includeVoiceAudio, setIncludeVoiceAudio] = useState(readSystemBackupIncludeVoiceAudio);
     const importInputRef = useRef<HTMLInputElement>(null);
 
     const handleExport = async (mode: 'text_only' | 'media_only' | 'full') => {
         try {
-            const blob = await exportSystem(mode);
+            const blob = await exportSystem(mode, { includeVoiceAudio });
             if (Capacitor.isNativePlatform()) {
                 const reader = new FileReader();
                 reader.readAsDataURL(blob);
@@ -51,6 +53,14 @@ const DataSettings: React.FC = () => {
         if (importInputRef.current) importInputRef.current.value = '';
     };
 
+    const toggleVoiceAudioBackup = () => {
+        setIncludeVoiceAudio(prev => {
+            const next = !prev;
+            writeSystemBackupIncludeVoiceAudio(next);
+            return next;
+        });
+    };
+
     const confirmReset = () => { resetSystem(); setShowResetConfirm(false); };
 
     return (
@@ -62,6 +72,20 @@ const DataSettings: React.FC = () => {
                     </div>
                     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">备份与恢复 (ZIP)</h2>
                 </div>
+
+                <button
+                    type="button"
+                    onClick={toggleVoiceAudioBackup}
+                    className="w-full mb-4 px-4 py-3 bg-white/70 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 text-left active:scale-[0.99] transition-all"
+                >
+                    <div>
+                        <div className="text-xs font-bold text-slate-600">包含通话录音</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">完整/媒体备份会带上语音通话音频，文件体积可能明显变大。</div>
+                    </div>
+                    <div className={`shrink-0 w-11 h-6 rounded-full p-0.5 transition-colors ${includeVoiceAudio ? 'bg-violet-500' : 'bg-slate-200'}`}>
+                        <div className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${includeVoiceAudio ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </div>
+                </button>
 
                 <div className="mb-3">
                     <button onClick={() => handleExport('full')} className="w-full py-4 bg-gradient-to-r from-violet-500 to-purple-600 border border-violet-300 rounded-xl text-xs font-bold text-white shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden mb-3">

@@ -9,6 +9,7 @@ import {
   isCloudBackupAvailable,
   CloudBackupMeta,
 } from '../../utils/cloudBackup';
+import { readSystemBackupIncludeVoiceAudio } from '../../utils/systemBackup';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -121,7 +122,9 @@ const CloudBackupPanel: React.FC = () => {
         setUploading(true);
         try {
             addToast('正在生成备份...', 'info');
-            const blob = await exportSystem('full');
+            const blob = await exportSystem('full', {
+                includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
+            });
             addToast('正在上传到云端...', 'info');
             const label = new Date().toLocaleString('zh-CN', {
                 month: '2-digit', day: '2-digit',

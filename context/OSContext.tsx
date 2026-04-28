@@ -3,7 +3,7 @@ import React,{ createContext,useContext,useEffect,useState,useRef,useCallback,us
 import { AppID,OSTheme,CharacterProfile,ChatTheme,UserProfile,SystemLog } from '../types';
 import { DB } from '../utils/db';
 import { onSystemLog } from '../utils/systemInterceptor';
-import { exportSystemData,importSystemData,ExportStateSnapshot,ImportCallbacks } from '../utils/systemBackup';
+import { exportSystemData,importSystemData,ExportStateSnapshot,ImportCallbacks,SystemBackupMode,SystemBackupOptions } from '../utils/systemBackup';
 import { setHapticsEnabled as setHapticsEnabledGlobal } from '../utils/haptics';
 import { preloadImages } from '../utils/preloadResources';
 import { useAutoBackup } from '../hooks/useAutoBackup';
@@ -43,7 +43,7 @@ interface OSContextType extends AppContextType, NotificationContextType, Charact
     setCustomIcon: (appId: string, iconUrl: string | undefined) => void;
 
     // System
-    exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
+    exportSystem: (mode: SystemBackupMode, options?: SystemBackupOptions) => Promise<Blob>;
     importSystem: (fileOrJson: File | string) => Promise<void>;
     resetSystem: () => Promise<void>;
     sysOperation: { status: 'idle' | 'processing', message: string, progress: number };
@@ -738,13 +738,13 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
     const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
     const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
     // --- System Export/Import ---
-    const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
+    const exportSystem = async (mode: SystemBackupMode, options?: SystemBackupOptions): Promise<Blob> => {
         try {
             setSysOperation({ status: 'processing', message: '正在初始化...', progress: 0 });
             const stateSnapshot: ExportStateSnapshot = { apiConfig, apiPresets, availableModels, realtimeConfig, ttsConfig, sttConfig, theme };
             const blob = await exportSystemData(mode, stateSnapshot, (message, progress) => {
                 setSysOperation({ status: 'processing', message, progress });
-            });
+            }, options);
             setSysOperation({ status: 'idle', message: '', progress: 100 });
             return blob;
         } catch (e: any) {

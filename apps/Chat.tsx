@@ -19,6 +19,7 @@ import { useVoiceTts } from '../hooks/useVoiceTts';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { CloudStt,SttNotConfiguredError } from '../utils/cloudStt';
 import { haptic } from '../utils/haptics';
+import { withCharacterTtsVoice } from '../utils/characterTts';
 import {
   BackendAgentManager,
   getLifeStreamVisibleInChat,
@@ -152,6 +153,10 @@ const Chat: React.FC = () => {
     const char = matchedChar || (isDataLoaded ? characters[0] : undefined);
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
+    const characterTtsConfig = useMemo(
+        () => ttsConfig && char ? withCharacterTtsVoice(ttsConfig, char) : ttsConfig,
+        [ttsConfig, char?.id, char?.ttsVoiceId],
+    );
 
     useEffect(() => {
         if (!isDataLoaded || characters.length === 0) return;
@@ -201,10 +206,10 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined,
         autoVoice: autoTts,
-        onVoiceMessageSaved: autoTts && ttsConfig?.apiKey ? (msgId: number, text: string) => {
+        onVoiceMessageSaved: autoTts && characterTtsConfig?.apiKey ? (msgId: number, text: string) => {
             // Fire-and-forget synthesis; synthesizeForMessage now updates metadata internally
             // before removing loading state, preventing the race condition.
-            synthesizeForMessage(msgId, text, ttsConfig).then(async (result) => {
+            synthesizeForMessage(msgId, text, characterTtsConfig).then(async (result) => {
                 if (result) {
                     // Metadata (duration, hasAudio) already updated by synthesizeForMessage.
                     // Just reload messages to refresh the UI from DB.
@@ -872,7 +877,7 @@ const Chat: React.FC = () => {
 
     // --- Voice: Read Aloud (in-place conversion: text → voice) ---
     const handleReadAloud = useCallback(async () => {
-        if (!selectedMessage || !ttsConfig?.apiKey) {
+        if (!selectedMessage || !characterTtsConfig?.apiKey) {
             addToast('请先在设置中配置 TTS', 'error');
             setModalType('none');
             return;
@@ -896,7 +901,7 @@ const Chat: React.FC = () => {
         });
 
         // 2. Start synthesis (uses original text only, not translated)
-        const synthesisPromise = synthesizeForMessage(msg.id, ttsText, ttsConfig);
+        const synthesisPromise = synthesizeForMessage(msg.id, ttsText, characterTtsConfig);
 
         // 3. Reload messages to show voice bubble at the original position
         await reloadMessages(visibleCountRef.current);
@@ -922,7 +927,7 @@ const Chat: React.FC = () => {
             await reloadMessages(visibleCountRef.current);
             addToast(`TTS 合成失败: ${err?.message || err}，已恢复文字`, 'error');
         }
-    }, [selectedMessage, ttsConfig, char, synthesizeForMessage, reloadMessages]);
+    }, [selectedMessage, characterTtsConfig, synthesizeForMessage, reloadMessages]);
 
     // --- Voice: Convert to Text (toggle inline transcript) ---
     const handleVoiceToText = useCallback(() => {
@@ -1029,15 +1034,15 @@ const Chat: React.FC = () => {
 
     // --- Voice Retry (stable ref to avoid busting React.memo on every render) ---
     const handleRetryVoice = useMemo(() => {
-        if (!ttsConfig?.apiKey) return undefined;
+        if (!characterTtsConfig?.apiKey) return undefined;
         return (msgId: number) => {
             const msg = messagesRef.current.find(m => m.id === msgId);
-            if (!msg || !ttsConfig) return;
+            if (!msg || !characterTtsConfig) return;
             let text = msg.metadata?.sourceText || msg.content;
             // Strip <语音>/<語音> XML tags for compat messages (原版导入的 text 消息含标签)
             const xmlVoiceMatch = text.match(/^[\s]*<[语語]音>([\s\S]+?)<\/[语語]音>[\s]*$/);
             if (xmlVoiceMatch) text = xmlVoiceMatch[1].trim();
-            synthesizeForMessage(msgId, text, ttsConfig).then(async (result) => {
+            synthesizeForMessage(msgId, text, characterTtsConfig).then(async (result) => {
                 if (result) {
                     await reloadMessages(visibleCountRef.current);
                     addToast('语音合成完成', 'success');
@@ -1047,7 +1052,7 @@ const Chat: React.FC = () => {
                 addToast(`重试合成失败: ${err?.message || err}`, 'error');
             });
         };
-    }, [ttsConfig?.apiKey, synthesizeForMessage, reloadMessages, addToast]);
+    }, [characterTtsConfig, synthesizeForMessage, reloadMessages, addToast]);
 
     const handleTransferStatusUpdate = async (status: 'accepted' | 'returned') => {
         if (!transferActionMsg || !char) return;
@@ -1353,7 +1358,7 @@ const Chat: React.FC = () => {
                     setShowTimestampSetting(next);
                     localStorage.setItem(`chat_show_timestamp_${activeCharacterId}`, JSON.stringify(next));
                 }}
-                onReadAloud={ttsConfig?.apiKey ? handleReadAloud : undefined}
+                onReadAloud={characterTtsConfig?.apiKey ? handleReadAloud : undefined}
                 onVoiceToText={handleVoiceToText}
                 onDownloadVoice={handleDownloadVoice}
                 autoTts={autoTts}

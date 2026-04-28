@@ -77,6 +77,27 @@ function processObjectForZip(
     return newObj;
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function serializeMemoryRecordAudioForBackup(items: any[]): Promise<any[]> {
+    const serialized = [];
+    for (const item of items) {
+        const { blob, ...rest } = item || {};
+        serialized.push({
+            ...rest,
+            dataUrl: blob instanceof Blob ? await blobToDataUrl(blob) : item?.dataUrl,
+        });
+    }
+    return serialized;
+}
+
 /** Restore ZIP asset references back to base64 data URIs */
 async function restoreAssetsFromZip(obj: any, zip: JSZipLike | null): Promise<any> {
     if (obj === null || typeof obj !== 'object') return obj;
@@ -128,6 +149,7 @@ const ALL_STORES = [
     'bank_transactions', 'bank_data',
     'xhs_activities', 'xhs_stock',
     'vector_memories',
+    'memory_records', 'memory_record_audio',
     'scheduled_messages', 'letters'
 ];
 
@@ -152,9 +174,9 @@ const EXTRA_LS_KEYS = [
 
 function getStoresToProcess(mode: 'text_only' | 'media_only' | 'full'): string[] {
     if (mode === 'full') return ALL_STORES;
-    if (mode === 'text_only') return ALL_STORES.filter(s => s !== 'assets');
+    if (mode === 'text_only') return ALL_STORES.filter(s => s !== 'assets' && s !== 'memory_record_audio');
     // media_only
-    return ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
+    return ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data', 'memory_records', 'memory_record_audio'];
 }
 
 // ─── Export Pipeline ────────────────────────────────────────────────────
@@ -255,6 +277,12 @@ export async function exportSystemData(
                 rawData = rawData.filter((m: Message) => m.type === 'image' || m.type === 'emoji');
             }
 
+            if (storeName === 'memory_record_audio') {
+                processedData = await serializeMemoryRecordAudioForBackup(rawData);
+                backupData.memoryRecordAudio = processedData;
+                continue;
+            }
+
             if (storeName === 'characters' && mode === 'media_only') {
                 const mediaList = rawData.map((c: CharacterProfile) => {
                     const extracted = {
@@ -318,6 +346,8 @@ export async function exportSystemData(
             case 'xhs_stock': backupData.xhsStockImages = processedData; break;
             case 'emoji_categories': backupData.emojiCategories = processedData; break;
             case 'vector_memories': backupData.vectorMemories = processedData; break;
+            case 'memory_records': backupData.memoryRecords = processedData; break;
+            case 'memory_record_audio': backupData.memoryRecordAudio = processedData; break;
             case 'scheduled_messages': backupData.scheduledMessages = processedData; break;
             case 'letters': backupData.letters = processedData; break;
         }

@@ -12,6 +12,7 @@ import { useState,useRef,useCallback } from 'react';
 import { MinimaxTts,TtsSynthesisStatus } from '../utils/minimaxTts';
 import { TtsConfig } from '../types/tts';
 import { DB } from '../utils/db';
+import { toCharacterVoiceIdError } from '../utils/characterTts';
 
 export interface VoiceTtsState {
     /** 当前正在播放的消息 ID */
@@ -159,8 +160,9 @@ export function useVoiceTts() {
 
                 return { duration };
             } catch (err) {
-                console.error('[VoiceTts] Synthesis failed for msgId:', msgId, err);
-                throw err;
+                const friendlyError = toCharacterVoiceIdError(err, ttsConfig.voiceSetting.voice_id);
+                console.error('[VoiceTts] Synthesis failed for msgId:', msgId, friendlyError);
+                throw friendlyError;
             } finally {
                 abortMapRef.current.delete(msgId);
                 setLoadingMsgIds(prev => {

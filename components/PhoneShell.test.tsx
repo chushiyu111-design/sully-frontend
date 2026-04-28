@@ -133,7 +133,7 @@ vi.mock('@capacitor/local-notifications', () => ({
     },
 }));
 
-vi.mock('../App', () => ({
+vi.mock('../utils/systemFullscreen', () => ({
     requestSystemFullscreen: vi.fn(),
 }));
 

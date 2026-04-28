@@ -4,6 +4,7 @@ import { VirtualTimeProvider } from './context/VirtualTimeContext';
 import { OSProvider } from './context/OSContext';
 import PhoneShell from './components/PhoneShell';
 import { startKeepAlive,startBackendHeartbeat } from './utils/keepAlive';
+import { isFullscreenEnabled,requestSystemFullscreen } from './utils/systemFullscreen';
 
 const EDITABLE_SELECTION_SELECTOR = 'input:not([readonly]), textarea:not([readonly]), select, [contenteditable="true"], [data-allow-text-selection="true"]';
 
@@ -27,44 +28,6 @@ function isPwaMode(): boolean {
     window.matchMedia('(display-mode: fullscreen)').matches ||
     (navigator as any).standalone === true
   );
-}
-
-/**
- * 检查用户是否开启了全屏模式
- */
-export function isFullscreenEnabled(): boolean {
-  try { return localStorage.getItem('os_fullscreen_enabled') === 'true'; } catch { return false; }
-}
-
-/**
- * 请求系统级全屏 (Fullscreen API)
- * 隐藏安卓状态栏 + 导航栏
- * 只有在用户开启了全屏设置时才会执行
- */
-export function requestSystemFullscreen() {
-  if (typeof document === 'undefined') return;
-  if (!isFullscreenEnabled()) return;
-  const el = document.documentElement;
-  const request =
-    el.requestFullscreen ||
-    (el as any).webkitRequestFullscreen ||
-    (el as any).mozRequestFullScreen ||
-    (el as any).msRequestFullscreen;
-  if (request && !document.fullscreenElement) {
-    request.call(el).catch(() => {
-      // 静默失败 —— 某些浏览器/系统不支持
-    });
-  }
-}
-
-/**
- * 退出全屏
- */
-export function exitSystemFullscreen() {
-  if (typeof document === 'undefined') return;
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
-  }
 }
 
 const App: React.FC = () => {

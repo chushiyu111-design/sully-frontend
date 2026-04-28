@@ -162,7 +162,7 @@ export interface VectorMemory {
     updatedAt?: number;            // Timestamp (ms) of last update
     vector: number[];              // Embedding vector (dim depends on model, bge-m3=1024, cohere embed-v4=1536)
     modelId?: string;              // Embedding model used (e.g. "BAAI/bge-m3")
-    source: 'auto' | 'manual' | 'import' | 'sync' | 'call' | 'distillation'; // How it was created
+    source: 'auto' | 'manual' | 'import' | 'sync' | 'call' | 'distillation' | 'musing'; // How it was created
     sourceMessageIds?: number[];           // IDs of messages that produced/updated this memory
     cloudSynced?: boolean;                 // Whether this memory has been pushed to cloud successfully
     syncState?: MemorySyncState;           // Local/cloud sync state for cache + offline fallback

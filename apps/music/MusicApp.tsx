@@ -8,7 +8,9 @@ import { useAudioPlayer } from '../../hooks/useAudioPlayer';
 import { useLyrics } from '../../hooks/useLyrics';
 import { useDominantColor } from '../../hooks/useDominantColor';
 import {
+  isMemoryRecordPlayable,
   isSongPlayable,
+  type MemoryRecordPlayable,
   type MusicPlayable,
   type MusicSearchBundle,
   type MusicSearchItem,
@@ -51,6 +53,10 @@ import {
   searchMusicByType,
   setMusicCookie,
 } from '../../utils/musicService';
+import { DB } from '../../utils/db';
+import { hasPlayableMemoryRecordAudio, memoryRecordToPlayable } from '../../utils/memoryRecordPlayable';
+import { findCurrentLyricIndex } from '../../utils/parseLrc';
+import type { MemoryRecordLyricTiming } from '../../types/memoryRecord';
 import {
   getLyricColorVars,
   readFloatingLyricsSettings,
@@ -226,14 +232,31 @@ function getProgramSubtitle(program: NeteaseDjProgram): string {
 }
 
 function getPlayableSubtitle(playable: MusicPlayable): string {
-  return isSongPlayable(playable) ? getSongSubtitle(playable) : getProgramSubtitle(playable);
+  if (isSongPlayable(playable)) return getSongSubtitle(playable);
+  if (isMemoryRecordPlayable(playable)) return `${playable.artistName} · ${playable.albumName}`;
+  return getProgramSubtitle(playable);
 }
 
 function getPlayableCover(playable: MusicPlayable): string | undefined {
   if (isSongPlayable(playable)) {
     return playable.album.picUrl;
   }
+  if (isMemoryRecordPlayable(playable)) {
+    return playable.coverImageUrl;
+  }
   return playable.coverUrl || playable.radio?.picUrl;
+}
+
+function getPlayableFallbackGradient(playable: MusicPlayable): string {
+  return isMemoryRecordPlayable(playable) && playable.coverGradient
+    ? playable.coverGradient
+    : getFallbackGradient(playable.id);
+}
+
+function getPlayableNote(playable: MusicPlayable): string {
+  if (isSongPlayable(playable)) return '♪';
+  if (isMemoryRecordPlayable(playable)) return '唱';
+  return '播';
 }
 
 function getItemCover(item: MusicSearchItem): string | undefined {
@@ -318,14 +341,16 @@ const CoverArt = ({
   seed,
   className,
   note = '♪',
+  gradient,
 }: {
   src?: string;
   alt: string;
   seed: number;
   className: string;
   note?: string;
+  gradient?: string;
 }) => (
-  <div className={className} style={src ? undefined : { background: getFallbackGradient(seed) }}>
+  <div className={className} style={src ? undefined : { background: gradient || getFallbackGradient(seed) }}>
     {src ? <img src={src} alt={alt} /> : <span className="music-cover-fallback-note">{note}</span>}
   </div>
 );
@@ -348,12 +373,13 @@ const PlayableRow = ({
         alt={playable.name}
         seed={playable.id}
         className="music-song-cover"
-        note={isSongPlayable(playable) ? '♪' : '播'}
+        note={getPlayableNote(playable)}
+        gradient={getPlayableFallbackGradient(playable)}
       />
       <div className="music-song-info">
         <div className={`music-song-name ${isCurrent ? 'playing' : ''}`}>{playable.name}</div>
         <div className="music-song-artist">
-          <span className="music-song-badge">{isSongPlayable(playable) ? '单曲' : '声音'}</span>
+          <span className="music-song-badge">{isMemoryRecordPlayable(playable) ? '回忆' : isSongPlayable(playable) ? '单曲' : '声音'}</span>
           {getPlayableSubtitle(playable)}
         </div>
       </div>
@@ -463,33 +489,82 @@ const PlayerLyricsPanel = ({
   settings,
   onSettingsChange,
   onSeekToTime,
+  localLyrics,
+  memoryRecord,
+  onSaveMemoryRecordLyricTiming,
 }: {
   songId: number;
   currentTime: number;
   settings: FloatingLyricsSettings;
   onSettingsChange: (patch: Partial<FloatingLyricsSettings>) => void;
   onSeekToTime?: (seconds: number) => void;
+  localLyrics?: string;
+  memoryRecord?: MemoryRecordPlayable;
+  onSaveMemoryRecordLyricTiming?: (recordId: string, timing: MemoryRecordLyricTiming | undefined) => Promise<void> | void;
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Array<HTMLDivElement | null>>([]);
   const userScrollingRef = useRef(false);
   const userScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoScrollIndexRef = useRef(-1);
+  const [timingMode, setTimingMode] = useState(false);
+  const [selectedTimingIndex, setSelectedTimingIndex] = useState(0);
+  const [draftTimesMs, setDraftTimesMs] = useState<number[] | null>(null);
+  const [timingSaving, setTimingSaving] = useState(false);
+  const [timingMessage, setTimingMessage] = useState('');
+  const [localTimingOverride, setLocalTimingOverride] = useState<MemoryRecordLyricTiming | null | undefined>(undefined);
+  const effectiveLyricTiming = localTimingOverride === undefined
+    ? memoryRecord?.lyricTiming
+    : localTimingOverride || undefined;
 
   const {
     lines,
-    currentIndex,
+    currentIndex: syncedCurrentIndex,
     error,
     isLoading,
+    localSourceHash,
   } = useLyrics({
     songId,
     currentTime,
     enabled: true,
+    localLyrics,
+    localMonologueText: memoryRecord?.monologueText,
+    localLyricsOffsetMs: memoryRecord?.lyricsOffsetMs,
+    localLyricTiming: effectiveLyricTiming,
   });
 
+  const displayLines = useMemo(() => {
+    if (!draftTimesMs || draftTimesMs.length !== lines.length) return lines;
+    return lines.map((line, index) => ({
+      ...line,
+      time: Math.max(0, draftTimesMs[index] || 0) / 1000,
+    }));
+  }, [draftTimesMs, lines]);
+
+  const currentIndex = useMemo(
+    () => findCurrentLyricIndex(displayLines, currentTime),
+    [currentTime, displayLines],
+  );
+  const canEditTiming = Boolean(memoryRecord?.recordId && onSaveMemoryRecordLyricTiming && localSourceHash && displayLines.length > 0);
+
   useEffect(() => {
-    lineRefs.current = lineRefs.current.slice(0, lines.length);
-  }, [lines.length]);
+    lineRefs.current = lineRefs.current.slice(0, displayLines.length);
+  }, [displayLines.length]);
+
+  useEffect(() => {
+    setTimingMode(false);
+    setDraftTimesMs(null);
+    setSelectedTimingIndex(0);
+    setTimingMessage('');
+    setLocalTimingOverride(undefined);
+  }, [memoryRecord?.recordId]);
+
+  useEffect(() => {
+    if (!timingMode || !draftTimesMs || draftTimesMs.length === lines.length) return;
+    setTimingMode(false);
+    setDraftTimesMs(null);
+    setTimingMessage('歌词行已更新，打轴草稿已取消');
+  }, [draftTimesMs, lines.length, timingMode]);
 
   // Detect user-initiated scroll via touch/wheel
   useEffect(() => {
@@ -528,15 +603,102 @@ const PlayerLyricsPanel = ({
     const activeLineCenter = activeLine.offsetTop + activeLine.offsetHeight / 2;
     const targetScroll = activeLineCenter - viewportCenter;
 
-    viewport.scrollTo({
-      top: Math.max(0, targetScroll),
-      behavior: 'smooth',
-    });
+    const nextScrollTop = Math.max(0, targetScroll);
+    if (typeof viewport.scrollTo === 'function') {
+      viewport.scrollTo({
+        top: nextScrollTop,
+        behavior: 'smooth',
+      });
+    } else {
+      viewport.scrollTop = nextScrollTop;
+    }
   }, [currentIndex]);
 
   const style = {
     ...getLyricColorVars(settings.textColor),
   } as React.CSSProperties;
+
+  function beginTimingMode(): void {
+    if (!canEditTiming) return;
+    setDraftTimesMs(displayLines.map((line) => Math.round(line.time * 1000)));
+    setSelectedTimingIndex(Math.max(0, syncedCurrentIndex >= 0 ? syncedCurrentIndex : currentIndex));
+    setTimingMessage('');
+    setTimingMode(true);
+    userScrollingRef.current = true;
+  }
+
+  function cancelTimingMode(): void {
+    setTimingMode(false);
+    setDraftTimesMs(null);
+    setTimingMessage('');
+    userScrollingRef.current = false;
+  }
+
+  function clampDraftTime(index: number, timeMs: number, times: number[]): number {
+    const previous = index > 0 ? times[index - 1] : 0;
+    const next = index < times.length - 1 ? times[index + 1] : Number.POSITIVE_INFINITY;
+    const rounded = Math.max(0, Math.round(timeMs));
+    return Math.max(previous, Math.min(rounded, next));
+  }
+
+  function setSelectedLineToCurrentTime(): void {
+    if (!draftTimesMs || displayLines.length === 0) return;
+    const index = Math.max(0, Math.min(selectedTimingIndex, draftTimesMs.length - 1));
+    setDraftTimesMs((previous) => {
+      if (!previous) return previous;
+      const next = [...previous];
+      next[index] = clampDraftTime(index, currentTime * 1000, next);
+      return next;
+    });
+    setTimingMessage(`已定到 ${formatSeconds(currentTime)}`);
+  }
+
+  async function saveTiming(): Promise<void> {
+    if (!memoryRecord?.recordId || !localSourceHash || !draftTimesMs || !onSaveMemoryRecordLyricTiming) return;
+    setTimingSaving(true);
+    try {
+      let previousMs = 0;
+      const normalized = draftTimesMs.map((value) => {
+        const safeValue = Number.isFinite(value) ? Math.max(previousMs, Math.round(value)) : previousMs;
+        previousMs = safeValue;
+        return safeValue;
+      });
+      const timing: MemoryRecordLyricTiming = {
+        sourceHash: localSourceHash,
+        lineTimesMs: normalized,
+        updatedAt: Date.now(),
+      };
+      await onSaveMemoryRecordLyricTiming(memoryRecord.recordId, timing);
+      setLocalTimingOverride(timing);
+      setDraftTimesMs(null);
+      setTimingMode(false);
+      setTimingMessage('打轴已保存');
+      userScrollingRef.current = false;
+    } catch (error) {
+      console.error('[MusicApp] Failed to save lyric timing:', error);
+      setTimingMessage(error instanceof Error ? error.message : '保存失败');
+    } finally {
+      setTimingSaving(false);
+    }
+  }
+
+  async function resetTiming(): Promise<void> {
+    if (!memoryRecord?.recordId || !onSaveMemoryRecordLyricTiming) return;
+    setTimingSaving(true);
+    try {
+      await onSaveMemoryRecordLyricTiming(memoryRecord.recordId, undefined);
+      setLocalTimingOverride(null);
+      setDraftTimesMs(null);
+      setTimingMode(false);
+      setTimingMessage('已恢复自动时间线');
+      userScrollingRef.current = false;
+    } catch (error) {
+      console.error('[MusicApp] Failed to reset lyric timing:', error);
+      setTimingMessage(error instanceof Error ? error.message : '重置失败');
+    } finally {
+      setTimingSaving(false);
+    }
+  }
 
   return (
     <section
@@ -550,6 +712,17 @@ const PlayerLyricsPanel = ({
         </div>
 
         <div className="music-player-lyrics-actions">
+          {canEditTiming ? (
+            <button
+              type="button"
+              className={`music-player-lyrics-translation-toggle ${timingMode ? 'active' : ''}`}
+              data-testid="music-lyrics-timing-toggle"
+              onClick={() => timingMode ? cancelTimingMode() : beginTimingMode()}
+            >
+              {timingMode ? '退出打轴' : '打轴'}
+            </button>
+          ) : null}
+
           <button
             type="button"
             className={`music-player-lyrics-translation-toggle ${settings.showTranslation ? 'active' : ''}`}
@@ -574,19 +747,25 @@ const PlayerLyricsPanel = ({
         <div className="music-player-lyrics-empty">正在同步歌词...</div>
       ) : error ? (
         <div className="music-player-lyrics-empty">歌词加载失败：{error}</div>
-      ) : lines.length === 0 ? (
+      ) : displayLines.length === 0 ? (
         <div className="music-player-lyrics-empty">这首歌暂时没有可显示的歌词。</div>
       ) : (
         <div className="music-player-lyrics-viewport" ref={viewportRef}>
           <div className="music-player-lyrics-track">
-            {lines.map((line, index) => (
+            {displayLines.map((line, index) => (
               <div
                 key={`${line.time}-${index}`}
                 ref={(node) => {
                   lineRefs.current[index] = node;
                 }}
-                className={`music-player-lyrics-line ${index === currentIndex ? 'active' : ''}`}
+                className={`music-player-lyrics-line ${index === currentIndex ? 'active' : ''}${timingMode && index === selectedTimingIndex ? ' timing-selected' : ''}`}
+                data-testid={`music-lyrics-line-${index}`}
                 onClick={() => {
+                  if (timingMode) {
+                    setSelectedTimingIndex(index);
+                    setTimingMessage('');
+                    return;
+                  }
                   if (onSeekToTime && line.time >= 0) {
                     onSeekToTime(line.time);
                     // Resume auto-scroll immediately after seeking
@@ -604,6 +783,24 @@ const PlayerLyricsPanel = ({
           </div>
         </div>
       )}
+      {timingMode ? (
+        <div className="music-player-lyrics-timing-panel" data-testid="music-lyrics-timing-panel">
+          <div className="music-player-lyrics-timing-meta">
+            <span>第 {Math.min(selectedTimingIndex + 1, displayLines.length)} / {displayLines.length} 行</span>
+            <span>当前 {formatSeconds(currentTime)}</span>
+          </div>
+          <div className="music-player-lyrics-timing-selected">
+            {displayLines[selectedTimingIndex]?.text || '请选择一句歌词'}
+          </div>
+          <div className="music-player-lyrics-timing-actions">
+            <button type="button" onClick={setSelectedLineToCurrentTime} disabled={timingSaving}>定时</button>
+            <button type="button" onClick={() => { void saveTiming(); }} disabled={timingSaving}>保存</button>
+            <button type="button" onClick={cancelTimingMode} disabled={timingSaving}>取消</button>
+            <button type="button" onClick={() => { void resetTiming(); }} disabled={timingSaving}>重置</button>
+          </div>
+          {timingMessage ? <div className="music-player-lyrics-timing-message">{timingMessage}</div> : null}
+        </div>
+      ) : null}
     </section>
   );
 };
@@ -617,11 +814,13 @@ const DiscoverPage = ({
   previewLoading,
   previewError,
   currentPlayable,
+  memoryRecords,
   onSearch,
   onCloseApp,
   showExitButton,
   onPlaylistSelect,
   onSongClick,
+  onMemoryRecordClick,
   dailySongs,
   dailySongsLoading,
   isLoggedIn,
@@ -634,11 +833,13 @@ const DiscoverPage = ({
   previewLoading: boolean;
   previewError: string | null;
   currentPlayable: MusicPlayable | null;
+  memoryRecords: MemoryRecordPlayable[];
   onSearch: () => void;
   onCloseApp: () => void;
   showExitButton: boolean;
   onPlaylistSelect: (playlist: NeteasePlaylist) => void;
   onSongClick: (song: NeteaseSong, queue?: NeteaseSong[]) => void;
+  onMemoryRecordClick: (record: MemoryRecordPlayable, queue?: MemoryRecordPlayable[]) => void;
   dailySongs: NeteaseSong[];
   dailySongsLoading: boolean;
   isLoggedIn: boolean;
@@ -727,6 +928,23 @@ const DiscoverPage = ({
                   </div>
                 </div>
               </li>
+            ))}
+          </ul>
+        </div>
+      </SectionBlock>
+    ) : null}
+
+    {memoryRecords.length > 0 ? (
+      <SectionBlock title="回忆唱片" subtitle="本地生成的私人唱片">
+        <div style={{ padding: '0 16px' }}>
+          <ul className="music-song-list">
+            {memoryRecords.map((record) => (
+              <PlayableRow
+                key={record.recordId}
+                playable={record}
+                currentPlayable={currentPlayable}
+                onClick={(targetRecord) => onMemoryRecordClick(targetRecord as MemoryRecordPlayable, memoryRecords)}
+              />
             ))}
           </ul>
         </div>
@@ -2216,6 +2434,8 @@ const FullPlayer = ({
   onNext,
   onSeek,
   onSeekToTime,
+  onAddToPlaylist,
+  onSaveMemoryRecordLyricTiming,
 }: {
   playable: MusicPlayable;
   isPlaying: boolean;
@@ -2231,6 +2451,8 @@ const FullPlayer = ({
   onNext: () => void;
   onSeek: (pct: number) => void;
   onSeekToTime: (seconds: number) => void;
+  onAddToPlaylist?: (songId: number) => void;
+  onSaveMemoryRecordLyricTiming?: (recordId: string, timing: MemoryRecordLyricTiming | undefined) => Promise<void> | void;
 }) => {
   const progressBarRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -2273,7 +2495,7 @@ const FullPlayer = ({
     ? { backgroundImage: `url(${activeSkin.file})` }
     : cover
       ? { backgroundImage: `url(${cover})` }
-      : { background: getFallbackGradient(playable.id) };
+      : { background: getPlayableFallbackGradient(playable) };
 
   // 提取封面主色调用于氛围光
   const dominantColor = useDominantColor(cover);
@@ -2389,7 +2611,7 @@ const FullPlayer = ({
                   <img src={cover} alt={playable.name} />
                 ) : (
                   <div className="music-player-disc-note">
-                    {isSongPlayable(playable) ? '♪' : '播'}
+                    {getPlayableNote(playable)}
                   </div>
                 )}
               </div>
@@ -2407,12 +2629,18 @@ const FullPlayer = ({
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, flexShrink: 0, alignItems: 'center' }}>
-              <LikeButton songId={playable.id} likedPlaylistId={likedPlaylistId} />
+              {isSongPlayable(playable) ? (
+                <LikeButton songId={playable.id} likedPlaylistId={likedPlaylistId} />
+              ) : null}
               <button
                 type="button"
                 className="music-player-more-button"
                 aria-label="更多"
-                onClick={() => window.alert('收藏到歌单功能即将上线')}
+                onClick={() => {
+                  if (isSongPlayable(playable)) {
+                    onAddToPlaylist?.(playable.id);
+                  }
+                }}
               >
                 <IconMore />
               </button>
@@ -2420,13 +2648,16 @@ const FullPlayer = ({
           </div>
         </div>
 
-        {isSongPlayable(playable) ? (
+        {isSongPlayable(playable) || isMemoryRecordPlayable(playable) ? (
           <PlayerLyricsPanel
-            songId={playable.id}
+            songId={isSongPlayable(playable) ? playable.id : 0}
             currentTime={currentTime}
             settings={lyricSettings}
             onSettingsChange={onLyricSettingsChange}
             onSeekToTime={onSeekToTime}
+            localLyrics={isMemoryRecordPlayable(playable) ? playable.lyrics : undefined}
+            memoryRecord={isMemoryRecordPlayable(playable) ? playable : undefined}
+            onSaveMemoryRecordLyricTiming={onSaveMemoryRecordLyricTiming}
           />
         ) : null}
 
@@ -2501,7 +2732,8 @@ const MiniPlayer = ({
         alt={playable.name}
         seed={playable.id}
         className={`music-mini-cover ${isPlaying ? '' : 'paused'}`}
-        note={isSongPlayable(playable) ? '♪' : '播'}
+        note={getPlayableNote(playable)}
+        gradient={getPlayableFallbackGradient(playable)}
       />
       <div className="music-mini-info">
         <div className="music-mini-title">{playable.name} · {getPlayableSubtitle(playable)}</div>
@@ -2515,6 +2747,68 @@ const MiniPlayer = ({
   );
 };
 
+const AddToPlaylistModal = ({
+  open,
+  songId,
+  playlists,
+  onClose,
+}: {
+  open: boolean;
+  songId: number | null;
+  playlists: NeteasePlaylist[];
+  onClose: () => void;
+}) => {
+  const [addingTo, setAddingTo] = useState<number | null>(null);
+
+  if (!open || !songId) return null;
+
+  const handleAdd = async (playlistId: number) => {
+    if (addingTo) return;
+    setAddingTo(playlistId);
+    try {
+      await addSongsToPlaylist(playlistId, [songId]);
+      window.alert('收藏成功');
+      onClose();
+    } catch (err: unknown) {
+      window.alert(`收藏失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAddingTo(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="music-skin-picker-backdrop" onClick={onClose} />
+      <div className="music-skin-picker-panel" style={{ height: '65vh' }}>
+        <div className="music-skin-picker-header">
+          <div className="music-skin-picker-title">收藏到歌单</div>
+          <button type="button" className="music-skin-picker-close" onClick={onClose}>×</button>
+        </div>
+        <div className="music-skin-picker-scroll" style={{ padding: '8px 0' }}>
+          {playlists.length === 0 ? (
+            <div style={{ padding: '30px 20px', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>没有可收藏的歌单，请先在网页端创建。</div>
+          ) : playlists.map((playlist) => (
+            <div
+              key={playlist.id}
+              style={{ display: 'flex', alignItems: 'center', padding: '12px 16px', gap: 12, cursor: 'pointer', opacity: addingTo === playlist.id ? 0.5 : 1 }}
+              onClick={() => handleAdd(playlist.id)}
+            >
+              <div style={{ width: 44, height: 44, borderRadius: 6, flexShrink: 0, overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+                {playlist.coverImgUrl ? <img src={playlist.coverImgUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" /> : null}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{playlist.name}</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>{playlist.trackCount}首</div>
+              </div>
+              {addingTo === playlist.id && <div className="music-inline-spinner" />}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+};
+
 export default function MusicApp() {
   const { closeApp, registerBackHandler, appParams } = useApp();
   const { currentSong, isPlaying, currentTime, duration, progress, playSong, togglePlay, playNext, playPrev, seek, seekToTime } = useAudioPlayer();
@@ -2524,6 +2818,7 @@ export default function MusicApp() {
   const [detailStack, setDetailStack] = useState<DetailView[]>([]);
   const [showFullPlayer, setShowFullPlayer] = useState(false);
   const [showQrLogin, setShowQrLogin] = useState(false);
+  const [addToPlaylistSongId, setAddToPlaylistSongId] = useState<number | null>(null);
 
   // 预加载皮肤
   useEffect(() => {
@@ -2550,6 +2845,7 @@ export default function MusicApp() {
   const [playlists, setPlaylists] = useState<NeteasePlaylist[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [playlistsError, setPlaylistsError] = useState<string | null>(null);
+  const [memoryRecordPlayables, setMemoryRecordPlayables] = useState<MemoryRecordPlayable[]>([]);
   const [dailySongs, setDailySongs] = useState<NeteaseSong[]>([]);
   const [dailySongsLoading, setDailySongsLoading] = useState(false);
   const [playlistPreview, setPlaylistPreview] = useState<PlaylistPreviewState>({
@@ -2575,6 +2871,10 @@ export default function MusicApp() {
   const [lyricSettings, setLyricSettings] = useState<FloatingLyricsSettings>(() => readFloatingLyricsSettings());
 
   const activeDetail = detailStack.length > 0 ? detailStack[detailStack.length - 1] : null;
+  const displayedCurrentSong = useMemo<MusicPlayable | null>(() => {
+    if (!isMemoryRecordPlayable(currentSong)) return currentSong;
+    return memoryRecordPlayables.find((record) => record.recordId === currentSong.recordId) || currentSong;
+  }, [currentSong, memoryRecordPlayables]);
 
   useEffect(() => {
     const handleStorage = () => {
@@ -2716,6 +3016,52 @@ export default function MusicApp() {
   function handleProgramClick(program: NeteaseDjProgram, queue?: NeteaseDjProgram[]): void {
     handlePlayableClick(program, queue);
   }
+
+  function handleMemoryRecordClick(record: MemoryRecordPlayable, queue?: MemoryRecordPlayable[]): void {
+    handlePlayableClick(record, queue);
+  }
+
+  async function saveMemoryRecordLyricTiming(recordId: string, timing: MemoryRecordLyricTiming | undefined): Promise<void> {
+    const record = await DB.getMemoryRecordById(recordId);
+    if (!record) throw new Error('没有找到这张回忆唱片');
+
+    const nextRecord = {
+      ...record,
+      lyricTiming: timing,
+      updatedAt: Date.now(),
+    };
+
+    await DB.saveMemoryRecord(nextRecord);
+    const nextPlayable = memoryRecordToPlayable(nextRecord);
+    setMemoryRecordPlayables((previous) => previous.map((item) => (
+      item.recordId === recordId ? nextPlayable : item
+    )));
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMemoryRecords(): Promise<void> {
+      try {
+        const records = await DB.getMemoryRecords();
+        if (cancelled) return;
+        setMemoryRecordPlayables(
+          records
+            .filter(hasPlayableMemoryRecordAudio)
+            .map(memoryRecordToPlayable),
+        );
+      } catch (error) {
+        console.warn('[MusicApp] Failed to load memory records:', error);
+      }
+    }
+
+    void loadMemoryRecords();
+    window.addEventListener('focus', loadMemoryRecords);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', loadMemoryRecords);
+    };
+  }, []);
 
   async function loadPlaylistPreview(playlist: NeteasePlaylist): Promise<void> {
     setPlaylistPreview({ playlist, tracks: [], loading: true, error: null });
@@ -3039,7 +3385,7 @@ export default function MusicApp() {
       return;
     }
 
-    if (rootPage !== 'profile' && accountReloadKey === 0) return;
+    // account 信息在任何页面都可能需要（如收藏到歌单），不再限制只在 profile 页加载
 
     let active = true;
     setAccountLoading(true);
@@ -3064,7 +3410,7 @@ export default function MusicApp() {
 
     void loadAccount();
     return () => { active = false; };
-  }, [accountReloadKey, isLoggedIn, rootPage]);
+  }, [accountReloadKey, isLoggedIn]);
 
   useEffect(() => {
     if (!isLoggedIn || !account) {
@@ -3161,12 +3507,14 @@ export default function MusicApp() {
           previewTracks={playlistPreview.tracks}
           previewLoading={playlistPreview.loading}
           previewError={playlistPreview.error}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
+          memoryRecords={memoryRecordPlayables}
           onSearch={openSearch}
           onCloseApp={closeApp}
           showExitButton={showRootExitButton}
           onPlaylistSelect={(playlist) => { void loadPlaylistPreview(playlist); }}
           onSongClick={handleSongClick}
+          onMemoryRecordClick={handleMemoryRecordClick}
           dailySongs={dailySongs}
           dailySongsLoading={dailySongsLoading}
           isLoggedIn={isLoggedIn}
@@ -3182,7 +3530,7 @@ export default function MusicApp() {
           searchSections={searchSections}
           searchHistory={searchHistory}
           suggestions={suggestionKeywords}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
           onKeywordChange={setKeyword}
           onTabChange={(tab) => setActiveSearchTab(tab)}
           onBack={closeSearch}
@@ -3230,7 +3578,7 @@ export default function MusicApp() {
         <PlaylistDetailPage
           state={playlistDetails[activeDetail.id]}
           seed={activeDetail.seed}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
           onBack={popDetail}
           onSongClick={handleSongClick}
         />
@@ -3240,7 +3588,7 @@ export default function MusicApp() {
         <AlbumDetailPage
           state={albumDetails[activeDetail.id]}
           seed={activeDetail.seed}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
           onBack={popDetail}
           onSongClick={handleSongClick}
         />
@@ -3250,7 +3598,7 @@ export default function MusicApp() {
         <ArtistDetailPage
           state={artistDetails[activeDetail.id]}
           seed={activeDetail.seed}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
           onBack={popDetail}
           onSongClick={handleSongClick}
           onOpenAlbum={openAlbumDetail}
@@ -3261,7 +3609,7 @@ export default function MusicApp() {
         <RadioDetailPage
           state={radioDetails[activeDetail.id]}
           seed={activeDetail.seed}
-          currentPlayable={currentSong}
+          currentPlayable={displayedCurrentSong}
           onBack={popDetail}
           onProgramClick={handleProgramClick}
         />
@@ -3277,9 +3625,9 @@ export default function MusicApp() {
         />
       ) : null}
 
-      {currentSong && !shouldHideChrome ? (
+      {displayedCurrentSong && !shouldHideChrome ? (
         <MiniPlayer
-          playable={currentSong}
+          playable={displayedCurrentSong}
           isPlaying={isPlaying}
           progress={progress}
           onOpen={() => setShowFullPlayer(true)}
@@ -3307,9 +3655,9 @@ export default function MusicApp() {
         </div>
       ) : null}
 
-      {showFullPlayer && currentSong ? (
+      {showFullPlayer && displayedCurrentSong ? (
         <FullPlayer
-          playable={currentSong}
+          playable={displayedCurrentSong}
           isPlaying={isPlaying}
           progress={progress}
           currentTime={currentTime}
@@ -3323,6 +3671,8 @@ export default function MusicApp() {
           onNext={() => { void playNext(); }}
           onSeek={seek}
           onSeekToTime={seekToTime}
+          onAddToPlaylist={setAddToPlaylistSongId}
+          onSaveMemoryRecordLyricTiming={saveMemoryRecordLyricTiming}
         />
       ) : null}
 
@@ -3337,6 +3687,13 @@ export default function MusicApp() {
           setLastPrimaryPage('profile');
           setRootPage('profile');
         }}
+      />
+
+      <AddToPlaylistModal
+        open={addToPlaylistSongId !== null}
+        songId={addToPlaylistSongId}
+        playlists={userPlaylists.filter((p) => account && p.creator?.userId === account.userId)}
+        onClose={() => setAddToPlaylistSongId(null)}
       />
     </div>
   );

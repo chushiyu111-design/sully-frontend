@@ -54,7 +54,7 @@ function getFontFamily(fontStyle: StatusCardData['style']['fontStyle']): string 
     }
 }
 
-const FreeformStatusCard: React.FC<{ html: string }> = ({ html }) => {
+const FreeformStatusCard: React.FC<{ html: string; allowScripts?: boolean }> = ({ html, allowScripts = false }) => {
     const previewRef = useRef<HTMLIFrameElement>(null);
     const frameChannel = useId().replace(/:/g, '_');
     const [previewReady, setPreviewReady] = useState(false);
@@ -77,6 +77,7 @@ const FreeformStatusCard: React.FC<{ html: string }> = ({ html }) => {
 
     useEffect(() => {
         const handleMessage = (event: MessageEvent<{ type?: string; channel?: string; width?: number; height?: number }>) => {
+            if (event.source !== previewRef.current?.contentWindow) return;
             if (event.data?.type !== 'preview-height') return;
             if (event.data.channel !== frameChannel) return;
 
@@ -110,10 +111,10 @@ const FreeformStatusCard: React.FC<{ html: string }> = ({ html }) => {
         if (!previewReady) return;
 
         previewRef.current?.contentWindow?.postMessage(
-            { type: 'preview-update', channel: frameChannel, html },
+            { type: 'preview-update', channel: frameChannel, html, allowScripts },
             '*',
         );
-    }, [frameChannel, html, previewReady]);
+    }, [allowScripts, frameChannel, html, previewReady]);
 
     return (
         <iframe
@@ -281,7 +282,10 @@ const StatusCardRenderer: React.FC<StatusCardRendererProps> = ({ data }) => {
     // ── Freeform HTML card: render in sandboxed iframe ──
     if (sanitizedData.cardType === 'freeform' && sanitizedData.meta?.html) {
         return (
-            <FreeformStatusCard html={sanitizedData.meta.html} />
+            <FreeformStatusCard
+                html={sanitizedData.meta.html}
+                allowScripts={sanitizedData.meta.allowScripts === true}
+            />
         );
     }
 

@@ -115,6 +115,7 @@ export interface CharacterProfile {
 
     writerPersona?: string;
     writerPersonaGeneratedAt?: number;
+    ttsVoiceId?: string;
 
     mountedWorldbooks?: { id: string; title: string; content: string; category?: string; position?: 'top' | 'after_worldview' | 'after_impression' | 'bottom'; vectorized?: boolean }[];
 

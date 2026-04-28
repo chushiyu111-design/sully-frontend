@@ -3,6 +3,7 @@ import { OSTheme,APIConfig,ApiPreset } from './core';
 import { RealtimeConfig } from './realtime';
 import { CharacterProfile,GroupProfile,Worldbook } from './character';
 import { ChatTheme,Message,Emoji,EmojiCategory,VectorMemory } from './chat';
+import { MemoryRecord,SerializedMemoryRecordAudio } from './memoryRecord';
 import { RoomTodo,RoomNote } from './room';
 import {
   SocialPost,SubAccount,SocialAppProfile,GalleryImage,DiaryEntry,
@@ -72,6 +73,8 @@ export interface FullBackupData {
 
     // Vector Memory Data
     vectorMemories?: VectorMemory[];
+    memoryRecords?: MemoryRecord[];
+    memoryRecordAudio?: SerializedMemoryRecordAudio[];
 
     // Scheduled Messages (delayed send)
     scheduledMessages?: {

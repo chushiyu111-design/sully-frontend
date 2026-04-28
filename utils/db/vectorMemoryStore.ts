@@ -27,19 +27,30 @@ export const getAllVectorMemories = async (charId: string): Promise<VectorMemory
  * Get lightweight headers (no vector data) for extraction prompt building & keyword pre-filtering.
  * Uses cursor to avoid loading the full vector arrays into memory.
  */
-export const getVectorMemoryHeaders = async (charId: string): Promise<{ id: string; title: string; content: string; emotionalJourney?: string; importance: number; createdAt: number; deprecated?: boolean; salienceScore?: number }[]> => {
+export const getVectorMemoryHeaders = async (charId: string): Promise<{ id: string; title: string; content: string; emotionalJourney?: string; importance: number; createdAt: number; deprecated?: boolean; salienceScore?: number; mentionCount?: number; lastMentioned?: number }[]> => {
     const db = await openDB();
     if (!db.objectStoreNames.contains(STORE_VECTOR_MEMORIES)) return [];
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_VECTOR_MEMORIES, 'readonly');
         const index = tx.objectStore(STORE_VECTOR_MEMORIES).index('charId');
         const request = index.openCursor(charId);
-        const headers: { id: string; title: string; content: string; emotionalJourney?: string; importance: number; createdAt: number; deprecated?: boolean; salienceScore?: number }[] = [];
+        const headers: { id: string; title: string; content: string; emotionalJourney?: string; importance: number; createdAt: number; deprecated?: boolean; salienceScore?: number; mentionCount?: number; lastMentioned?: number }[] = [];
         request.onsuccess = () => {
             const cursor = request.result;
             if (cursor) {
                 const v = cursor.value;
-                headers.push({ id: v.id, title: v.title, content: v.content, emotionalJourney: v.emotionalJourney, importance: v.importance, createdAt: v.createdAt, deprecated: v.deprecated, salienceScore: v.salienceScore });
+                headers.push({
+                    id: v.id,
+                    title: v.title,
+                    content: v.content,
+                    emotionalJourney: v.emotionalJourney,
+                    importance: v.importance,
+                    createdAt: v.createdAt,
+                    deprecated: v.deprecated,
+                    salienceScore: v.salienceScore,
+                    mentionCount: v.mentionCount,
+                    lastMentioned: v.lastMentioned,
+                });
                 cursor.continue();
             } else {
                 resolve(headers);

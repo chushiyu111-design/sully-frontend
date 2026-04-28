@@ -1,29 +1,117 @@
 /**
- * DashboardTab — Today's overview with calorie ring, macros, and summary cards
+ * DashboardTab — Today's overview with calorie ring, swipeable quotes,
+ * macro nutrients (2×2), and horizontal summary row.
  */
-import React from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useHalfSugar } from '../HalfSugarContext';
 import { CalorieRing } from '../components/CalorieRing';
-import { getThemedSuggestion } from '../foodRecommendations';
+import { getDailyNarration, getThemedSuggestion } from '../foodRecommendations';
 import { MacroBar } from '../components/MacroBar';
 import { formatDurationMinutes } from '../types';
+
+// ── Date string for subtitle ──
+function getDateString(): string {
+    const now = new Date();
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    return `${now.getMonth() + 1}月${now.getDate()}日 · 星期${weekdays[now.getDay()]}`;
+}
+
+// ── Swipeable Quotes ──
+function getQuotes(): string[] {
+    const narration = getDailyNarration();
+    const themed = getThemedSuggestion();
+    const quotes: string[] = [];
+    if (narration) quotes.push(narration);
+    if (themed && themed !== narration) quotes.push(themed);
+    if (quotes.length < 2) {
+        quotes.push('好好吃饭，好好生活 ✿');
+    }
+    return quotes;
+}
+
+const SwipeQuotes: React.FC = React.memo(() => {
+    const quotes = getQuotes();
+    const [activeIdx, setActiveIdx] = useState(0);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const startXRef = useRef(0);
+    const isDraggingRef = useRef(false);
+
+    const goTo = useCallback((idx: number) => {
+        setActiveIdx(Math.max(0, Math.min(idx, quotes.length - 1)));
+    }, [quotes.length]);
+
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+        startXRef.current = e.touches[0].clientX;
+        isDraggingRef.current = true;
+    }, []);
+
+    const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+        if (!isDraggingRef.current) return;
+        isDraggingRef.current = false;
+        const diff = startXRef.current - e.changedTouches[0].clientX;
+        if (Math.abs(diff) > 40) {
+            goTo(activeIdx + (diff > 0 ? 1 : -1));
+        }
+    }, [activeIdx, goTo]);
+
+    // Auto-rotate every 6s
+    useEffect(() => {
+        if (quotes.length <= 1) return;
+        const timer = setInterval(() => {
+            setActiveIdx((prev) => (prev + 1) % quotes.length);
+        }, 6000);
+        return () => clearInterval(timer);
+    }, [quotes.length]);
+
+    return (
+        <div className="hs-swipe-quotes hs-animate-fade-in">
+            <div
+                className="hs-swipe-track"
+                ref={containerRef}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+            >
+                <span className="hs-swipe-mark hs-swipe-mark-open">❝</span>
+                <div className="hs-swipe-text">{quotes[activeIdx]}</div>
+                <span className="hs-swipe-mark hs-swipe-mark-close">❞</span>
+            </div>
+            {quotes.length > 1 && (
+                <div className="hs-swipe-dots">
+                    {quotes.map((_, i) => (
+                        <span
+                            key={i}
+                            className={`hs-swipe-dot ${i === activeIdx ? 'active' : ''}`}
+                            onClick={() => goTo(i)}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+});
 
 const DashboardTab: React.FC = () => {
     const {
         activeCalorieTarget, caloriesConsumed, proteinConsumed, carbsConsumed, fatConsumed, fiberConsumed,
         nutrientTargets, recommendations, isMealsLoading, isTrackingLoading,
-        latestWeight, latestBmi, todaySleep,
+        latestWeight, todaySleep,
         todayExercises, todayExerciseCalories, setActiveTab,
     } = useHalfSugar();
 
-    // Show total exercise duration instead of negative kcal
     const totalExerciseMinutes = todayExercises.reduce((sum, e) => sum + e.durationMinutes, 0);
-
     const themedSuggestion = getThemedSuggestion();
 
     return (
         <div className="hs-tab-content no-scrollbar">
+            {/* ── Date subtitle (below page header's "今日") ── */}
+            <div className="hs-date-subtitle hs-animate-fade-in">
+                <span>{getDateString()}</span>
+            </div>
+
             <CalorieRing consumed={caloriesConsumed} exerciseBurned={todayExerciseCalories} target={activeCalorieTarget} />
+
+            {/* ── Swipeable Quotes ── */}
+            <SwipeQuotes />
 
             <div className="hs-macro-grid">
                 <MacroBar label="蛋白" value={proteinConsumed} target={nutrientTargets.protein} color="var(--hs-sage)" />
@@ -32,55 +120,31 @@ const DashboardTab: React.FC = () => {
                 <MacroBar label="膳食纤维" value={fiberConsumed} target={nutrientTargets.fiber} color="var(--hs-ocean)" />
             </div>
 
-            {/* Quick-access summary cards — 2x2 grid */}
-            <div className="hs-dash-grid">
-                <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('nutrition')} role="button" tabIndex={0}>
-                    <div className="hs-track-header">
-                        <span className="hs-track-title"><span className="hs-emoji">🍽️</span> 饮食</span>
-                    </div>
-                    <span className="hs-track-value" style={{ fontSize: 16 }}>
-                        {isMealsLoading ? '…' : `${caloriesConsumed} kcal`}
-                    </span>
+            {/* ── Quick-access summary row — horizontal ── */}
+            <div className="hs-dash-row">
+                <div className="hs-dash-row-card hs-animate-fade-in" onClick={() => setActiveTab('nutrition')} role="button" tabIndex={0}>
+                    <span className="hs-dash-row-icon hs-emoji">🍽️</span>
+                    <span className="hs-dash-row-label">饮食</span>
+                    <span className="hs-dash-row-value">{isMealsLoading ? '…' : caloriesConsumed}</span>
+                    <span className="hs-dash-row-unit">kcal</span>
                 </div>
-
-                <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('trends')} role="button" tabIndex={0}>
-                    <div className="hs-track-header">
-                        <span className="hs-track-title"><span className="hs-emoji">⚖️</span> 体重</span>
-                    </div>
-                    <span className="hs-track-value" style={{ fontSize: 16 }}>
-                        {latestWeight ? `${latestWeight.weight} kg` : '—'}
-                    </span>
-                    {latestBmi && (
-                        <div className="hs-track-subtitle" style={{ marginBottom: 0 }}>BMI {latestBmi}</div>
-                    )}
+                <div className="hs-dash-row-card hs-animate-fade-in" onClick={() => setActiveTab('trends')} role="button" tabIndex={0}>
+                    <span className="hs-dash-row-icon hs-emoji">⚖️</span>
+                    <span className="hs-dash-row-label">体重</span>
+                    <span className="hs-dash-row-value">{latestWeight ? latestWeight.weight : '—'}</span>
+                    <span className="hs-dash-row-unit">{latestWeight ? 'kg' : ''}</span>
                 </div>
-
-                <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('activity')} role="button" tabIndex={0}>
-                    <div className="hs-track-header">
-                        <span className="hs-track-title"><span className="hs-emoji">🔥</span> 运动</span>
-                    </div>
-                    <span className="hs-track-value" style={{ fontSize: 16 }}>
-                        {totalExerciseMinutes > 0 ? `${totalExerciseMinutes} min` : '—'}
-                    </span>
-                    {todayExercises.length > 0 && (
-                        <div className="hs-track-subtitle" style={{ marginBottom: 0 }}>
-                            {todayExercises.map((e) => e.exerciseLabel).join('、')}
-                        </div>
-                    )}
+                <div className="hs-dash-row-card hs-animate-fade-in" onClick={() => setActiveTab('activity')} role="button" tabIndex={0}>
+                    <span className="hs-dash-row-icon hs-emoji">🔥</span>
+                    <span className="hs-dash-row-label">运动</span>
+                    <span className="hs-dash-row-value">{totalExerciseMinutes > 0 ? totalExerciseMinutes : '—'}</span>
+                    <span className="hs-dash-row-unit">{totalExerciseMinutes > 0 ? 'min' : ''}</span>
                 </div>
-
-                <div className="hs-track-card hs-animate-fade-in" onClick={() => setActiveTab('sleep')} role="button" tabIndex={0}>
-                    <div className="hs-track-header">
-                        <span className="hs-track-title"><span className="hs-emoji">🌙</span> 睡眠</span>
-                    </div>
-                    <span className="hs-track-value" style={{ fontSize: 16 }}>
-                        {todaySleep ? formatDurationMinutes(todaySleep.durationMinutes) : '—'}
-                    </span>
-                    {todaySleep && (
-                        <div className="hs-track-subtitle" style={{ marginBottom: 0 }}>
-                            {todaySleep.sleepTime} → {todaySleep.wakeTime}
-                        </div>
-                    )}
+                <div className="hs-dash-row-card hs-animate-fade-in" onClick={() => setActiveTab('sleep')} role="button" tabIndex={0}>
+                    <span className="hs-dash-row-icon hs-emoji">🌙</span>
+                    <span className="hs-dash-row-label">睡眠</span>
+                    <span className="hs-dash-row-value">{todaySleep ? formatDurationMinutes(todaySleep.durationMinutes) : '—'}</span>
+                    <span className="hs-dash-row-unit"></span>
                 </div>
             </div>
 

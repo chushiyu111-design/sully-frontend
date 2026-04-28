@@ -28,6 +28,7 @@ import type { CharacterProfile,UserProfile } from '../../types';
 import type { VoiceCallMode } from './voiceCallTypes';
 import type { MessageType } from '../../types';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../../utils/runtimeConfig';
+import { withCharacterTtsVoice } from '../../utils/characterTts';
 import {
     buildPersistedCallAudioEntries,
     buildPersistedCallConversation,
@@ -55,6 +56,11 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
     avatarUrl, name, char, userProfile, direction, onCloseApp, onRegisterEndCall,
     ttsConfig, sttConfig, apiConfig, addToast, incomingMode, callReason,
 }) => {
+    const characterTtsConfig = useMemo(
+        () => withCharacterTtsVoice(ttsConfig, char),
+        [ttsConfig, char.id, char.ttsVoiceId],
+    );
+
     const {
         callState,
         callDuration,
@@ -147,7 +153,7 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
     } = useVoiceCallEngine({
         char,
         userProfile,
-        ttsConfig,
+        ttsConfig: characterTtsConfig,
         sttConfig,
         apiConfig,
         isMuted,

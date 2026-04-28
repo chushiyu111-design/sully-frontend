@@ -22,7 +22,7 @@ vi.mock('../../utils/haptics', () => ({
     },
 }));
 
-vi.mock('../../App', () => ({
+vi.mock('../../utils/systemFullscreen', () => ({
     requestSystemFullscreen: vi.fn(),
     exitSystemFullscreen: vi.fn(),
 }));

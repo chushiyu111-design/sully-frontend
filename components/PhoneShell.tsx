@@ -13,7 +13,7 @@ import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar,Style as StatusBarStyle } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { requestSystemFullscreen } from '../App';
+import { requestSystemFullscreen } from '../utils/systemFullscreen';
 
 // --- Lazy-loaded Apps (only downloaded when user opens them) ---
 const Settings = React.lazy(() => import('../apps/Settings'));

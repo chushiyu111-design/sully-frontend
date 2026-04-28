@@ -1,6 +1,6 @@
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { requestSystemFullscreen } from '../App';
+import { requestSystemFullscreen } from './systemFullscreen';
 import { probeForUpdatedBuild } from './runtimeRecovery';
 
 let initialized = false;

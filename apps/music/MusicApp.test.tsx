@@ -2,15 +2,19 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import MusicApp from './MusicApp';
 import FloatingLyrics from '../../components/os/FloatingLyrics';
 import { AppID } from '../../types';
 import type {
+    MemoryRecordPlayable,
     MusicPlayable,
     NeteaseDjProgram,
     NeteasePlaylist,
     NeteaseSong,
 } from '../../types/music';
+import type { MemoryRecord } from '../../types';
+import { DB } from '../../utils/db';
 import { resetPlaybackLyricsRuntimeForTests } from '../../utils/playbackLyricsRuntime';
 import { LYRIC_SETTINGS_KEY } from '../../components/os/floatingLyricsSettings';
 import { useApp } from '../../context/AppContext';
@@ -135,6 +139,7 @@ function buildPlayerState(currentSong: MusicPlayable | null) {
         resume: vi.fn(),
         togglePlay: vi.fn(),
         seek: vi.fn(),
+        seekToTime: vi.fn(),
         playNext: vi.fn(),
         playPrev: vi.fn(),
         setVolume: vi.fn(),
@@ -155,6 +160,8 @@ describe('MusicApp', () => {
         vi.clearAllMocks();
         resetPlaybackLyricsRuntimeForTests();
         localStorage.clear();
+        Object.defineProperty(globalThis, 'indexedDB', { value: new IDBFactory(), configurable: true });
+        Object.defineProperty(globalThis, 'IDBKeyRange', { value: IDBKeyRange, configurable: true });
 
         vi.stubGlobal(
             'requestAnimationFrame',
@@ -328,5 +335,83 @@ describe('MusicApp', () => {
         expect(
             screen.getByTestId('floating-lyrics').style.getPropertyValue('--lyric-color-active').trim(),
         ).toBe('#7c3aed');
+    });
+
+    it('saves manual lyric timing for memory records', async () => {
+        const record: MemoryRecord = {
+            id: 'mrec-timing',
+            charId: 'char-a',
+            charName: 'Sully',
+            userName: '我',
+            mode: 'dream_mix',
+            status: 'ready',
+            title: '梦里回声',
+            albumName: '回忆唱片匣',
+            artistName: 'Sully',
+            monologueText: '先听这一段。',
+            lyrics: '[Verse]\n梦在转动\n你在身后',
+            lyricsOffsetMs: 20000,
+            musicPrompt: 'dream pop',
+            coverGradient: 'linear-gradient(135deg, #f7d6e0, #2d3142)',
+            seedMemoryIds: [],
+            monologueAudioId: 'mrec-timing:monologue',
+            musicAudioId: 'mrec-timing:music',
+            masterAudioId: 'mrec-timing:master',
+            durationMs: 120000,
+            createdAt: 100,
+            updatedAt: 100,
+        };
+        const playable: MemoryRecordPlayable = {
+            kind: 'memoryRecord',
+            id: 850000001,
+            recordId: record.id,
+            name: record.title,
+            artistName: record.artistName,
+            albumName: record.albumName,
+            duration: record.durationMs || 0,
+            lyrics: record.lyrics,
+            monologueText: record.monologueText,
+            lyricsOffsetMs: record.lyricsOffsetMs,
+            audioId: record.masterAudioId,
+            requiresMasterAudio: true,
+        };
+
+        await DB.saveMemoryRecord(record);
+        mockedUseAudioPlayer.mockReturnValue({
+            ...buildPlayerState(playable),
+            currentTime: 15,
+            duration: 120,
+            progress: 12.5,
+        } as any);
+
+        render(<MusicApp />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('music-mini-player')).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByTestId('music-mini-player'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('music-lyrics-timing-toggle')).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByTestId('music-lyrics-timing-toggle'));
+        fireEvent.click(screen.getByText('梦在转动'));
+        fireEvent.click(screen.getByText('定时'));
+        fireEvent.click(screen.getByText('保存'));
+
+        await waitFor(async () => {
+            const saved = await DB.getMemoryRecordById(record.id);
+            expect(saved?.lyricTiming?.lineTimesMs[1]).toBe(15000);
+        });
+
+        fireEvent.click(screen.getByTestId('music-lyrics-timing-toggle'));
+        fireEvent.click(screen.getByText('重置'));
+
+        await waitFor(async () => {
+            const saved = await DB.getMemoryRecordById(record.id);
+            expect(saved?.lyricTiming).toBeUndefined();
+        });
     });
 });

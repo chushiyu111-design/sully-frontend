@@ -1,7 +1,7 @@
 
 import React,{ useMemo } from 'react';
 import { haptic } from '../../utils/haptics';
-import { requestSystemFullscreen,exitSystemFullscreen } from '../../App';
+import { requestSystemFullscreen,exitSystemFullscreen } from '../../utils/systemFullscreen';
 import { getRuntimeConfigSnapshot,inferEmbeddingEngineId } from '../../utils/runtimeConfig';
 import { safeLocalStorageGet,safeLocalStorageSet } from '../../utils/storage';
 

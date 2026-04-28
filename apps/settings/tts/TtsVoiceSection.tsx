@@ -27,9 +27,9 @@ const TtsVoiceSection: React.FC<Props> = ({ voiceId, speed, vol, pitch, emotion,
 
     return (
         <div className="bg-[#fce4ec]/40 backdrop-blur-sm p-5 rounded-3xl space-y-3 border border-[#f5d5da]/40">
-            <div className="flex items-center gap-2 mb-3"><span className="text-sm font-bold text-[#c4929f]">音色设置</span></div>
-            <div><label className="text-[10px] font-bold text-[#b8aaa0] uppercase block mb-1">Voice ID</label>
-                <input type="text" value={voiceId} onChange={e => set('voiceId', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#f5d5da]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="音色编号" /></div>
+            <div className="flex items-center gap-2 mb-3"><span className="text-sm font-bold text-[#c4929f]">默认音色设置</span></div>
+            <div><label className="text-[10px] font-bold text-[#b8aaa0] uppercase block mb-1">默认 Voice ID</label>
+                <input type="text" value={voiceId} onChange={e => set('voiceId', e.target.value)} className="w-full bg-white/60 backdrop-blur-sm border border-[#f5d5da]/50 rounded-xl px-3 py-2.5 text-[11px] font-mono focus:bg-white/80 transition-all" placeholder="角色未填写 Voice ID 时使用" /></div>
             <div className="flex gap-1.5 flex-wrap">
                 {VOICE_PRESETS.map(v => (
                     <button key={v} onClick={() => set('voiceId', v)} className={`text-[9px] px-2 py-1 rounded-lg font-medium transition-colors ${voiceId === v ? 'bg-[#c4929f] text-white' : 'bg-white/60 text-[#c4929f] border border-[#f5d5da]/50'}`}>{v.length > 18 ? v.slice(0, 18) + '...' : v}</button>

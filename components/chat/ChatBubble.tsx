@@ -26,6 +26,7 @@ interface ChatBubbleProps {
     isUser: boolean;
     styleConfig: BubbleStyle;
     displayContent: string;
+    sourceTag?: string;
     replyTo?: { name: string; content: string } | null;
     showTranslateButton?: boolean;
     isShowingTarget?: boolean;
@@ -37,6 +38,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
     isUser,
     styleConfig,
     displayContent,
+    sourceTag,
     replyTo,
     showTranslateButton,
     isShowingTarget,
@@ -228,6 +230,21 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
                 <div className="relative z-10 leading-relaxed whitespace-pre-wrap" style={{ color: styleConfig.textColor, overflowWrap: 'break-word', wordBreak: 'normal', fontSize: styleConfig.fontSize ? `${styleConfig.fontSize}px` : '15px', textShadow: styleConfig.textShadow || undefined }}>
                     {renderMarkdown(displayContent)}
                 </div>
+
+                {/* Layer 4.5: Source Tag (跨端来源标记) */}
+                {sourceTag && (
+                    <div className="relative z-10 mt-1 flex justify-end">
+                        <span
+                            className="text-[10px] tracking-wide"
+                            style={{
+                                color: styleConfig.textColor ? `${styleConfig.textColor}55` : 'rgba(0,0,0,0.28)',
+                                fontFamily: "'SF Pro Text', 'Segoe UI', sans-serif",
+                            }}
+                        >
+                            {sourceTag}
+                        </span>
+                    </div>
+                )}
 
                 {/* Layer 5: Translate Toggle */}
                 {showTranslateButton && (

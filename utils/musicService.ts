@@ -1,4 +1,5 @@
 import { buildBackendAuthQuery, buildBackendHeaders, buildBackendUrl, buildBackendUrlObject } from './backendClient';
+import { DB } from './db';
 import { safeResponseJson } from './safeApi';
 import { safeTimeoutSignal } from './safeTimeout';
 import type {
@@ -21,6 +22,7 @@ import type {
     NeteaseSongUrl,
     NeteaseUserAccount,
 } from '../types/music';
+import { isMemoryRecordPlayable } from '../types/music';
 
 const COOKIE_KEY = 'netease_music_cookie';
 const NETEASE_DETAIL_PROXY_PATH = '/netease-api/song-detail';
@@ -732,6 +734,18 @@ export async function getSongUrl(
 }
 
 export async function resolvePlayableUrl(playable: MusicPlayable): Promise<string | null> {
+    if (isMemoryRecordPlayable(playable)) {
+        if (playable.audioId) {
+            const blob = await DB.getMemoryRecordAudio(playable.audioId);
+            if (blob) return URL.createObjectURL(blob);
+        }
+
+        const audioRows = await DB.getMemoryRecordAudioByRecordId(playable.recordId);
+        const preferred = audioRows.find((item) => item.kind === 'master')
+            || (!playable.requiresMasterAudio ? audioRows.find((item) => item.kind === 'music') : undefined);
+        return preferred?.blob ? URL.createObjectURL(preferred.blob) : null;
+    }
+
     const targetId = playable.kind === 'program'
         ? playable.mainSong?.id ?? playable.id
         : playable.id;

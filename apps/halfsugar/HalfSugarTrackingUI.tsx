@@ -54,6 +54,7 @@ function buildUserProfileShape(profile: HealthProfile): HealthAwareUserProfile {
         healthHeight: parsePositiveNumber(profile.height) || undefined,
         healthWeight: parsePositiveNumber(profile.weight) || undefined,
         healthBirthYear: parsePositiveNumber(profile.birthYear) || undefined,
+        healthActivityLevel: profile.activityLevel || 'light',
         healthSetupDone: profile.isSetup,
     };
 }
@@ -262,7 +263,10 @@ export const OnboardingView: React.FC<{
                             type="button"
                             className={`hs-gender-btn ${activityLevel === level.key ? 'active' : ''}`}
                             style={{ height: 'auto', padding: '12px', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}
-                            onClick={() => setActivityLevel(level.key)}
+                            onClick={() => {
+                                setActivityLevel(level.key);
+                                setCalorieTouched(false);
+                            }}
                         >
                             <span style={{ fontSize: '15px', fontWeight: 600 }}>{level.label}</span>
                             <span style={{ fontSize: '12px', fontWeight: 400, opacity: 0.7 }}>{level.desc}</span>

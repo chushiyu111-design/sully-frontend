@@ -26,6 +26,16 @@ const DEFAULT_BASE_URL = 'https://api.minimaxi.com';
 const POLL_INITIAL_INTERVAL = 2000;  // 首次轮询间隔 2s
 const POLL_MAX_INTERVAL = 5000;      // 最大轮询间隔 5s
 const POLL_TIMEOUT = 120000;         // 总超时 120s
+const PREPROCESS_CHUNK_MAX_CHARS = 1200;
+const PREPROCESS_MIN_COMPARE_CHARS = 80;
+const PREPROCESS_MIN_SPOKEN_RATIO = 0.6;
+
+type TtsPreprocessRequestConfig = {
+    prompt: string;
+    apiBase: string;
+    apiKey: string;
+    model: string;
+};
 
 // ─── 内部工具 ────────────────────────────────────────────────────────────
 
@@ -79,6 +89,156 @@ function checkBaseResp(resp: { base_resp?: { status_code: number; status_msg: st
         const code = resp.base_resp.status_code;
         const msg = resp.base_resp.status_msg;
         throw new Error(`[TTS ${context}] 错误 ${code}: ${msg}`);
+    }
+}
+
+const PREPROCESS_SENTENCE_FRAGMENT_RE = /[\s\S]+?(?:[\r\n]+|[。！？!?]+["'”’）)\]】]*\s*|[.]+["'”’）)\]】]*(?:\s+|$)|$)/g;
+const PREPROCESS_TTS_TAG_RE = /(?:\((?:laughs|chuckle|sighs|breath|gasps|coughs|sniffs|crying|humming|pant|emm)\)|<#\d+(?:\.\d+)?#>)/gi;
+
+function hardSplitPreprocessFragment(fragment: string): string[] {
+    const chunks: string[] = [];
+    for (let start = 0; start < fragment.length; start += PREPROCESS_CHUNK_MAX_CHARS) {
+        chunks.push(fragment.slice(start, start + PREPROCESS_CHUNK_MAX_CHARS));
+    }
+    return chunks;
+}
+
+function splitTextForPreprocess(text: string): string[] {
+    const fragments = text.match(PREPROCESS_SENTENCE_FRAGMENT_RE) || [text];
+    const chunks: string[] = [];
+    let current = '';
+
+    const pushCurrent = () => {
+        if (current.trim()) chunks.push(current);
+        current = '';
+    };
+
+    for (const fragment of fragments) {
+        if (!fragment) continue;
+
+        if (fragment.length > PREPROCESS_CHUNK_MAX_CHARS) {
+            pushCurrent();
+            for (const part of hardSplitPreprocessFragment(fragment)) {
+                if (part.trim()) chunks.push(part);
+            }
+            continue;
+        }
+
+        if (current && current.length + fragment.length > PREPROCESS_CHUNK_MAX_CHARS) {
+            pushCurrent();
+        }
+        current += fragment;
+    }
+
+    pushCurrent();
+    return chunks;
+}
+
+function buildPreprocessMaxTokens(textLength: number): number {
+    return Math.min(Math.max(Math.ceil(textLength * 2.5), 512), 4096);
+}
+
+function isAbortError(error: unknown): boolean {
+    return (
+        error instanceof DOMException && error.name === 'AbortError'
+    ) || (
+        typeof error === 'object'
+        && error !== null
+        && 'name' in error
+        && (error as { name?: unknown }).name === 'AbortError'
+    );
+}
+
+function isLengthFinishReason(reason: unknown): boolean {
+    return typeof reason === 'string' && /length|max_tokens/i.test(reason);
+}
+
+function spokenContentLength(text: string): number {
+    return text
+        .replace(PREPROCESS_TTS_TAG_RE, '')
+        .replace(/\s+/g, '')
+        .length;
+}
+
+function hasSuspiciousContentLoss(original: string, processed: string): boolean {
+    const originalLength = spokenContentLength(original);
+    if (originalLength < PREPROCESS_MIN_COMPARE_CHARS) return false;
+
+    const processedLength = spokenContentLength(processed);
+    return processedLength < originalLength * PREPROCESS_MIN_SPOKEN_RATIO;
+}
+
+function needsJoinSpace(left: string, right: string): boolean {
+    const last = left.match(/[^\s]$/)?.[0] || '';
+    const first = right.match(/^\s*([^\s])/)?.[1] || '';
+    if (!last || !first) return false;
+
+    return /[A-Za-z0-9.!?]/.test(last) && /[A-Za-z0-9(]/.test(first);
+}
+
+function joinPreprocessedChunks(chunks: string[]): string {
+    return chunks.reduce((joined, chunk) => {
+        const normalized = chunk.trim();
+        if (!normalized) return joined;
+        if (!joined) return normalized;
+        return needsJoinSpace(joined, normalized) ? `${joined} ${normalized}` : `${joined}${normalized}`;
+    }, '');
+}
+
+async function preprocessTextChunk(
+    chunk: string,
+    config: TtsPreprocessRequestConfig,
+    baseUrl: string,
+    signal?: AbortSignal
+): Promise<string> {
+    try {
+        const response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${config.apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: config.model,
+                messages: [
+                    { role: 'system', content: config.prompt },
+                    { role: 'user', content: chunk },
+                ],
+                temperature: 0.3,
+                max_tokens: buildPreprocessMaxTokens(chunk.length),
+            }),
+            signal,
+        });
+
+        if (!response.ok) {
+            console.warn('[TTS Preprocess] AI 预处理失败，使用当前分段原文');
+            return chunk;
+        }
+
+        const data = await response.json();
+        const choice = data?.choices?.[0];
+        const result = choice?.message?.content?.trim();
+
+        if (isLengthFinishReason(choice?.finish_reason)) {
+            console.warn('[TTS Preprocess] AI 预处理输出被截断，使用当前分段原文');
+            return chunk;
+        }
+
+        if (!result) {
+            console.warn('[TTS Preprocess] AI 预处理返回空内容，使用当前分段原文');
+            return chunk;
+        }
+
+        if (hasSuspiciousContentLoss(chunk, result)) {
+            console.warn('[TTS Preprocess] AI 预处理疑似丢失正文，使用当前分段原文');
+            return chunk;
+        }
+
+        return result;
+    } catch (error) {
+        if (isAbortError(error)) throw error;
+        console.warn('[TTS Preprocess] AI 预处理异常，使用当前分段原文:', error);
+        return chunk;
     }
 }
 
@@ -256,9 +416,10 @@ export const MinimaxTts = {
         if (pre?.enabled && pre.apiBase && pre.apiKey && pre.model) {
             notify('preprocessing', '正在用 AI 添加语气词...');
             try {
-                textToSynthesize = await this.preprocessText(text, pre);
+                textToSynthesize = await this.preprocessText(text, pre, signal);
                 console.log('[TTS Sync] 预处理完成，原文长度:', text.length, '→ 处理后:', textToSynthesize.length);
             } catch (e) {
+                if (isAbortError(e)) throw e;
                 console.warn('[TTS Sync] 预处理失败，回退到原文:', e);
                 textToSynthesize = text;
             }
@@ -346,13 +507,16 @@ export const MinimaxTts = {
         if (pre?.enabled && pre.apiBase && pre.apiKey && pre.model) {
             notify('preprocessing', '正在用 AI 添加语气词...');
             try {
-                textToSynthesize = await this.preprocessText(text, pre);
+                textToSynthesize = await this.preprocessText(text, pre, signal);
                 console.log('[TTS] 预处理完成，原文长度:', text.length, '→ 处理后:', textToSynthesize.length);
             } catch (e) {
+                if (isAbortError(e)) throw e;
                 console.warn('[TTS] 预处理失败，回退到原文:', e);
                 textToSynthesize = text; // 静默降级
             }
         }
+
+        if (signal?.aborted) throw new DOMException('TTS synthesis aborted', 'AbortError');
 
         // 1. 创建任务
         notify('creating', '正在创建语音合成任务...');
@@ -431,45 +595,27 @@ export const MinimaxTts = {
      */
     async preprocessText(
         text: string,
-        config: { prompt: string; apiBase: string; apiKey: string; model: string }
+        config: TtsPreprocessRequestConfig,
+        signal?: AbortSignal
     ): Promise<string> {
         if (!config.apiBase || !config.apiKey || !config.model) {
             console.warn('[TTS Preprocess] 预处理 API 未配置，使用原始文本');
             return text;
         }
 
+        if (!text.trim()) return text;
+
         const baseUrl = config.apiBase.replace(/\/+$/, '');
+        const chunks = splitTextForPreprocess(text);
+        if (chunks.length === 0) return text;
 
-        const response = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${config.apiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model: config.model,
-                messages: [
-                    { role: 'system', content: config.prompt },
-                    { role: 'user', content: text },
-                ],
-                temperature: 0.3,
-                max_tokens: Math.min(Math.max(Math.ceil(text.length * 1.5), 512), 4096),
-            }),
-        });
-
-        if (!response.ok) {
-            console.warn('[TTS Preprocess] AI 预处理失败，使用原始文本');
-            return text;
+        const processedChunks: string[] = [];
+        for (const chunk of chunks) {
+            if (signal?.aborted) throw new DOMException('TTS preprocessing aborted', 'AbortError');
+            processedChunks.push(await preprocessTextChunk(chunk, config, baseUrl, signal));
         }
 
-        try {
-            const data = await response.json();
-            const result = data?.choices?.[0]?.message?.content?.trim();
-            return result || text;
-        } catch {
-            console.warn('[TTS Preprocess] 解析 AI 响应失败，使用原始文本');
-            return text;
-        }
+        return joinPreprocessedChunks(processedChunks) || text;
     },
 
     /**

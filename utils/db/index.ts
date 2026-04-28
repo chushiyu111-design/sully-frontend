@@ -12,6 +12,7 @@ import * as appDataStore from './appDataStore';
 import * as bankStore from './bankStore';
 import * as backupStore from './backupStore';
 import * as vectorMemoryStore from './vectorMemoryStore';
+import * as memoryRecordStore from './memoryRecordStore';
 
 
 // Compose the same `DB` object shape as the original monolithic file
@@ -179,4 +180,15 @@ export const DB = {
     clearVectorMemories: vectorMemoryStore.clearVectorMemories,
     replaceVectorMemories: vectorMemoryStore.replaceVectorMemories,
     countVectorMemories: vectorMemoryStore.countVectorMemories,
+
+    // Memory Records
+    getMemoryRecords: memoryRecordStore.getMemoryRecords,
+    getMemoryRecordById: memoryRecordStore.getMemoryRecordById,
+    saveMemoryRecord: memoryRecordStore.saveMemoryRecord,
+    deleteMemoryRecord: memoryRecordStore.deleteMemoryRecord,
+    saveMemoryRecordAudio: memoryRecordStore.saveMemoryRecordAudio,
+    getMemoryRecordAudio: memoryRecordStore.getMemoryRecordAudio,
+    getMemoryRecordAudioEntry: memoryRecordStore.getMemoryRecordAudioEntry,
+    getMemoryRecordAudioByRecordId: memoryRecordStore.getMemoryRecordAudioByRecordId,
+    deleteMemoryRecordAudio: memoryRecordStore.deleteMemoryRecordAudio,
 };

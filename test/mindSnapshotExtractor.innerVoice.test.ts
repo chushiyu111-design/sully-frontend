@@ -105,4 +105,81 @@ describe('MindSnapshotExtractor.generateInnerVoice', () => {
         expect(result!.innerVoice.length).toBe(120);
         expect(result!.innerVoice).toBe(overlongInnerVoice.slice(0, 120));
     });
+
+    it('replaces two-digit custom status template captures as full placeholders', async () => {
+        const values = Array.from({ length: 11 }, (_, index) => `G${index + 1}`);
+        const statusBlock = `<status>\n${values.map((value, index) => `F${index + 1}: ${value}`).join('\n')}\n</status>`;
+
+        mockFetchContent(statusBlock);
+
+        const result = await MindSnapshotExtractor.generateCustomCard(
+            baseCharacter,
+            '我会提前看材料。',
+            currentMsgs as any,
+            apiConfig,
+            {
+                id: 'tpl-custom',
+                name: 'custom',
+                systemPrompt: '输出 status 字段。',
+                extractRegex: `<status>\\s*${values.map((_, index) => `F${index + 1}:\\s*(.*?)`).join('\\s*')}\\s*<\\/status>`,
+                htmlTemplate: '<div>$1|$9|$10|$11|$12</div>',
+                renderMode: 'html',
+            },
+        );
+
+        expect(result?.meta?.html).toBe('<div>G1|G9|G10|G11|$12</div>');
+        expect(result?.meta?.allowScripts).not.toBe(true);
+    });
+
+    it('marks custom status cards as script-enabled only when the template opts in', async () => {
+        mockFetchContent('<status>Text: ready</status>');
+
+        const result = await MindSnapshotExtractor.generateCustomCard(
+            baseCharacter,
+            '我会提前看材料。',
+            currentMsgs as any,
+            apiConfig,
+            {
+                id: 'tpl-script',
+                name: 'script template',
+                systemPrompt: '输出 status 字段。',
+                extractRegex: '<status>\\s*Text:\\s*(.*?)\\s*<\\/status>',
+                htmlTemplate: '<div id="root">$1</div><script>document.getElementById("root").dataset.ready = "yes";</script>',
+                allowScripts: true,
+                renderMode: 'html',
+            },
+        );
+
+        expect(result?.meta?.html).toContain('<script>');
+        expect(result?.meta?.allowScripts).toBe(true);
+    });
+
+    it('generates custom status cards from layered templates', async () => {
+        mockFetchContent('<status>\nMood: quiet\nPlace: library\n</status>');
+
+        const result = await MindSnapshotExtractor.generateCustomCard(
+            baseCharacter,
+            '我会提前看材料。',
+            currentMsgs as any,
+            apiConfig,
+            {
+                id: 'tpl-layered',
+                name: 'layered template',
+                systemPrompt: '输出 status 字段。',
+                extractRegex: '<status>\\s*Mood:\\s*(.*?)\\s*Place:\\s*(.*?)\\s*<\\/status>',
+                htmlBody: '<section class="status-card"><strong>$1</strong><span>$2</span></section>',
+                cssTemplate: '.status-card { color: #fff; }',
+                jsTemplate: 'document.querySelector(".status-card")?.classList.add("ready");',
+                templateVersion: 2,
+                allowScripts: true,
+                renderMode: 'html',
+            },
+        );
+
+        expect(result?.meta?.html).toContain('<strong>quiet</strong>');
+        expect(result?.meta?.html).toContain('<span>library</span>');
+        expect(result?.meta?.html).toContain('.status-card { color: #fff; }');
+        expect(result?.meta?.html).toContain('classList.add("ready")');
+        expect(result?.meta?.allowScripts).toBe(true);
+    });
 });

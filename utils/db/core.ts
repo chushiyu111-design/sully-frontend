@@ -1,7 +1,7 @@
 
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 38; // Bumped for Vector Memory store
+const DB_VERSION = 39; // Bumped for Memory Record stores
 
 export const STORE_CHARACTERS = 'characters';
 export const STORE_MESSAGES = 'messages';
@@ -31,10 +31,13 @@ export const STORE_XHS_ACTIVITIES = 'xhs_activities';
 export const STORE_LETTERS = 'letters';
 export const STORE_VOICE_AUDIO = 'voice_audio';
 export const STORE_VECTOR_MEMORIES = 'vector_memories';
+export const STORE_MEMORY_RECORDS = 'memory_records';
+export const STORE_MEMORY_RECORD_AUDIO = 'memory_record_audio';
 
 export interface ScheduledMessage {
     id: string;
     charId: string;
+    role?: 'user' | 'assistant';
     content: string;
     dueAt: number;
     createdAt: number;
@@ -151,6 +154,18 @@ export const openDB = (): Promise<IDBDatabase> => {
             if (!db.objectStoreNames.contains(STORE_VECTOR_MEMORIES)) {
                 const vmStore = db.createObjectStore(STORE_VECTOR_MEMORIES, { keyPath: 'id' });
                 vmStore.createIndex('charId', 'charId', { unique: false });
+            }
+
+            if (!db.objectStoreNames.contains(STORE_MEMORY_RECORDS)) {
+                const recordStore = db.createObjectStore(STORE_MEMORY_RECORDS, { keyPath: 'id' });
+                recordStore.createIndex('charId', 'charId', { unique: false });
+                recordStore.createIndex('status', 'status', { unique: false });
+                recordStore.createIndex('createdAt', 'createdAt', { unique: false });
+            }
+
+            if (!db.objectStoreNames.contains(STORE_MEMORY_RECORD_AUDIO)) {
+                const audioStore = db.createObjectStore(STORE_MEMORY_RECORD_AUDIO, { keyPath: 'id' });
+                audioStore.createIndex('recordId', 'recordId', { unique: false });
             }
         };
     });

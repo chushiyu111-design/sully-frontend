@@ -238,27 +238,29 @@ export function getRecommendations(gaps: NutrientGap[], mealType?: MealType): Ar
         }));
 }
 
-// ── Always-Positive Narrations (internet-savvy, meme-friendly) ──
+// ── Narrations — Literary, poetic, no emoji ──
 
 const POSITIVE_NARRATIONS = [
-    '干饭人干饭魂，干饭都是人上人 🍚',
-    '今天也是为了吃饭而努力的一天 💪',
-    '认真记录的你，比想象中更酷 😎',
-    '食物面前没有体面，只有快乐 🤤',
-    '人生苦短，再来一碗 🍜',
-    '打工人的快乐就是吃 ☀️',
-    '有在好好吃饭，给你比心 🫰',
-    '你不吃饱，哪有力气搞事业 💼',
-    '好好吃饭的人运气不会差 🍀',
-    '今天也辛苦啦，你值得所有好吃的 🌈',
-    '吃饱了才有力气摆烂嘛 🛋️',
-    '认真干饭的样子很可爱 ✿',
-    '谁还不是个宝宝了，想吃就吃 🍰',
-    '你的胃在说谢谢 💛',
-    '卡路里是什么？不认识 🙈',
-    '这顿吃得很有格局 👏',
-    '每一口都是对自己的投资 📈',
-    '好好吃饭就是最大的自律 ✨',
+    '人间烟火气，最抚凡人心。',
+    '食事，亦是心事。',
+    '日日是好日，餐餐皆欢喜。',
+    '认真吃饭的人，懂得善待自己。',
+    '一箪食，一瓢饮，乐在其中。',
+    '把生活嚼得有滋有味，把日子过得活色生香。',
+    '世间万物，唯美食与爱不可辜负。',
+    'One cannot think well, love well, sleep well, if one has not dined well.',
+    '三餐四季，温柔以待。',
+    '且将新火试新茶，诗酒趁年华。',
+    '浮生若梦，为欢几何。',
+    '食饱饮醉，是人间最朴素的幸福。',
+    '小楼一夜听春雨，深巷明朝卖杏花。',
+    'Let food be thy medicine, and medicine be thy food.',
+    '红泥小火炉，能饮一杯无？',
+    '人生得意须尽欢，莫使金樽空对月。',
+    '慢慢来，比较快。',
+    '此心安处是吾乡。',
+    '晚来天欲雪，能饮一杯无。',
+    '岁月静好，浅笑安然。',
 ];
 
 export function getDailyNarration(): string {
@@ -278,66 +280,66 @@ function pickDaily<T>(arr: T[], offset = 0): T {
 // These shift each year but we use 2025-2027 approximate windows
 function getChineseFestival(month: number, date: number): string | null {
     // 春节 (late Jan / early Feb)
-    if ((month === 1 && date >= 25) || (month === 2 && date <= 5)) return '过年好！饺子汤圆安排上 🧧';
+    if ((month === 1 && date >= 25) || (month === 2 && date <= 5)) return '爆竹声中一岁除，春风送暖入屠苏。';
     // 元宵节 (~Feb 12-15)
-    if (month === 2 && date >= 10 && date <= 16) return '元宵节快乐，汤圆还是饺子？评论区打起来 🥟';
+    if (month === 2 && date >= 10 && date <= 16) return '众里寻他千百度，蓦然回首，那人却在灯火阑珊处。';
     // 清明 (~Apr 4-6)
-    if (month === 4 && date >= 3 && date <= 6) return '清明时节，来个青团应个景 🍡';
+    if (month === 4 && date >= 3 && date <= 6) return '清明时节雨纷纷，路上行人欲断魂。';
     // 端午 (~Jun 1-15 range)
-    if (month === 6 && date >= 1 && date <= 15) return '端午安康！甜粽咸粽，我全都要 🫡';
+    if (month === 6 && date >= 1 && date <= 15) return '轻汗微微透碧纨，明朝端午浴芳兰。';
     // 七夕 (~Aug 1-15)
-    if (month === 8 && date >= 1 && date <= 15) return '七夕快乐，没对象也要吃好的 🍫';
+    if (month === 8 && date >= 1 && date <= 15) return '柔情似水，佳期如梦，忍顾鹊桥归路。';
     // 中秋 (~Sep 10-20)
-    if (month === 9 && date >= 10 && date <= 20) return '中秋快乐！五仁月饼退退退 🥮';
+    if (month === 9 && date >= 10 && date <= 20) return '但愿人长久，千里共婵娟。';
     // 重阳 (~Oct 10-15)
-    if (month === 10 && date >= 10 && date <= 15) return '重阳节，来碗桂花糕敬自己 🌸';
+    if (month === 10 && date >= 10 && date <= 15) return '遥知兄弟登高处，遍插茱萸少一人。';
     // 腊八 (~Jan 10-20)
-    if (month === 1 && date >= 10 && date <= 20) return '腊八节，熬一碗腊八粥暖暖 🥣';
+    if (month === 1 && date >= 10 && date <= 20) return '腊月风和意已春，时因散策过吾邻。';
     // 冬至 (~Dec 21-23)
-    if (month === 12 && date >= 20 && date <= 23) return '冬至了！北方饺子南方汤圆，你站哪队 🤔';
+    if (month === 12 && date >= 20 && date <= 23) return '天时人事日相催，冬至阳生春又来。';
     return null;
 }
 
 const WEEKDAY_THEMES: Record<number, string[]> = {
     0: [ // 周日
-        '周日 = 合法赖床 + 暴饮暴食日 🛌',
-        '周末最后一天，brunch 走起 🥞',
-        '今天拒绝内卷，只卷春饼 🫔',
-        '周日限定：什么都不做也是一种努力 🧘',
+        '偷得浮生半日闲。',
+        '闲敲棋子落灯花。',
+        '一壶好茶，一段时光，足矣。',
+        '无事此静坐，一日似两日。',
     ],
     1: [ // 周一
-        '周一综合症？得靠碳水治 🍝',
-        '新的一周从吃饱开始，格局打开 📐',
-        '周一能准时干饭的都是狠人 🫡',
-        '我不是不想上班，我只是想吃饭 🥺',
+        '千里之行，始于足下。',
+        '每一个不曾起舞的日子，都是对生命的辜负。',
+        '长风破浪会有时，直挂云帆济沧海。',
+        '天将降大任于斯人，先让他吃饱。',
     ],
     2: [ // 周二
-        '周二了，离周末又近了一步，吃串庆祝 🍢',
-        '摸鱼第二天，补充能量继续摸 🐟',
-        '今天适合来点重口的，麻辣烫走起 🌶️',
+        '路漫漫其修远兮，吾将上下而求索。',
+        '不乱于心，不困于情，不畏将来。',
+        'To live is the rarest thing. Most people exist, that is all.',
     ],
     3: [ // 周三
-        '周三，一周过半，下午茶安排上 ☕',
-        '驼峰日，需要甜食续命 🍩',
-        '熬过今天就是下坡路了，奶茶打气 🧋',
+        '行到水穷处，坐看云起时。',
+        '山重水复疑无路，柳暗花明又一村。',
+        '半山腰总是最挤的，你得去山顶看看。',
     ],
     4: [ // 周四
-        'V 我 50 🫴 疯狂星期四谁请我吃 🍗',
-        '疯四文学：今天不吃炸鸡，不配当打工人 🍟',
-        '周四了，肯德基已经在向你招手 🐔',
-        'KFC：你有一个未使用的星期四 📩',
+        '竹杖芒鞋轻胜马，谁怕？一蓑烟雨任平生。',
+        '莫听穿林打叶声，何妨吟啸且徐行。',
+        '明日之事，今日且慢忧。',
+        'The only way to do great work is to love what you eat.',
     ],
     5: [ // 周五
-        '周五！摸鱼成功，奶茶犒劳自己 🧋',
-        '今天下班后的火锅，已经在脑子里点好了 🍲',
-        '周五 = 合法提前进入周末模式 🎉',
-        '摸鱼最后一天，吃好点对得起自己 🫰',
+        '春风得意马蹄疾，一日看尽长安花。',
+        '人生如逆旅，我亦是行人。',
+        '且乐生前一杯酒，何须身后千载名。',
+        '料峭春风吹酒醒，微冷，山头斜照却相迎。',
     ],
     6: [ // 周六
-        '周六快乐！没有什么是一顿火锅解决不了的 🍲',
-        '周末第一天，热量不存在的 🙈',
-        '今天的我：放肆吃、不后悔 💅',
-        '有一种快乐叫：周六 + 烤肉 🥩',
+        '何以解忧，唯有美食与好梦。',
+        '清风明月本无价，近水远山皆有情。',
+        '人生不过一场绚烂花事。',
+        'Life is uncertain. Eat dessert first.',
     ],
 };
 
@@ -345,73 +347,74 @@ const SEASONAL_VIBES: Array<{ months: number[]; lines: string[] }> = [
     {
         months: [3, 4],
         lines: [
-            '春天来了，万物可爱，你也可爱 🌱',
-            '春日限定：草莓 + 樱花味的一切 🍓',
+            '等闲识得东风面，万紫千红总是春。',
+            '春水初生，春林初盛，春风十里不如你。',
+            '迟日江山丽，春风花草香。',
         ],
     },
     {
         months: [5, 6],
         lines: [
-            '天热了，雪糕自由安排上 🍦',
-            '夏天的快乐就是空调 + 西瓜 + 冰可乐 🍉',
+            '接天莲叶无穷碧，映日荷花别样红。',
+            '稻花香里说丰年，听取蛙声一片。',
         ],
     },
     {
         months: [7, 8],
         lines: [
-            '三伏天，靠冷饮续命中 🧊',
-            '这个温度出门就是铁板烧，在家吃凉面吧 🥶',
-            '秋天的第一杯奶茶，不如夏天的第 N 杯 🧋',
+            '水晶帘动微风起，满架蔷薇一院香。',
+            '懒摇白羽扇，裸袒青林中。',
+            '纸屏石枕竹方床，手倦抛书午梦长。',
         ],
     },
     {
         months: [9, 10],
         lines: [
-            '秋天的第一杯奶茶，你喝了吗 🧋',
-            '贴秋膘正式开始，不接受反驳 🫡',
-            '入秋了，糖炒栗子的味道好近 🌰',
+            '空山新雨后，天气晚来秋。',
+            '自古逢秋悲寂寥，我言秋日胜春朝。',
+            '一年好景君须记，最是橙黄橘绿时。',
         ],
     },
     {
         months: [11, 12],
         lines: [
-            '降温了，没有什么是一碗热汤解决不了的 🍜',
-            '冬天的幸福 = 暖气 + 火锅 + 不上班 🔥',
-            '天冷就要吃热的，这是写进 DNA 的 🧬',
+            '晚来天欲雪，能饮一杯无。',
+            '柴门闻犬吠，风雪夜归人。',
+            '日暮苍山远，天寒白屋贫。',
         ],
     },
     {
         months: [1, 2],
         lines: [
-            '冬天嘛，多吃点没关系的 ❄️',
-            '窝在家里吃热汤，人生赢家 🏠',
+            '忽如一夜春风来，千树万树梨花开。',
+            '寒夜客来茶当酒，竹炉汤沸火初红。',
         ],
     },
 ];
 
 const PAYDAY_VIBES = [
-    '发工资了！今天配吃好的 💰',
-    '工资到账，火锅自由达成 🍲',
-    '这个月的第一顿好的，敬自己 🥂',
+    '良田千顷，不过一日三餐。',
+    '人间有味是清欢。',
+    '得之我幸，失之我命，如此而已。',
 ];
 
 const MONTH_END_VIBES = [
-    '月底了，泡面也是一种生活态度 🍜',
-    '钱包：我已经尽力了。你：没事还有外卖红包 📱',
-    '月底穷到吃土？土也要加个蛋 🍳',
+    '粗茶淡饭有真味，明窗净几是安居。',
+    '山中何事？松花酿酒，春水煎茶。',
+    '简约不是少，而是没有多余。',
 ];
 
 const DAILY_INSPIRATIONS = [
-    '今天也许适合来碗热干面 🥢',
-    '试试久违的街边烤串？🍢',
-    '要不要来个煎饼果子？🥚',
-    '今天感觉适合吃面 🍝',
-    '突然想吃包子了怎么办 🥟',
-    '今天的你值得一碗螺蛳粉 🐌',
-    '不如来份麻辣烫，丰俭由人 🌶️',
-    '生活建议：偶尔来杯豆浆 🥛',
-    '今天有没有想吃甜的 🍮',
-    '鸡蛋灌饼，永远的神 🫓',
+    '落花人独立，微雨燕双飞。',
+    '月落乌啼霜满天，江枫渔火对愁眠。',
+    '醉后不知天在水，满船清梦压星河。',
+    '试问岭南应不好？却道，此心安处是吾乡。',
+    '采菊东篱下，悠然见南山。',
+    '问余何意栖碧山，笑而不答心自闲。',
+    'The art of dining well is no slight art, the pleasure not a slight pleasure.',
+    '一期一会，世当珍惜。',
+    '山有木兮木有枝，心悦君兮君不知。',
+    '愿你一生温暖纯良，不舍爱与自由。',
 ];
 
 export function getThemedSuggestion(): string | null {
@@ -428,11 +431,11 @@ export function getThemedSuggestion(): string | null {
     if (date >= 1 && date <= 3) return pickDaily(PAYDAY_VIBES);
     if (date >= 28) return pickDaily(MONTH_END_VIBES);
 
-    // Priority 3: Day-of-week memes
+    // Priority 3: Day-of-week
     const weekdayOptions = WEEKDAY_THEMES[day];
     if (weekdayOptions) {
         const weekdayPick = pickDaily(weekdayOptions, 1);
-        // 50% chance to also append a seasonal vibe on weekdays
+        // 30% chance to show seasonal instead
         const seasonal = SEASONAL_VIBES.find((s) => s.months.includes(month));
         if (seasonal && (dailySeed() % 3 === 0)) {
             return pickDaily(seasonal.lines, 2);
@@ -447,3 +450,4 @@ export function getThemedSuggestion(): string | null {
     // Priority 5: Random daily inspiration
     return pickDaily(DAILY_INSPIRATIONS, 4);
 }
+

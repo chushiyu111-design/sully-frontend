@@ -2,6 +2,7 @@ import React from 'react';
 
 export const MacroBar: React.FC<{ label: string; value: number; target: number; color: string; unit?: string }> = React.memo(
     ({ label, value, target, color, unit = 'g' }) => {
+        // Clamp at 100% — no red, no anxiety
         const percent = Math.min((value / Math.max(target, 1)) * 100, 100);
         return (
             <div className="hs-macro-item hs-animate-fade-in">

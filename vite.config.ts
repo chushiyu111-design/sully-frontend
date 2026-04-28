@@ -92,6 +92,11 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/minimax-api/, ''),
         },
+        '/minimax-music-api': {
+          target: 'https://api.minimax.chat',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/minimax-music-api/, ''),
+        },
         // XHS Bridge 模式 (xiaohongshu-skills REST server)
         '/xhs-api': {
           target: 'http://localhost:18061',

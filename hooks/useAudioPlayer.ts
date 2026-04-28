@@ -7,8 +7,9 @@ import type {
     NeteaseDjProgram,
     NeteaseDjRadio,
     NeteaseSong,
+    MemoryRecordPlayable,
 } from '../types/music';
-import { isSongPlayable } from '../types/music';
+import { isMemoryRecordPlayable, isSongPlayable } from '../types/music';
 import { resolvePlayableUrl } from '../utils/musicService';
 
 export interface PlaybackState {
@@ -90,8 +91,14 @@ function cloneProgram(program: NeteaseDjProgram): NeteaseDjProgram {
     };
 }
 
+function cloneMemoryRecord(record: MemoryRecordPlayable): MemoryRecordPlayable {
+    return { ...record };
+}
+
 function clonePlayable(playable: MusicPlayable): MusicPlayable {
-    return isSongPlayable(playable) ? cloneSong(playable) : cloneProgram(playable);
+    if (isSongPlayable(playable)) return cloneSong(playable);
+    if (isMemoryRecordPlayable(playable)) return cloneMemoryRecord(playable);
+    return cloneProgram(playable);
 }
 
 function buildFallbackPlaybackUrl(playable: MusicPlayable): string | null {

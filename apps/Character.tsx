@@ -1142,6 +1142,7 @@ ${isInitialGeneration ? `
                                     <div className="flex-1 space-y-3">
                                         <input value={formData.name} onChange={(e) => handleChange('name', e.target.value)} className="w-full bg-transparent py-1 text-xl font-medium text-slate-800 border-b border-slate-200" placeholder="名称" />
                                         <input value={formData.description} onChange={(e) => handleChange('description', e.target.value)} className="w-full bg-transparent py-1 text-sm text-slate-500 border-b border-slate-200" placeholder="描述" />
+                                        <input value={formData.ttsVoiceId || ''} onChange={(e) => handleChange('ttsVoiceId', e.target.value)} className="w-full bg-transparent py-1 text-xs text-slate-500 border-b border-slate-200" placeholder="MiniMax 角色声线 Voice ID（可选）" />
                                     </div>
                                 </div>
 

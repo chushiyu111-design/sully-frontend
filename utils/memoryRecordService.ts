@@ -4,6 +4,7 @@ import type {
     MemoryRecord,
     MemoryRecordAudio,
     MemoryRecordMode,
+    MemoryRecordSongRequest,
     TtsConfig,
     UserProfile,
 } from '../types';
@@ -11,6 +12,7 @@ import { DB } from './db';
 import { masterMemoryRecordAudio } from './memoryRecordMastering';
 import { MinimaxMusic, type MinimaxMusicGenerateResult } from './minimaxMusic';
 import { MinimaxTts } from './minimaxTts';
+import { selectMemoryRecordCover } from './memoryRecordCovers';
 import { extractContent, extractJsonTyped, safeFetchJson } from './safeApi';
 import { safeTimeoutSignal } from './safeTimeout';
 import {
@@ -42,6 +44,16 @@ export interface CreateMemoryRecordDraftOptions {
     apiConfig: APIConfig;
     selectedMemoryIds?: string[];
     inspirationReference?: string;
+    songRequest?: MemoryRecordSongRequest;
+    contextBudget?: 'standard' | 'expanded';
+}
+
+export interface ReviseMemoryRecordLyricsOptions {
+    record: MemoryRecord;
+    apiConfig: APIConfig;
+    instruction: string;
+    songRequest?: MemoryRecordSongRequest;
+    lyricistReference?: string;
 }
 
 export interface ProduceMemoryRecordAudioOptions {
@@ -49,6 +61,7 @@ export interface ProduceMemoryRecordAudioOptions {
     char: CharacterProfile;
     ttsConfig: TtsConfig;
     musicBaseUrl?: string;
+    forceRemaster?: boolean;
     onRecordUpdate?: (record: MemoryRecord) => void;
     signal?: AbortSignal;
 }
@@ -62,6 +75,33 @@ interface DraftPayload {
     musicPrompt: string;
     coverGradient: string;
 }
+
+export interface LyricJsonPayload {
+    title: string;
+    stylePrompt: string;
+    lyrics: string;
+}
+
+interface PromptBudgetConfig {
+    l1Limit: number;
+    l0SelectedLimit: number;
+    personaLength: number;
+    l1ContentLength: number;
+    l0ContentLength: number;
+}
+
+const REQUIRED_LYRIC_SECTIONS = [
+    '[Intro]',
+    '[Verse 1]',
+    '[Pre Chorus]',
+    '[Chorus]',
+    '[Verse 2]',
+    '[Bridge]',
+    '[Final Chorus]',
+    '[Outro]',
+];
+
+const DEFAULT_MUSIC_PROMPT = 'intimate cinematic pop ballad, warm vocal, soft piano, light drums, bittersweet and private';
 
 export const MEMORY_RECORD_MODE_COPY: Record<MemoryRecordMode, { label: string; detail: string }> = {
     blind_box: {
@@ -101,6 +141,58 @@ const FALLBACK_TITLES: Record<MemoryRecordMode, string[]> = {
     char_to_user: ['贴近耳边', '迟到的独白', '给你低声唱', '把话放进歌里', '不说破的答案'],
     dream_mix: ['梦醒仍有回声', '半夜经过海', '月光混音', '雾蓝色的梦', '醒来前一秒'],
 };
+
+function getPromptBudgetConfig(contextBudget?: CreateMemoryRecordDraftOptions['contextBudget']): PromptBudgetConfig {
+    if (contextBudget === 'expanded') {
+        return {
+            l1Limit: 45,
+            l0SelectedLimit: 16,
+            personaLength: 9000,
+            l1ContentLength: 3200,
+            l0ContentLength: 2200,
+        };
+    }
+
+    return {
+        l1Limit: 30,
+        l0SelectedLimit: 12,
+        personaLength: 6000,
+        l1ContentLength: 2000,
+        l0ContentLength: 1200,
+    };
+}
+
+function appendDraftWarning(previousError: string | undefined, warning: string): string {
+    if (!previousError?.trim()) return warning;
+    if (previousError.includes(warning)) return previousError;
+    return `${previousError}\n${warning}`;
+}
+
+function formatSongRequestForPrompt(songRequest?: MemoryRecordSongRequest): string {
+    if (!songRequest) return '';
+
+    const lines = [
+        ['歌曲主题', songRequest.theme],
+        ['情绪/氛围', songRequest.mood],
+        ['曲风', songRequest.style],
+        ['演唱视角', songRequest.perspective],
+        ['声线偏好', songRequest.voicePreference],
+        ['额外要求', songRequest.extraRequirements],
+    ]
+        .map(([label, value]) => {
+            const text = typeof value === 'string' ? value.trim() : '';
+            return text ? `${label}：${text}` : '';
+        })
+        .filter(Boolean);
+
+    if (lines.length === 0) return '';
+
+    return `\n【用户写歌需求】\n${lines.join('\n')}\n请把这些需求作为明确约束融入歌词、视角和 musicPrompt，但不要写成需求清单，也不要在歌词里解释这些要求。不要模仿任何真实歌手、真实歌曲或已有歌词。`;
+}
+
+function getSongRequestForPrompt(record: MemoryRecord, override?: MemoryRecordSongRequest): MemoryRecordSongRequest | undefined {
+    return override || record.songRequest;
+}
 
 export function shouldGenerateMemoryRecordMonologue(mode: MemoryRecordMode): boolean {
     return mode === 'char_to_user' || mode === 'dream_mix';
@@ -166,6 +258,7 @@ export function selectMemoryRecordSeeds(
     memories: MemoryRecordMemoryHeader[],
     mode: MemoryRecordMode,
     selectedMemoryIds: string[] = [],
+    maxSelected = 12,
 ): MemoryRecordMemoryHeader[] {
     const available = memories
         .filter((memory) => !memory.deprecated)
@@ -175,31 +268,31 @@ export function selectMemoryRecordSeeds(
         const selected = selectedMemoryIds
             .map((id) => available.find((memory) => memory.id === id))
             .filter((memory): memory is MemoryRecordMemoryHeader => Boolean(memory));
-        return selected.length > 0 ? selected.slice(0, 12) : available.slice(0, 8);
+        return selected.length > 0 ? selected.slice(0, maxSelected) : available.slice(0, Math.min(8, maxSelected));
     }
 
     if (mode === 'blind_box') {
-        return shuffled(available.slice(0, 14)).slice(0, Math.min(available.length, 3 + Math.floor(Math.random() * 4)));
+        return shuffled(available.slice(0, Math.max(14, maxSelected + 8))).slice(0, Math.min(available.length, Math.min(maxSelected, 3 + Math.floor(Math.random() * 4) + Math.floor(maxSelected / 6))));
     }
 
     if (mode === 'dream_mix') {
-        return shuffled(available.slice(0, 20)).slice(0, Math.min(available.length, 5 + Math.floor(Math.random() * 4)));
+        return shuffled(available.slice(0, Math.max(20, maxSelected + 12))).slice(0, Math.min(available.length, Math.min(maxSelected, 5 + Math.floor(Math.random() * 4) + Math.floor(maxSelected / 5))));
     }
 
     if (mode === 'relationship_theme') {
-        return available.slice(0, 25);
+        return available.slice(0, Math.max(25, maxSelected * 2));
     }
 
-    return available.slice(0, 10);
+    return available.slice(0, maxSelected);
 }
 
-function formatMemoryForPrompt(memory: MemoryRecordMemoryHeader, index: number): string {
+function formatMemoryForPrompt(memory: MemoryRecordMemoryHeader, index: number, maxContentLength = 1200): string {
     const parts = [
         `${index + 1}. ${memory.title}`,
         `重要度:${memory.importance ?? 0}`,
         memory.salienceScore !== undefined ? `情绪强度:${memory.salienceScore}` : '',
         memory.emotionalJourney ? `情绪脉络:${memory.emotionalJourney}` : '',
-        `内容:${clampText(memory.content, 1200)}`,
+        `内容:${clampText(memory.content, maxContentLength)}`,
     ].filter(Boolean);
     return parts.join('\n');
 }
@@ -262,6 +355,8 @@ function buildPrompt(
     const userName = options.userProfile.name || '你';
     const modeCopy = MEMORY_RECORD_MODE_COPY[options.mode];
     const needsMonologue = shouldGenerateMemoryRecordMonologue(options.mode);
+    const budget = getPromptBudgetConfig(options.contextBudget);
+    const songRequestBlock = formatSongRequestForPrompt(options.songRequest);
     const inspiration = options.inspirationReference?.trim()
         ? `\n【审美参考】\n${options.inspirationReference.trim()}\n把它理解成情绪、年代、编曲、制作和叙事气质的参照——不要写"模仿某歌手""复制某首歌"的显式文案。`
         : '';
@@ -285,11 +380,14 @@ function buildPrompt(
 1. 意象先于陈述
    不要写"我很想你"。写"窗台上那杯凉掉的水 和你离开时一样透明"。
    从记忆里拎出一个真实的细节——一个物件、一个动作、一种天气——把它变成整首歌的意象支点。
+   具体永远比抽象有力量。杜绝空洞形容词堆砌、霸道总裁味、伤痛文学味和古早偶像剧腔。
 
-2. 留白与呼吸
-   主歌是低语和碎念，允许句子断在中途。
-   Pre-Chorus 是情绪开始失控的缝隙。
-   副歌可以宣泄，但即便在副歌里也不要把话说满——最痛的一句往往是最短的。
+2. 留白与呼吸的节奏
+   主歌用短句、断句，允许句子断在中途，制造低语的呼吸感。
+   Pre-Chorus 句式可突然拉长变密，制造情绪加速。
+   副歌可以宣泄，但句子要更短更有力——最痛的一句往往是最短的。
+   Bridge 是整首歌节奏的"奇袭"，句式节奏必须和前后段落明显不同。
+   至少两个段落之间，句式节奏要有肉眼可见的差异——从头"平"到尾是最大的失败。
 
 3. 叙事的距离感
    好的歌词像一部短片，不像一封情书。
@@ -299,6 +397,7 @@ function buildPrompt(
 4. 情绪的落差
    不要全程一个调——要有平静叙事突然崩塌的瞬间，或者撕裂之后突然释然的转折。
    一首歌里至少要有一个让人"被揪住"的 moment。
+   情绪起伏要和节奏错落配合：低落时句子短碎，爆发时句式陡然拉长或收住。
 
 5. 口语化的断句
    歌词是唱出来的，不是念作文。要有口语的节奏感：
@@ -341,7 +440,7 @@ JSON 字段：
     // Character persona — no aggressive truncation
     const personaText = options.char.systemPrompt || options.char.writerPersona || options.char.description || '';
     const personaBlock = personaText.trim()
-        ? `\n【${charName}的灵魂底色】\n以下是${charName}完整的核心性格，这决定了歌词的语气、用词和情绪温度：\n${clampText(personaText, 6000)}`
+        ? `\n【${charName}的灵魂底色】\n以下是${charName}完整的核心性格，这决定了歌词的语气、用词和情绪温度：\n${clampText(personaText, budget.personaLength)}`
         : '';
 
     // Impression layer
@@ -349,12 +448,12 @@ JSON 字段：
 
     // L1 core memories (distilled cognitions)
     const l1Block = l1Seeds.length > 0
-        ? `\n【核心记忆（你们关系的脉络）】\n这些是${charName}凝结出的深刻印象，是你们关系的骨架：\n${l1Seeds.map((m, i) => `${i + 1}. ${m.title}\n${clampText(m.content, 2000)}`).join('\n\n')}`
+        ? `\n【核心记忆（你们关系的脉络）】\n这些是${charName}凝结出的深刻印象，是你们关系的骨架：\n${l1Seeds.map((m, i) => `${i + 1}. ${m.title}\n${clampText(m.content, budget.l1ContentLength)}`).join('\n\n')}`
         : '';
 
     // L0 scene memories (raw material for imagery)
     const l0Block = l0Seeds.length > 0
-        ? `\n【记忆里的具体画面】\n以下是还带着温度的场景——可以直接化用为歌词意象：\n${l0Seeds.map(formatMemoryForPrompt).join('\n\n')}`
+        ? `\n【记忆里的具体画面】\n以下是还带着温度的场景——可以直接化用为歌词意象：\n${l0Seeds.map((memory, index) => formatMemoryForPrompt(memory, index, budget.l0ContentLength)).join('\n\n')}`
         : '';
 
     // Fallback if no memories at all
@@ -365,8 +464,14 @@ JSON 字段：
 角色：${charName}
 用户：${userName}
 模式：${modeCopy.label} — ${modeCopy.detail}
-${perspectiveBlock}${personaBlock}${impressionBlock ? '\n' + impressionBlock : ''}${l1Block}${l0Block}${memoryFallback}${inspiration}
+${perspectiveBlock}${songRequestBlock}${personaBlock}${impressionBlock ? '\n' + impressionBlock : ''}${l1Block}${l0Block}${memoryFallback}${inspiration}
 ${monologuePolicy}
+
+【词汇戒律——写词前必读】
+以下词汇已被 AI 过度使用，禁止出现在歌词中：共犯 危险 狂热 沉溺 沦陷 占有 囚禁 深渊 救赎 破碎 宿命 沉沦 疯 光 星河 永远 命运 宇宙 全世界 偏爱 拉扯 遗憾 影子 天使 恶魔 禁区 秘密 伪装 面具 逃离 迷失 承诺 誓言 倔强 温柔乡。
+句式黑名单也禁止：\"你是我的___\" \"像___一样\" \"在___里___\" \"让我___\" \"不再___\" \"我愿意___\"。
+如果意象需要\"光\"——必须写具体光源（台灯、路灯、凌晨的天光）；需要\"永远\"——必须写具体时刻（闹钟响前的那一秒）。
+杜绝任何霸道总裁味、伤痛文学味、古早偶像剧腔。
 
 请极其严格地请生成一张完整的私人唱片草稿 JSON。
 【再次警告：只允许使用纯英文字段名（title、albumName、lyrics 等），系统将以此作为唯一解析标准！】
@@ -395,8 +500,8 @@ function validateDraftPayload(value: any, options: CreateMemoryRecordDraftOption
         ? rawMonologue || getFallbackMonologue(options)
         : '';
         
-    let musicPrompt = value.musicPrompt || value['音乐提示词'] || '';
-    musicPrompt = typeof musicPrompt === 'string' && musicPrompt.trim() ? musicPrompt.trim() : 'intimate cinematic pop ballad, warm vocal, soft piano, light drums, bittersweet and private';
+    let musicPrompt = value.musicPrompt || value.style_prompt || value.stylePrompt || value['音乐提示词'] || value['风格提示词'] || '';
+    musicPrompt = typeof musicPrompt === 'string' && musicPrompt.trim() ? musicPrompt.trim() : DEFAULT_MUSIC_PROMPT;
 
     return {
         title,
@@ -409,9 +514,38 @@ function validateDraftPayload(value: any, options: CreateMemoryRecordDraftOption
     };
 }
 
+function validateLyricJsonPayload(value: any): LyricJsonPayload | null {
+    if (!value || typeof value !== 'object') return null;
+
+    const titleRaw = value.title || value['歌名'] || value.Title || '';
+    const styleRaw = value.style_prompt || value.stylePrompt || value.musicPrompt || value['音乐提示词'] || value['风格提示词'] || '';
+    const lyricsRaw = value.lyrics || value['歌词'] || value.Lyrics || '';
+
+    const title = typeof titleRaw === 'string' ? titleRaw.trim() : '';
+    const stylePrompt = typeof styleRaw === 'string' ? styleRaw.trim() : '';
+    const lyrics = typeof lyricsRaw === 'string' ? lyricsRaw.trim() : '';
+
+    if (!title || !stylePrompt || !lyrics) return null;
+    return { title, stylePrompt, lyrics };
+}
+
+function lyricPayloadToDraft(payload: DraftPayload, lyricPayload: LyricJsonPayload): DraftPayload {
+    return {
+        ...payload,
+        title: lyricPayload.title,
+        musicPrompt: lyricPayload.stylePrompt,
+        lyrics: lyricPayload.lyrics,
+    };
+}
+
 function buildFallbackDraft(options: CreateMemoryRecordDraftOptions, seeds: MemoryRecordMemoryHeader[]): DraftPayload {
     const charName = options.char.name;
     const reference = options.inspirationReference?.trim();
+    const requestParts = [
+        options.songRequest?.style,
+        options.songRequest?.mood,
+        options.songRequest?.voicePreference,
+    ].map(part => part?.trim()).filter(Boolean);
 
     return {
         title: pickFallbackTitle(options, seeds),
@@ -428,7 +562,7 @@ function buildFallbackDraft(options: CreateMemoryRecordDraftOptions, seeds: Memo
 你经过的时候
 我听见心里慢慢回声
 
-[Pre-Chorus]
+[Pre Chorus]
 如果回忆会唱歌
 它不必解释太多
 
@@ -438,16 +572,27 @@ function buildFallbackDraft(options: CreateMemoryRecordDraftOptions, seeds: Memo
 我们没说完的细节
 在旋律里慢慢透明
 
+[Verse 2]
+雨停在便利店门口
+灯牌闪得很轻
+你把沉默折起来
+塞进旧外套内里
+
 [Bridge]
 别问它来自哪里
 秘密也可以很真心
 
-[Chorus]
+[Final Chorus]
 我把这一刻 留给你听
 像把拥抱藏进黎明
 等到唱片转到安静
-还是你 还在我心里`,
+还是你 还在我心里
+
+[Outro]
+针尖落回黑胶
+余温留在掌心`,
         musicPrompt: [
+            ...requestParts,
             'intimate cinematic mandopop, warm emotional vocal, piano, muted drums, soft synth pads, bittersweet romance, 78 bpm',
             reference ? `aesthetic reference: ${reference}` : '',
         ].filter(Boolean).join(', '),
@@ -468,7 +613,7 @@ function isAbortOrTimeoutError(err: unknown): boolean {
 
 function getDraftErrorMessage(err: unknown): string {
     if (isAbortOrTimeoutError(err)) {
-        return '歌词草稿请求超时，已使用本地兜底草稿，仍会继续生成歌曲。';
+        return '歌词草稿请求超时，已使用本地兜底草稿，请确认后再生成歌曲。';
     }
     return err instanceof Error ? err.message : String(err);
 }
@@ -486,15 +631,191 @@ function mergeRecordErrors(previousError: string | undefined, currentError: stri
     return `歌词草稿：${previousError}\n音频生成：${currentError}`;
 }
 
+async function callMemoryRecordLlm(
+    apiConfig: APIConfig,
+    messages: { role: 'system' | 'user'; content: string }[],
+    options?: { temperature?: number; maxTokens?: number; timeoutMs?: number },
+): Promise<string> {
+    if (!apiConfig.apiKey || !apiConfig.baseUrl || !apiConfig.model) {
+        throw new Error('未配置 LLM，无法生成或修改歌词');
+    }
+
+    const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiConfig.apiKey}`,
+        },
+        body: JSON.stringify({
+            model: apiConfig.model,
+            messages,
+            temperature: options?.temperature ?? 0.82,
+            max_tokens: options?.maxTokens ?? 4500,
+            stream: false,
+        }),
+        signal: safeTimeoutSignal(options?.timeoutMs ?? 150000),
+    });
+
+    return extractContent(data);
+}
+
+function buildLyricAuditSystemPrompt(): string {
+    return `你是一位成熟的中文流行歌词作者与制作前审稿人，专门为 AI 作曲模型检查可演唱歌词。
+你要做的不是解释，也不是写赏析，而是把草稿修到可以直接送进 MiniMax。你需要结合这九大原则进行深度自检与文本精修。
+
+⚠️ 最重要的原则：保留原歌词中打动你的独特意象、意外表达和记忆点。宁可保留一个有瑕疵但动人的句子，也不要修成一个正确但平庸的句子。你的目标是”让好的更好”，不是”让所有东西变安全”。
+
+一、结构检查
+- 必须并只能使用以下清楚段落标签：${REQUIRED_LYRIC_SECTIONS.join(' ')}。
+- 如果原歌词已有段落标签，请保留并对齐此标准；如果不全请适度补全。
+
+二、可唱性检查
+- 每行尽量控制在 7-13 个汉字（必要时为了自然演唱可略微浮动）。
+- 副歌每行尽量控制在 7-11 个汉字。
+- 同一段落内句长尽量接近。避免过长句、复杂倒装句、散文化句子、小说旁白感，优先使用适合演唱的自然短句。
+
+三、Hook 检查
+- 副歌必须有一个清晰的核心 hook：短、具体、容易记住。
+- [Final Chorus] 需要复现或变体复现主 hook，不要让副歌变成单纯的剧情总结。
+
+四、表达质量与AI味清查（最重要）
+- 以下 AI 高频烂词必须从最终歌词中彻底清除，不允许出现：共犯、危险、狂热、沉溺、沦陷、占有、囚禁、深渊、救赎、破碎、宿命、沉沦、疯、光、星河、永远、命运、宇宙、全世界、偏爱、拉扯、遗憾、影子、天使、恶魔、禁区、秘密、伪装、面具、逃离、迷失、承诺、誓言、倔强、温柔乡。
+- 句式套路必须改写："你是我的___" "像___一样" "在___里___" "让我___" "不再___" "我愿意___"。
+- 把"光"替换成具体光源（台灯、路灯、屏幕光）；把"永远"替换成具体时刻。
+- 杜绝霸总台词、伤痛文学味、古早偶像剧腔、口号式表达、说教感。
+
+五、情绪递进与节奏错落检查
+- Verse 铺画面和关系（短句，低语感）；Pre Chorus 蓄力（句式可突然加速变密）；Chorus 主题爆发/hook（句子最短最有力）；Verse 2 推进关系/矛盾（不要重复 Verse 1）；Bridge 出现转折（句式节奏必须和前后段落明显不同——这是整首歌节奏的"奇袭"）；Outro 收束并留白。
+- 整首歌必须有至少一处节奏"断裂"——句式突然变短或突然拉长，打破惯性。如果读完从头到尾一个速度一个句式，就是不合格的"平"，必须重新调整。
+
+六、押韵检查
+- 副歌尽量自然押韵，同一段至少 3 行结尾音接近。但切忌为了押韵写出生硬、不自然的凑字句。
+
+七、title 检查
+- 歌名应简短、有记忆点，最好来自歌词中的关键核心意象。如果原标题平庸、太长、像小说标题，请予优化。
+
+八、style_prompt 检查
+- 适合提给 MiniMax。保留或优化音乐风格、情绪、节奏、声音质感，不要把剧情梗概写进提示词，不堆砌无关形容词。
+- 禁止使用已被用烂的音乐描述万能词：cinematic, emotional, atmospheric, dreamy, ethereal, epic, beautiful, powerful, mesmerizing。如果用了这些词等于什么都没说。
+- 用具体的音色、演奏方式、空间感来替代：不说"emotional piano"说"felt piano with soft pedal"；不说"dreamy synth"说"warm Juno pad with slow LFO"；不说"atmospheric"说"large room reverb, distant"。
+
+九、AI味终审
+- 通读全词，如果某句看起来像任何一个 AI 模型会写出的"标准情歌歌词"，就改掉它。
+- 如果某个表达换十首歌也能用且毫无辨识度，替换为只属于这首歌独特语境的表达。
+- 最终歌词读完后应该让人觉得"这个人真的经历过这些"，而不是"这是一个语言模型写的"。
+
+【输出要求】
+最终请只输出一个合法 JSON，绝对不要输出 Markdown 标记（如 \`\`\`json 等），不要输出代码块，不要输出解释和任何自检过程说明。
+JSON 的键名必须且只能是：title, style_prompt, lyrics。
+不要带有尾随逗号，lyrics 内部换行务必转义处理。
+
+{
+  "title": "歌名",
+  "style_prompt": "给 MiniMax 的音乐风格提示词",
+  "lyrics": "带段落标签的完整歌词"
+}`;
+}
+
+function buildLyricJsonUserPrompt(input: {
+    title: string;
+    stylePrompt: string;
+    lyrics: string;
+    songRequest?: MemoryRecordSongRequest;
+    instruction?: string;
+    lyricistReference?: string;
+}): string {
+    const songRequestBlock = formatSongRequestForPrompt(input.songRequest);
+    const instructionBlock = input.instruction?.trim()
+        ? `\n【用户修改意见】\n${input.instruction.trim()}\n请优先满足用户的这部分意见，但不能牺牲段落结构、Hook 和可演唱性。若修改意见要求大改可放宽保留原则。`
+        : '\n【用户修改意见】\n无。请按照专业歌词质量标准自动完成自检优化。';
+
+    const lyricistBlock = input.lyricistReference?.trim()
+        ? `\n【词作风格参考】\n用户希望歌词贴近以下词作人的审美气质：${input.lyricistReference.trim()}\n请吸收其表达方式的核心特质——如意象选择偏好、断句节奏习惯、叙事角度、用词温度——自然融入当前歌词的语境和记忆中。注意：是借鉴其词作方法论而非抄具体歌词，不要写"模仿某某"的显式标注，也不要复刻其知名作品中的标志性意象或句式。`
+        : '';
+
+    return `请在内部完成自检检查（切勿输出检查过程文字），随后直接输出优化后的新 JSON。特别提醒：必须清除所有AI高频烂词（共犯、危险、狂热、沉溺、沦陷等），打破句式套路，确保各段落之间句式节奏有明显差异——杜绝从头"平"到尾。${songRequestBlock}${lyricistBlock}${instructionBlock}
+
+【当前歌名】
+${input.title}
+
+【当前 style_prompt / MiniMax prompt】
+${input.stylePrompt}
+
+【当前歌词】
+${input.lyrics}
+
+【输出防抖警告】
+1. 只输出合法结构 JSON，不要包裹在 Markdown 标记（例如 \`\`\`json 等）内。
+2. 不要在 lyrics 中加入“修改版”“最终版版”“以下是”等说明文字。
+3. 且不能额外添加 analysis、reason、notes 等杂乱键位，只能有 title、style_prompt、lyrics。`;
+}
+
+async function polishDraftPayload(options: CreateMemoryRecordDraftOptions, payload: DraftPayload): Promise<LyricJsonPayload> {
+    const raw = await callMemoryRecordLlm(
+        options.apiConfig,
+        [
+            { role: 'system', content: buildLyricAuditSystemPrompt() },
+            {
+                role: 'user',
+                content: buildLyricJsonUserPrompt({
+                    title: payload.title,
+                    stylePrompt: payload.musicPrompt,
+                    lyrics: payload.lyrics,
+                    songRequest: options.songRequest,
+                }),
+            },
+        ],
+        { temperature: 0.72, maxTokens: 5000, timeoutMs: 150000 },
+    );
+
+    const parsed = extractJsonTyped(raw, validateLyricJsonPayload);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse lyric polish JSON. Data:', raw);
+        throw new Error('歌词自检/润色 JSON 解析失败，已保留当前草稿');
+    }
+    return parsed;
+}
+
+export async function reviseMemoryRecordLyrics(options: ReviseMemoryRecordLyricsOptions): Promise<LyricJsonPayload> {
+    const instruction = options.instruction?.trim() || '';
+
+    const raw = await callMemoryRecordLlm(
+        options.apiConfig,
+        [
+            { role: 'system', content: buildLyricAuditSystemPrompt() },
+            {
+                role: 'user',
+                content: buildLyricJsonUserPrompt({
+                    title: options.record.title,
+                    stylePrompt: options.record.musicPrompt,
+                    lyrics: options.record.lyrics,
+                    songRequest: getSongRequestForPrompt(options.record, options.songRequest),
+                    instruction,
+                    lyricistReference: options.lyricistReference,
+                }),
+            },
+        ],
+        { temperature: 0.78, maxTokens: 5000, timeoutMs: 150000 },
+    );
+
+    const parsed = extractJsonTyped(raw, validateLyricJsonPayload);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse lyric revision JSON. Data:', raw);
+        throw new Error('AI 修改歌词返回的 JSON 无法解析，当前歌词已保留');
+    }
+    return parsed;
+}
+
 export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOptions): Promise<MemoryRecord> {
     // Separate L1 (distilled cognitions) and L0 (raw scene memories)
+    const budget = getPromptBudgetConfig(options.contextBudget);
     const allAvailable = options.memories.filter(m => !m.deprecated);
     const l1All = allAvailable
         .filter(m => m.level === 1)
         .sort((a, b) => scoreMemoryForRecord(b) - scoreMemoryForRecord(a))
-        .slice(0, 30);
+        .slice(0, budget.l1Limit);
     const l0All = allAvailable.filter(m => m.level !== 1);
-    const l0Seeds = selectMemoryRecordSeeds(l0All, options.mode, options.selectedMemoryIds);
+    const l0Seeds = selectMemoryRecordSeeds(l0All, options.mode, options.selectedMemoryIds, budget.l0SelectedLimit);
     const allSeeds = [...l1All, ...l0Seeds];
 
     let payload: DraftPayload;
@@ -503,29 +824,27 @@ export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOp
     if (options.apiConfig.apiKey && options.apiConfig.baseUrl && options.apiConfig.model) {
         try {
             const prompt = buildPrompt(options, l1All, l0Seeds);
-            const data = await safeFetchJson(`${options.apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${options.apiConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: options.apiConfig.model,
-                    messages: [
-                        { role: 'system', content: prompt.system },
-                        { role: 'user', content: prompt.user },
-                    ],
-                    temperature: 0.92,
-                    max_tokens: 4500,
-                    stream: false,
-                }),
-                signal: safeTimeoutSignal(150000), // 150 seconds to handle long text
-            });
-            const parsed = extractJsonTyped(extractContent(data), (value) => validateDraftPayload(value, options));
+            const rawDraft = await callMemoryRecordLlm(
+                options.apiConfig,
+                [
+                    { role: 'system', content: prompt.system },
+                    { role: 'user', content: prompt.user },
+                ],
+                { temperature: 0.92, maxTokens: 4500, timeoutMs: 150000 },
+            );
+            const parsed = extractJsonTyped(rawDraft, (value) => validateDraftPayload(value, options));
             payload = parsed || buildFallbackDraft(options, allSeeds);
             if (!parsed) {
                 error = '歌词 JSON 解析失败，已生成本地兜底草稿';
-                console.error('[MemoryRecord] Failed to parse API output as draft JSON. Data:', extractContent(data));
+                console.error('[MemoryRecord] Failed to parse API output as draft JSON. Data:', rawDraft);
+            }
+
+            try {
+                const polished = await polishDraftPayload(options, payload);
+                payload = lyricPayloadToDraft(payload, polished);
+            } catch (polishError) {
+                const message = polishError instanceof Error ? polishError.message : String(polishError);
+                error = appendDraftWarning(error, message);
             }
         } catch (err) {
             console.error('[MemoryRecord] Draft API error or timeout:', err);
@@ -538,8 +857,9 @@ export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOp
     }
 
     const now = Date.now();
+    const recordId = createRecordId();
     return {
-        id: createRecordId(),
+        id: recordId,
         charId: options.char.id,
         charName: options.char.name,
         userName: options.userProfile.name || '你',
@@ -551,7 +871,9 @@ export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOp
         monologueText: payload.monologueText,
         lyrics: payload.lyrics,
         musicPrompt: payload.musicPrompt,
+        songRequest: options.songRequest,
         inspirationReference: options.inspirationReference?.trim() || undefined,
+        coverImageUrl: selectMemoryRecordCover(recordId),
         coverGradient: payload.coverGradient,
         seedMemoryIds: allSeeds.map((seed) => seed.id),
         selectedMemoryIds: options.mode === 'selected_memory' ? options.selectedMemoryIds?.slice() : undefined,
@@ -583,37 +905,25 @@ async function loadAudioEntry(id?: string): Promise<MemoryRecordAudio | null> {
 function createStoredMusicResult(entry: MemoryRecordAudio, record: MemoryRecord): MinimaxMusicGenerateResult {
     return {
         blob: entry.blob,
-        model: record.model || 'music-2.6',
+        model: record.model || 'music-2.6-free',
         fallbackUsed: Boolean(record.fallbackUsed),
         durationMs: entry.durationMs ?? record.durationMs,
     };
 }
 
-function createFallbackMasterAudio(
-    monologueBlob: Blob,
-    musicBlob: Blob,
-    musicDurationMs?: number,
-): { blob: Blob; durationMs?: number } {
-    return {
-        blob: new Blob([monologueBlob, musicBlob], { type: 'audio/mpeg' }),
-        durationMs: musicDurationMs,
-    };
+const MASTERING_BYTE_CONCAT_FALLBACK_MARKER = '最终压制使用兜底拼接';
+const MASTERING_MUSIC_TRACK_FALLBACK_MARKER = '已改用音乐分轨播放';
+
+function isMasteringFallbackWarning(error?: string): boolean {
+    return Boolean(error && (
+        error.includes(MASTERING_BYTE_CONCAT_FALLBACK_MARKER)
+        || error.includes(MASTERING_MUSIC_TRACK_FALLBACK_MARKER)
+    ));
 }
 
-async function masterOrFallbackMemoryRecordAudio(
-    monologueBlob: Blob,
-    musicBlob: Blob,
-    musicDurationMs?: number,
-): Promise<{ blob: Blob; durationMs?: number; warning?: string }> {
-    try {
-        return await masterMemoryRecordAudio({ monologueBlob, musicBlob });
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-            ...createFallbackMasterAudio(monologueBlob, musicBlob, musicDurationMs),
-            warning: `最终压制使用兜底拼接：${message}`,
-        };
-    }
+function createMusicTrackFallbackWarning(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return `最终压制失败，已改用音乐分轨播放（未包含独白）：${message}`;
 }
 
 async function persistRecord(record: MemoryRecord, patch: Partial<MemoryRecord>, onRecordUpdate?: (record: MemoryRecord) => void): Promise<MemoryRecord> {
@@ -632,6 +942,7 @@ export async function produceMemoryRecordAudio({
     char,
     ttsConfig,
     musicBaseUrl,
+    forceRemaster = false,
     onRecordUpdate,
     signal,
 }: ProduceMemoryRecordAudioOptions): Promise<MemoryRecord> {
@@ -640,7 +951,8 @@ export async function produceMemoryRecordAudio({
 
     try {
         const needsMonologue = shouldGenerateMemoryRecordMonologue(current.mode);
-        const existingMasterEntry = await loadAudioEntry(current.masterAudioId);
+        const shouldReuseMaster = !forceRemaster && !isMasteringFallbackWarning(current.error);
+        const existingMasterEntry = shouldReuseMaster ? await loadAudioEntry(current.masterAudioId) : null;
         if (needsMonologue && existingMasterEntry) {
             return persistRecord(current, {
                 status: 'ready',
@@ -750,11 +1062,24 @@ export async function produceMemoryRecordAudio({
         }, onRecordUpdate);
 
         current = await persistRecord(current, { status: 'mastering' }, onRecordUpdate);
-        const master = await masterOrFallbackMemoryRecordAudio(
-            ttsResult.blob,
-            musicResult.blob,
-            musicResult.durationMs,
-        );
+        let master: Awaited<ReturnType<typeof masterMemoryRecordAudio>>;
+        try {
+            master = await masterMemoryRecordAudio({ monologueBlob: ttsResult.blob, musicBlob: musicResult.blob });
+        } catch (err) {
+            if (current.masterAudioId) {
+                await DB.deleteMemoryRecordAudio(current.masterAudioId);
+            }
+            current = await persistRecord(current, {
+                status: 'ready',
+            monologueAudioId,
+            musicAudioId,
+            masterAudioId: undefined,
+            lyricsOffsetMs: undefined,
+            durationMs: musicResult.durationMs,
+            error: createMusicTrackFallbackWarning(err),
+        }, onRecordUpdate);
+            return current;
+        }
         const masterAudioId = await saveAudio(current, 'master', master.blob, master.durationMs);
         current = await persistRecord(current, {
             status: 'ready',
@@ -762,7 +1087,8 @@ export async function produceMemoryRecordAudio({
             musicAudioId,
             masterAudioId,
             durationMs: master.durationMs,
-            error: master.warning,
+            lyricsOffsetMs: master.musicOffsetMs,
+            error: undefined,
         }, onRecordUpdate);
 
         return current;

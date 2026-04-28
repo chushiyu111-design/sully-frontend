@@ -559,18 +559,23 @@ export class BackendAgentManager {
     ): Promise<void> {
         const now = Date.now();
         const metadata = parseBackendMetadata(message.metadata);
+        const role = message.role || 'assistant';
 
         await DB.saveScheduledMessage({
             id: `backend-${message.id}`,
             charId: this.charId,
+            role,
             content: message.content,
             dueAt: now + (options.delayMs || 0),
             createdAt: message.createdAt || message.created_at || now,
             metadata: {
-                source: 'autonomous',
+                source: (metadata.source as string) || 'autonomous',
                 reason: metadata.reason,
                 backendMessageId: String(message.id),
                 fromBackend: true,
+                ...(metadata.originalTimestamp ? { originalTimestamp: metadata.originalTimestamp } : {}),
+                ...(metadata.fromWeixinId ? { fromWeixinId: metadata.fromWeixinId } : {}),
+                ...(metadata.bubbleIndex !== undefined ? { bubbleIndex: metadata.bubbleIndex } : {}),
             },
         });
     }

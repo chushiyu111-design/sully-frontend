@@ -1,3 +1,5 @@
+import type { MemoryRecordLyricTiming } from './memoryRecord';
+
 export type MusicSearchTab =
     | 'all'
     | 'song'
@@ -119,7 +121,27 @@ export interface NeteaseDjProgram {
 }
 
 export type ProgramPlayable = NeteaseDjProgram;
-export type MusicPlayable = SongPlayable | ProgramPlayable;
+
+export interface MemoryRecordPlayable {
+    kind: 'memoryRecord';
+    id: number;
+    recordId: string;
+    name: string;
+    artistName: string;
+    albumName: string;
+    duration: number;
+    coverImageUrl?: string;
+    coverGradient?: string;
+    lyrics?: string;
+    monologueText?: string;
+    lyricsOffsetMs?: number;
+    lyricTiming?: MemoryRecordLyricTiming;
+    audioId?: string;
+    requiresMasterAudio?: boolean;
+    createdAt?: number;
+}
+
+export type MusicPlayable = SongPlayable | ProgramPlayable | MemoryRecordPlayable;
 
 export type MusicSearchItem =
     | NeteaseSong
@@ -187,4 +209,8 @@ export function isSongPlayable(value: MusicPlayable | null | undefined): value i
 
 export function isProgramPlayable(value: MusicPlayable | null | undefined): value is ProgramPlayable {
     return value?.kind === 'program';
+}
+
+export function isMemoryRecordPlayable(value: MusicPlayable | null | undefined): value is MemoryRecordPlayable {
+    return value?.kind === 'memoryRecord';
 }

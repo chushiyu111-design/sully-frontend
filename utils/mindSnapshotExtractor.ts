@@ -16,6 +16,7 @@ import { extractJsonTyped } from './safeApi';
 import { StatusCardData,CustomStatusTemplate,SKELETON_REGISTRY } from '../types/statusCard';
 import { DB } from './db';
 import { RealtimeContextManager } from './realtimeContext';
+import { composeCustomStatusTemplateHtml } from './statusTemplateComposer';
 import {
   RawSenseOutput,
   SenseDelta,
@@ -1255,25 +1256,13 @@ ${aiReply.slice(0, 500)}
         let cardData: StatusCardData;
 
         if (template.renderMode === 'html') {
-            // HTML 模式：如果有 htmlTemplate 则做变量替换
-            let finalHtml = extracted;
-            if (template.htmlTemplate?.trim()) {
-                finalHtml = template.htmlTemplate;
-                if (matchResult && matchResult.length > 1) {
-                    // 把 $1, $2 等捕获组替换进模板里
-                    for (let i = 1; i < matchResult.length; i++) {
-                        const val = matchResult[i] || '';
-                        // 替换所有 $1, $2 ... 注意要转义 $ 号
-                        finalHtml = finalHtml.replace(new RegExp(`\\$${i}`, 'g'), val);
-                    }
-                } else {
-                    // 如果正则没写捕获组，或者没写正则，所有的 $1 都换成整个提取出来的文本
-                    finalHtml = finalHtml.replace(/\$1/g, extracted);
-                }
-            } else {
-                // 没有提供模板，说明 AI 直接输出的就是 HTML 代码
-                finalHtml = extractHtmlFromResponse(extracted) || extracted;
-            }
+            // HTML 模式：优先走分层模板组装，旧版 htmlTemplate 继续兼容。
+            const composedHtml = composeCustomStatusTemplateHtml(template, {
+                matchResult,
+                extracted,
+                includeScripts: template.allowScripts === true,
+            });
+            const finalHtml = composedHtml || extractHtmlFromResponse(extracted) || extracted;
 
             const plainText = finalHtml.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
             const bodyText = plainText.slice(0, 40).trim() || 'Custom card';
@@ -1281,7 +1270,9 @@ ${aiReply.slice(0, 500)}
             cardData = {
                 cardType: 'freeform',
                 body: bodyText,
-                meta: { html: finalHtml },
+                meta: template.allowScripts === true
+                    ? { html: finalHtml, allowScripts: true }
+                    : { html: finalHtml },
                 style: { mood: '' },
             };
         } else {

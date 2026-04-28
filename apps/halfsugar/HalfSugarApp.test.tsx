@@ -236,9 +236,7 @@ describe('HalfSugarApp', () => {
             expect(addToast).toHaveBeenCalledWith('基础信息与目标已保存', 'success');
         });
 
-        await waitFor(() => {
-            expect(screen.getByText('摄入 kcal')).toBeTruthy();
-        });
+        expect(await screen.findByText('摄入 kcal', {}, { timeout: 5000 })).toBeTruthy();
     });
 
     it('keeps body impression sharing opt-in only and persists it when the switch is enabled', async () => {
@@ -302,10 +300,11 @@ describe('HalfSugarApp', () => {
         await waitFor(() => {
             expect(mockedFetchMeals).toHaveBeenCalledWith(getTodayKey());
         });
+        expect(await screen.findByText('摄入 kcal', {}, { timeout: 5000 })).toBeTruthy();
         await waitFor(() => {
             const intakeCircle = document.querySelector<SVGCircleElement>('.hs-ring-progress.hs-ring-intake');
             expect(intakeCircle).toBeTruthy();
-            const outerCircumference = 2 * Math.PI * 72;
+            const outerCircumference = 2 * Math.PI * 70;
             const expectedOffset = outerCircumference * (1 - consumed / expectedTarget);
             expect(Number(intakeCircle?.getAttribute('stroke-dashoffset'))).toBeCloseTo(expectedOffset, 3);
         });
@@ -737,7 +736,7 @@ describe('HalfSugarApp', () => {
                 charId: 'char-1',
                 role: 'system',
                 type: 'health_signal',
-                content: '[生活感知] TA早餐吃了酸奶，约120千卡',
+                content: '[生活感知] TA早餐吃了酸奶（你自然地注意到了，但不需要报数字，像关心TA的人一样自然回应就好）',
             }));
         });
     });

@@ -949,15 +949,15 @@
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0,0,0,0.9) 12%,
-    rgba(0,0,0,0.9) 85%,
+    rgba(0,0,0,0.96) 8%,
+    rgba(0,0,0,0.96) 92%,
     transparent 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0,0,0,0.9) 12%,
-    rgba(0,0,0,0.9) 85%,
+    rgba(0,0,0,0.96) 8%,
+    rgba(0,0,0,0.96) 92%,
     transparent 100%
   );
 }
@@ -980,7 +980,7 @@
 .music-player-lyrics-line {
   padding: 6px 0;
   text-align: left;
-  opacity: 0.28;
+  opacity: 0.9;
   transform: scale(0.96);
   transform-origin: left center;
   cursor: pointer;
@@ -994,10 +994,19 @@
   opacity: 0.6;
 }
 
-.music-player-lyrics-line.active {
-  opacity: 1;
-  transform: scale(1.02);
-}
+  .music-player-lyrics-line.active {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+
+  .music-player-lyrics-line.timing-selected {
+    opacity: 1;
+    transform: scale(1.01);
+  }
+
+  .music-player-lyrics-line.timing-selected .music-player-lyrics-line-text {
+    color: #ffe2a8;
+  }
 
 .music-player-lyrics-line-text {
   display: block;
@@ -1005,7 +1014,8 @@
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
-  color: rgba(255,255,255,0.28);
+  color: rgba(255,255,255,0.68);
+  text-shadow: 0 1px 8px rgba(0,0,0,0.35);
   transition:
     color 0.35s ease,
     font-size 0.35s ease,
@@ -1025,10 +1035,10 @@
   margin-top: 4px;
   font-size: 13px;
   font-weight: 400;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255,255,255,0.62);
 }
 
-.music-player-lyrics-empty {
+  .music-player-lyrics-empty {
   margin-top: 8px;
   min-height: 96px;
   display: flex;
@@ -1038,8 +1048,65 @@
   padding: 0;
   font-size: 13px;
   line-height: 1.7;
-  color: rgba(255,255,255,0.35);
-}
+    color: rgba(255,255,255,0.35);
+  }
+
+  .music-player-lyrics-timing-panel {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(0,0,0,0.28);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .music-player-lyrics-timing-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.52);
+  }
+
+  .music-player-lyrics-timing-selected {
+    margin-top: 6px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: rgba(255,255,255,0.86);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .music-player-lyrics-timing-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 9px;
+  }
+
+  .music-player-lyrics-timing-actions button {
+    appearance: none;
+    border: none;
+    border-radius: 999px;
+    padding: 7px 0;
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.78);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .music-player-lyrics-timing-actions button:disabled {
+    opacity: 0.45;
+  }
+
+  .music-player-lyrics-timing-message {
+    margin-top: 7px;
+    font-size: 10px;
+    color: rgba(255,226,168,0.82);
+  }
 
 /* ─── 进度条（胶囊触感） ───────────────────── */
 .music-player-progress {

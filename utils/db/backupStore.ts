@@ -1,4 +1,4 @@
-import { CharacterProfile,FullBackupData } from '../../types';
+import { CharacterProfile,FullBackupData,MemoryRecordAudio,SerializedMemoryRecordAudio } from '../../types';
 import {
   openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_THEMES,STORE_EMOJIS,
   STORE_EMOJI_CATEGORIES,STORE_ASSETS,STORE_GALLERY,STORE_USER,
@@ -6,7 +6,8 @@ import {
   STORE_ROOM_NOTES,STORE_GROUPS,STORE_JOURNAL_STICKERS,STORE_SOCIAL_POSTS,
   STORE_COURSES,STORE_GAMES,STORE_WORLDBOOKS,STORE_NOVELS,
   STORE_BANK_TX,STORE_BANK_DATA,STORE_XHS_ACTIVITIES,STORE_XHS_STOCK,
-  STORE_VECTOR_MEMORIES,STORE_SCHEDULED,STORE_LETTERS,
+  STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS,STORE_MEMORY_RECORD_AUDIO,
+  STORE_SCHEDULED,STORE_LETTERS,
   DB_NAME_CONST
 } from './core';
 
@@ -29,6 +30,44 @@ export const getRawStoreData = async (storeName: string): Promise<any[]> => {
     });
 };
 
+const blobToDataUrl = async (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+};
+
+const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
+    const response = await fetch(dataUrl);
+    return response.blob();
+};
+
+const serializeMemoryRecordAudio = async (items: MemoryRecordAudio[]): Promise<SerializedMemoryRecordAudio[]> => {
+    return Promise.all(items.map(async (item) => {
+        const { blob, ...rest } = item;
+        return {
+            ...rest,
+            dataUrl: blob ? await blobToDataUrl(blob) : undefined,
+        };
+    }));
+};
+
+const deserializeMemoryRecordAudio = async (items?: SerializedMemoryRecordAudio[]): Promise<MemoryRecordAudio[]> => {
+    if (!Array.isArray(items)) return [];
+
+    const restored: MemoryRecordAudio[] = [];
+    for (const item of items) {
+        if (!item.dataUrl) continue;
+        restored.push({
+            ...item,
+            blob: await dataUrlToBlob(item.dataUrl),
+        });
+    }
+    return restored;
+};
+
 export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
     const db = await openDB();
 
@@ -41,7 +80,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         });
     };
 
-    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, scheduledMessages, letters] = await Promise.all([
+    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, memoryRecords, memoryRecordAudioRaw, scheduledMessages, letters] = await Promise.all([
         getAllFromStore(STORE_CHARACTERS), getAllFromStore(STORE_MESSAGES),
         getAllFromStore(STORE_THEMES), getAllFromStore(STORE_EMOJIS),
         getAllFromStore(STORE_EMOJI_CATEGORIES), getAllFromStore(STORE_ASSETS),
@@ -55,8 +94,11 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         getAllFromStore(STORE_BANK_TX), getAllFromStore(STORE_BANK_DATA),
         getAllFromStore(STORE_XHS_ACTIVITIES), getAllFromStore(STORE_XHS_STOCK),
         getAllFromStore(STORE_VECTOR_MEMORIES),
+        getAllFromStore(STORE_MEMORY_RECORDS),
+        getAllFromStore(STORE_MEMORY_RECORD_AUDIO),
         getAllFromStore(STORE_SCHEDULED), getAllFromStore(STORE_LETTERS),
     ]);
+    const memoryRecordAudio = await serializeMemoryRecordAudio(memoryRecordAudioRaw as MemoryRecordAudio[]);
 
     const userProfile = userProfiles.length > 0 ? { name: userProfiles[0].name, avatar: userProfiles[0].avatar, bio: userProfiles[0].bio } : undefined;
     const mainState = bankData.find((d: any) => d.id === 'main_state');
@@ -69,12 +111,15 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         bankTransactions: bankTx,
         xhsActivities, xhsStockImages,
         vectorMemories,
+        memoryRecords,
+        memoryRecordAudio,
         scheduledMessages, letters
     };
 };
 
 export const importFullData = async (data: FullBackupData): Promise<void> => {
     const db = await openDB();
+    const importedMemoryRecordAudio = await deserializeMemoryRecordAudio(data.memoryRecordAudio);
 
     const availableStores = [
         STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
@@ -84,6 +129,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
         STORE_BANK_TX, STORE_BANK_DATA,
         STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
         STORE_VECTOR_MEMORIES,
+        STORE_MEMORY_RECORDS, STORE_MEMORY_RECORD_AUDIO,
         STORE_SCHEDULED, STORE_LETTERS
     ].filter(name => db.objectStoreNames.contains(name));
 
@@ -190,6 +236,8 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
     if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);
     if (data.vectorMemories) clearAndAdd(STORE_VECTOR_MEMORIES, data.vectorMemories);
+    if (data.memoryRecords) clearAndAdd(STORE_MEMORY_RECORDS, data.memoryRecords);
+    if (importedMemoryRecordAudio.length > 0) clearAndAdd(STORE_MEMORY_RECORD_AUDIO, importedMemoryRecordAudio);
     if (data.scheduledMessages) clearAndAdd(STORE_SCHEDULED, data.scheduledMessages);
     if (data.letters) clearAndAdd(STORE_LETTERS, data.letters);
 

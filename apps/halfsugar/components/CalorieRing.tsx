@@ -1,5 +1,4 @@
 import React from 'react';
-import { getDailyNarration } from '../foodRecommendations';
 
 /** Default exercise calorie goal for the middle ring (kcal) */
 const DEFAULT_EXERCISE_GOAL = 300;
@@ -11,10 +10,11 @@ interface CalorieRingProps {
 }
 
 export const CalorieRing: React.FC<CalorieRingProps> = React.memo(({ consumed, exerciseBurned, target }) => {
-    const outerR = 72;
-    const midR = 58;
+    // Ring geometry — wider spacing, room for center text
+    const outerR = 70;
+    const midR = 56;
     const innerR = 44;
-    const strokeWidth = 6;
+    const strokeWidth = 8;
 
     const outerCirc = 2 * Math.PI * outerR;
     const midCirc = 2 * Math.PI * midR;
@@ -28,8 +28,6 @@ export const CalorieRing: React.FC<CalorieRingProps> = React.memo(({ consumed, e
     const outerOffset = outerCirc * (1 - intakeProgress);
     const midOffset = midCirc * (1 - exerciseProgress);
     const innerOffset = innerCirc * (1 - netProgress);
-
-    const narration = getDailyNarration();
 
     return (
         <div className="hs-ring-container hs-animate-ring">
@@ -71,21 +69,26 @@ export const CalorieRing: React.FC<CalorieRingProps> = React.memo(({ consumed, e
                 </div>
             </div>
 
-            {/* Quick stats row below ring */}
-            <div className="hs-ring-stats">
-                <div className="hs-ring-stat">
-                    <span className="hs-ring-stat-dot" style={{ background: 'var(--hs-clay)' }} />
-                    <span className="hs-ring-stat-label">消耗</span>
-                    <span className="hs-ring-stat-value">{exerciseBurned}</span>
+            {/* Capsule stats bar */}
+            <div className="hs-ring-capsule">
+                <div className="hs-ring-capsule-item">
+                    <span className="hs-ring-stat-dot" style={{ background: 'var(--hs-sage)' }} />
+                    <span className="hs-ring-capsule-label">摄入</span>
+                    <span className="hs-ring-capsule-value">{consumed.toLocaleString()}</span>
                 </div>
-                <div className="hs-ring-stat">
+                <div className="hs-ring-capsule-sep" />
+                <div className="hs-ring-capsule-item">
+                    <span className="hs-ring-stat-dot" style={{ background: 'var(--hs-clay)' }} />
+                    <span className="hs-ring-capsule-label">消耗</span>
+                    <span className="hs-ring-capsule-value">{exerciseBurned}</span>
+                </div>
+                <div className="hs-ring-capsule-sep" />
+                <div className="hs-ring-capsule-item">
                     <span className="hs-ring-stat-dot" style={{ background: 'var(--hs-ocean)' }} />
-                    <span className="hs-ring-stat-label">净</span>
-                    <span className="hs-ring-stat-value">{net.toLocaleString()}</span>
+                    <span className="hs-ring-capsule-label">净</span>
+                    <span className="hs-ring-capsule-value">{net.toLocaleString()}</span>
                 </div>
             </div>
-
-            <div className="hs-ring-narration">{narration}</div>
         </div>
     );
 });

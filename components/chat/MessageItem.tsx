@@ -748,6 +748,9 @@ const MessageItem = React.memo(({
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && !!langBContent;
 
+    // Cross-platform source tag (e.g. WeChat sync)
+    const sourceTag = m.metadata?.source === 'weixin' ? 'via 微信' : undefined;
+
     // Don't render empty bubbles
     if (!displayContent && m.type === 'text') return null;
 
@@ -756,6 +759,7 @@ const MessageItem = React.memo(({
             isUser={isUser}
             styleConfig={styleConfig}
             displayContent={displayContent}
+            sourceTag={sourceTag}
             replyTo={m.replyTo}
             showTranslateButton={showTranslateButton}
             isShowingTarget={isShowingTarget}
@@ -789,7 +793,8 @@ const MessageItem = React.memo(({
         prev.statusCardData === next.statusCardData &&
         prev.onRetryInnerVoice === next.onRetryInnerVoice &&
         prev.showThinking === next.showThinking &&
-        prev.msg.metadata?.thinking === next.msg.metadata?.thinking;
+        prev.msg.metadata?.thinking === next.msg.metadata?.thinking &&
+        prev.msg.metadata?.source === next.msg.metadata?.source;
 });
 
 export default MessageItem;

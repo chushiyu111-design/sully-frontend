@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LyricLine } from '../types/music';
 import { findCurrentLyricIndex } from '../utils/parseLrc';
+import type { MemoryRecordLyricTiming } from '../types/memoryRecord';
+import { buildLocalLyrics } from '../utils/localLyrics';
 import {
     getDistinctLyricTranslation,
     getPlaybackLyricsResource,
@@ -13,6 +15,14 @@ interface UseLyricsOptions {
     currentTime: number;
     /** 是否启用歌词（关闭时跳过获取） */
     enabled?: boolean;
+    /** 本地歌词，回忆唱片等非网易云音源使用 */
+    localLyrics?: string;
+    /** 本地开场独白，回忆唱片 master 音频使用 */
+    localMonologueText?: string;
+    /** 正文歌词在本地 master 音频中的起始偏移 */
+    localLyricsOffsetMs?: number;
+    /** 用户手动保存的本地歌词打轴 */
+    localLyricTiming?: MemoryRecordLyricTiming;
 }
 
 interface UseLyricsResult {
@@ -28,22 +38,46 @@ interface UseLyricsResult {
     isLoading: boolean;
     /** 加载错误 */
     error: string | null;
+    /** 本地歌词行文本的 hash，用于保存手动打轴 */
+    localSourceHash: string | null;
 }
 
 export function useLyrics({
     songId,
     currentTime,
     enabled = true,
+    localLyrics,
+    localMonologueText,
+    localLyricsOffsetMs,
+    localLyricTiming,
 }: UseLyricsOptions): UseLyricsResult {
     const [lines, setLines] = useState<LyricLine[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [localSourceHash, setLocalSourceHash] = useState<string | null>(null);
     const requestIdRef = useRef(0);
 
     useEffect(() => {
+        if ((localLyrics?.trim() || localMonologueText?.trim()) && enabled) {
+            requestIdRef.current += 1;
+            const local = buildLocalLyrics({
+                lyrics: localLyrics,
+                monologueText: localMonologueText,
+                lyricsOffsetMs: localLyricsOffsetMs,
+                lyricTiming: localLyricTiming,
+            });
+
+            setLines(local.lines);
+            setLocalSourceHash(local.sourceHash);
+            setIsLoading(false);
+            setError(null);
+            return;
+        }
+
         if (!songId || songId <= 0 || !enabled) {
             requestIdRef.current += 1;
             setLines([]);
+            setLocalSourceHash(null);
             setIsLoading(false);
             setError(null);
             return;
@@ -54,6 +88,7 @@ export function useLyrics({
 
         setIsLoading(true);
         setError(null);
+        setLocalSourceHash(null);
 
         getPlaybackLyricsResource(songId)
             .then((result) => {
@@ -73,7 +108,7 @@ export function useLyrics({
                     setIsLoading(false);
                 }
             });
-    }, [enabled, songId]);
+    }, [enabled, localLyricTiming, localLyrics, localLyricsOffsetMs, localMonologueText, songId]);
 
     const currentIndex = useMemo(
         () => findCurrentLyricIndex(lines, currentTime),
@@ -92,5 +127,6 @@ export function useLyrics({
         ),
         isLoading,
         error,
+        localSourceHash,
     };
 }

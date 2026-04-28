@@ -504,7 +504,8 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                     .filter((id): id is string => typeof id === 'string' && id.length > 0),
                             );
                             let savedCount = 0;
-                            let firstSavedContent = '';
+                            let assistantSavedCount = 0;
+                            let firstAssistantContent = '';
 
                             for (const msg of dueMessages) {
                                 const backendMessageId = typeof msg.metadata?.backendMessageId === 'string'
@@ -516,10 +517,12 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                     continue;
                                 }
 
+                                const msgRole = msg.role || 'assistant';
+
                                 const saveResult = backendMessageId
                                     ? await DB.saveMessageOnceByBackendId({
                                         charId: msg.charId,
-                                        role: 'assistant',
+                                        role: msgRole,
                                         type: 'text',
                                         content: msg.content,
                                         timestamp: msg.createdAt,
@@ -527,7 +530,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                     })
                                     : { saved: true, id: await DB.saveMessage({
                                         charId: msg.charId,
-                                        role: 'assistant',
+                                        role: msgRole,
                                         type: 'text',
                                         content: msg.content,
                                         timestamp: msg.createdAt,
@@ -542,18 +545,21 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                     continue;
                                 }
 
-                                if (!firstSavedContent) {
-                                    firstSavedContent = msg.content;
-                                }
                                 savedCount++;
+                                if (msgRole === 'assistant') {
+                                    assistantSavedCount++;
+                                    if (!firstAssistantContent) {
+                                        firstAssistantContent = msg.content;
+                                    }
+                                }
                             }
                             if (savedCount === 0) continue;
                             hasNewMessage = true;
                             const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdRef.current === char.id;
 
-                            if (!isChattingWithThisChar) {
+                            if (!isChattingWithThisChar && assistantSavedCount > 0) {
                                 addToast(`${char.name} 发来了一条消息`, 'success');
-                                pendingUnreads[char.id] = (pendingUnreads[char.id] || 0) + savedCount;
+                                pendingUnreads[char.id] = (pendingUnreads[char.id] || 0) + assistantSavedCount;
 
                                 // 仅对非 autonomous 消息使用 new Notification()
                                 // autonomous 消息已由后端通过 Web Push 推送到 Service Worker，不需要重复弹窗
@@ -561,7 +567,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                 if (!isAutonomous && window.Notification && Notification.permission === 'granted') {
                                     try {
                                         const notif = new Notification(char.name, {
-                                            body: firstSavedContent,
+                                            body: firstAssistantContent,
                                             icon: char.avatar,
                                             silent: false
                                         });

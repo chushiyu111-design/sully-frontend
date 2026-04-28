@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useWillChange } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import { useAudioPlayer } from '../../hooks/useAudioPlayer';
 import { AppID } from '../../types';
-import { isSongPlayable } from '../../types/music';
+import { isMemoryRecordPlayable, isSongPlayable } from '../../types/music';
 import {
     readFloatingLyricsSettings,
     toggleFloatingLyricsEnabled,
@@ -172,6 +172,8 @@ const DynamicIsland: React.FC = () => {
     const coverUrl = currentSong
         ? (isSongPlayable(currentSong)
             ? currentSong.album.picUrl
+            : isMemoryRecordPlayable(currentSong)
+                ? undefined
             : currentSong.coverUrl
                 || currentSong.radio?.picUrl
                 || currentSong.mainSong?.album.picUrl)
@@ -187,6 +189,8 @@ const DynamicIsland: React.FC = () => {
 
     const artistText = isSongPlayable(currentSong)
         ? currentSong.artists.map((artist) => artist.name).join(' / ') || '未知歌手'
+        : isMemoryRecordPlayable(currentSong)
+            ? `${currentSong.artistName} · ${currentSong.albumName}`
         : currentSong.radioName
             || currentSong.radio?.name
             || currentSong.dj?.nickname

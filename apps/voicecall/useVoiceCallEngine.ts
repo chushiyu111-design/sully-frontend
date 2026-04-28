@@ -32,6 +32,7 @@ import type { VoiceCallMode } from './voiceCallTypes';
 import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
 import { DB } from '../../utils/db';
 import { pcmChunksToWavBlob } from './pcmToWav';
+import { getCharacterVoiceIdNotExistMessage,isVoiceIdNotExistError } from '../../utils/characterTts';
 import {
     buildVoiceCallRecentContextMessages,
     buildVoiceCallRecentContextTranscript,
@@ -150,7 +151,7 @@ function writeString(view: DataView, offset: number, str: string): void {
  * 构建通话专用 TTS 配置：覆盖格式为 PCM，采样率 24kHz。
  * 不修改全局 TtsConfig，保持聊天 TTS 的 mp3 设置不变。
  */
-function buildVoiceCallTtsConfig(base: TtsConfig): TtsConfig {
+export function buildVoiceCallTtsConfig(base: TtsConfig): TtsConfig {
     return {
         ...base,
         audioSetting: {
@@ -493,6 +494,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     }
                 } catch (err) {
                     console.error('[Engine] TTS reconnection failed, degrading to text:', err);
+                    if (isVoiceIdNotExistError(err)) {
+                        opts.onError?.(getCharacterVoiceIdNotExistMessage(vcTtsConfig.voiceSetting.voice_id));
+                    }
                     degradeRemainingToText();
                 }
             };
@@ -597,6 +601,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     }
                 } catch (err) {
                     console.error('[Engine] TTS pre-connect failed, degrading to text:', err);
+                    if (isVoiceIdNotExistError(err)) {
+                        opts.onError?.(getCharacterVoiceIdNotExistMessage(vcTtsConfig.voiceSetting.voice_id));
+                    }
                     degradeRemainingToText();
                 }
             })();

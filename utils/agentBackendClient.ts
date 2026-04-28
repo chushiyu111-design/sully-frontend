@@ -38,6 +38,7 @@ const lastStopRequestAt = new Map<string, number>();
 export type AgentBackendMessage = {
     id: number | string;
     char_id?: string;
+    role?: 'user' | 'assistant';
     content: string;
     created_at?: number;
     createdAt?: number;

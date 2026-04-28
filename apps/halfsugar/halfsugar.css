@@ -150,12 +150,12 @@
     box-shadow: var(--hs-neu-pressed);
 }
 
-/* ── Calorie Ring — Three-Ring (Intake / Exercise / Net) ── */
+/* ── Calorie Ring — Three-Ring Premium Neumorphic ── */
 .hs-ring-container {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 24px 20px 12px;
+    padding: 18px 20px 8px;
 }
 
 .hs-ring-wrapper {
@@ -164,7 +164,10 @@
     height: 200px;
     background: var(--hs-bg);
     border-radius: 50%;
-    box-shadow: var(--hs-neu-lg);
+    box-shadow:
+        10px 10px 24px rgba(0, 0, 0, 0.12),
+        -10px -10px 24px rgba(255, 255, 255, 0.95),
+        inset 0 1px 0 rgba(255, 255, 255, 0.6);
     border: none;
     padding: 10px;
 }
@@ -174,8 +177,11 @@
     height: 100%;
     border-radius: 50%;
     position: relative;
-    background: var(--hs-bg);
-    box-shadow: var(--hs-neu-inset);
+    background: radial-gradient(circle at 40% 35%, #EFEFEF 0%, var(--hs-bg) 60%);
+    box-shadow:
+        inset 4px 4px 10px rgba(0, 0, 0, 0.09),
+        inset -4px -4px 10px rgba(255, 255, 255, 0.82),
+        inset 0 0 20px rgba(0, 0, 0, 0.02);
 }
 
 .hs-ring-svg {
@@ -188,7 +194,7 @@
 
 .hs-ring-bg {
     fill: none;
-    stroke: rgba(0, 0, 0, 0.03);
+    stroke: rgba(0, 0, 0, 0.05);
 }
 
 .hs-ring-progress {
@@ -197,20 +203,20 @@
     transition: stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Three ring color variants */
+/* Three ring color variants — deep glow */
 .hs-ring-intake {
     stroke: var(--hs-sage);
-    filter: drop-shadow(0 0 6px rgba(142, 196, 200, 0.45));
+    filter: drop-shadow(0 0 6px rgba(142, 196, 200, 0.5)) drop-shadow(0 0 12px rgba(142, 196, 200, 0.25));
 }
 
 .hs-ring-exercise {
     stroke: var(--hs-clay);
-    filter: drop-shadow(0 0 6px rgba(212, 165, 116, 0.45));
+    filter: drop-shadow(0 0 6px rgba(212, 165, 116, 0.5)) drop-shadow(0 0 12px rgba(212, 165, 116, 0.25));
 }
 
 .hs-ring-net {
     stroke: var(--hs-ocean);
-    filter: drop-shadow(0 0 6px rgba(127, 176, 192, 0.45));
+    filter: drop-shadow(0 0 6px rgba(127, 176, 192, 0.5)) drop-shadow(0 0 12px rgba(127, 176, 192, 0.25));
 }
 
 .hs-ring-center {
@@ -223,20 +229,21 @@
 }
 
 .hs-ring-value {
-    font-size: 32px;
+    font-size: 30px;
     font-weight: 700;
     letter-spacing: -0.04em;
     color: var(--hs-text);
     line-height: 1;
     font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
 
 .hs-ring-unit {
     font-size: 11px;
     color: var(--hs-text-muted);
-    margin-top: 4px;
+    margin-top: 5px;
     font-weight: 500;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.04em;
 }
 
 .hs-ring-label {
@@ -247,19 +254,31 @@
     letter-spacing: 0.01em;
 }
 
-/* Stats row below ring */
-.hs-ring-stats {
+/* ── Capsule Stats Bar ── */
+.hs-ring-capsule {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 24px;
+    gap: 0;
     margin-top: 14px;
+    background: var(--hs-bg);
+    border-radius: 999px;
+    box-shadow: var(--hs-neu-sm);
+    padding: 8px 14px;
 }
 
-.hs-ring-stat {
+.hs-ring-capsule-item {
     display: flex;
     align-items: center;
     gap: 5px;
+    padding: 0 10px;
+}
+
+.hs-ring-capsule-sep {
+    width: 1px;
+    height: 14px;
+    background: rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
 }
 
 .hs-ring-stat-dot {
@@ -267,28 +286,20 @@
     height: 7px;
     border-radius: 50%;
     flex-shrink: 0;
+    box-shadow: 0 0 4px currentColor;
 }
 
-.hs-ring-stat-label {
+.hs-ring-capsule-label {
     font-size: 11px;
     color: var(--hs-text-muted);
     font-weight: 500;
 }
 
-.hs-ring-stat-value {
+.hs-ring-capsule-value {
     font-size: 13px;
     font-weight: 600;
     color: var(--hs-text);
     font-variant-numeric: tabular-nums;
-}
-
-.hs-ring-narration {
-    font-size: 12px;
-    color: var(--hs-text-muted);
-    margin-top: 10px;
-    font-weight: 400;
-    letter-spacing: 0.02em;
-    text-align: center;
 }
 
 /* ── Macro Nutrient Cards — Frosted Glass ── */
@@ -322,7 +333,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    box-shadow: 0 0 4px currentColor;
+    box-shadow: 0 0 6px currentColor;
 }
 
 .hs-macro-bar {
@@ -1269,7 +1280,23 @@
     }
 
     .hs-ring-value {
-        font-size: 32px;
+        font-size: 26px;
+    }
+
+    .hs-ring-capsule {
+        padding: 6px 10px;
+    }
+
+    .hs-ring-capsule-item {
+        padding: 0 6px;
+    }
+
+    .hs-ring-capsule-label {
+        font-size: 10px;
+    }
+
+    .hs-ring-capsule-value {
+        font-size: 11px;
     }
 
     .hs-macros {
@@ -2376,5 +2403,210 @@
 .hs-exercise-emoji .hs-emoji,
 .hs-meal-icon .hs-emoji {
     font-size: 1.15em;
+}
+
+/* ═══════════════════════════════════════════════════
+   Dashboard Redesign — Date, Weekly Btn, Quotes, Row
+   ═══════════════════════════════════════════════════ */
+
+/* ── Date Subtitle (below page header) ── */
+.hs-date-subtitle {
+    padding: 0 20px 0 62px;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--hs-text-muted);
+    letter-spacing: 0.02em;
+    line-height: 1;
+}
+
+/* ── Weekly Report Button (in page header) ── */
+.hs-weekly-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: none;
+    background: var(--hs-bg);
+    box-shadow: var(--hs-neu-pill);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--hs-text-secondary);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
+}
+
+.hs-weekly-btn:active {
+    transform: scale(0.95);
+    box-shadow: var(--hs-neu-pressed);
+    color: var(--hs-primary-dark);
+}
+
+.hs-weekly-btn svg {
+    color: var(--hs-primary-dark);
+}
+
+/* ── Swipeable Quote Card — Neumorphic ── */
+.hs-swipe-quotes {
+    margin: 8px 20px 14px;
+    background: var(--hs-bg);
+    border-radius: var(--hs-radius-sm);
+    box-shadow:
+        5px 5px 12px rgba(0, 0, 0, 0.09),
+        -5px -5px 12px rgba(255, 255, 255, 0.92),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    padding: 16px 18px 12px;
+    position: relative;
+    overflow: hidden;
+    min-height: 60px;
+}
+
+.hs-swipe-track {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    touch-action: pan-x;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.hs-swipe-mark {
+    font-size: 24px;
+    line-height: 1;
+    color: var(--hs-primary);
+    opacity: 0.45;
+    font-style: normal;
+    pointer-events: none;
+}
+
+.hs-swipe-mark-close {
+    align-self: flex-end;
+}
+
+.hs-swipe-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--hs-text);
+    line-height: 1.55;
+    letter-spacing: 0.01em;
+    min-height: 22px;
+    transition: opacity 0.3s ease;
+}
+
+.hs-swipe-dots {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.hs-swipe-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.10);
+    transition: all 0.25s ease;
+    cursor: pointer;
+}
+
+.hs-swipe-dot.active {
+    background: var(--hs-primary-dark);
+    width: 16px;
+    border-radius: 3px;
+}
+
+/* ── Horizontal Summary Row (饮食/体重/运动/睡眠) ── */
+.hs-dash-row {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 8px;
+    padding: 4px 20px 16px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.hs-dash-row-card {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 14px 4px 12px;
+    background: var(--hs-bg);
+    border-radius: var(--hs-radius-sm);
+    box-shadow: var(--hs-neu);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.hs-dash-row-card:active {
+    transform: scale(0.96);
+    box-shadow: var(--hs-neu-pressed);
+}
+
+.hs-dash-row-icon {
+    font-size: 20px;
+    line-height: 1;
+    margin-bottom: 2px;
+}
+
+.hs-dash-row-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--hs-text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.hs-dash-row-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--hs-text);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.hs-dash-row-unit {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--hs-text-muted);
+    min-height: 13px;
+}
+
+/* Responsive — compact for narrow screens */
+@media (max-width: 380px) {
+    .hs-date-subtitle {
+        padding-left: 52px;
+    }
+
+    .hs-dash-row {
+        gap: 6px;
+        padding: 4px 14px 14px;
+    }
+
+    .hs-dash-row-card {
+        padding: 10px 2px;
+    }
+
+    .hs-dash-row-value {
+        font-size: 14px;
+    }
+
+    .hs-swipe-quotes {
+        margin: 6px 14px 12px;
+        padding: 12px 14px 10px;
+    }
+
+    .hs-ring-wrapper {
+        width: 180px;
+        height: 180px;
+    }
 }
 

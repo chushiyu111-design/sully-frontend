@@ -25,6 +25,14 @@
 - 主后端依赖: `csyos-workers`
 - 配套语音代理: `cloudflare-ws-proxy`
 
+## 协议与非商业化
+
+本仓库协议已与上游 `qegj567-cloud/SullyOS` 对齐，采用 `PolyForm Noncommercial License 1.0.0`。
+
+- 仅允许非商业目的使用、研究、实验、学习、私人娱乐和业余项目。
+- 禁止商业化使用，包括但不限于转售、付费分发、商业 SaaS 托管、广告变现或作为商业产品/服务的一部分使用。
+- 分发本仓库或其修改版本时，必须一并保留根目录 `LICENSE` 及其中的 `Required Notice`。
+
 ## 先看哪些文件
 
 最小入口认知建议先看:

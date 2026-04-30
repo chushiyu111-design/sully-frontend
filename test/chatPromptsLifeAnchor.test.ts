@@ -62,9 +62,10 @@ function character(): CharacterProfile {
 
 function user(): UserProfile {
     return {
-        id: 'user',
         name: '糯米',
-    } as UserProfile;
+        avatar: '',
+        bio: '',
+    };
 }
 
 describe('ChatPrompts life anchor injection', () => {

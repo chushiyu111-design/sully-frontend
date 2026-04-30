@@ -332,6 +332,7 @@ describe('charLifeSnapshot helpers', () => {
             existingFragments: ['我本来已经走到拐角，后来又停了一下。'],
             snapshotSummary,
             weatherSummary: rainWeather,
+            lifeAnchorSummary: '[当前日程锚点]\n现在大概率在散步路线附近，不要沿用旧位置。',
         });
 
         expect(prompt.userPrompt).toContain('loose 节点轻微偏掉');

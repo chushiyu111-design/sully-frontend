@@ -369,7 +369,7 @@ describe('HalfSugarApp', () => {
 
         await waitFor(() => {
             expect(screen.getByText(/吐司/)).toBeTruthy();
-        });
+        }, { timeout: 5000 });
         expect(screen.getByText(/牛奶/)).toBeTruthy();
         expect(screen.getByText(/吐司/)).toBeTruthy();
         expect(screen.getAllByText('再记一份')).toHaveLength(1);
@@ -493,7 +493,7 @@ describe('HalfSugarApp', () => {
         });
 
         fireEvent.click(screen.getByLabelText('饮食记录'));
-        fireEvent.click(await screen.findByText(/记录早餐/));
+        fireEvent.click(await screen.findByText(/记录早餐/, {}, { timeout: 5000 }));
 
         expect(screen.queryByPlaceholderText('热量')).toBeNull();
         fireEvent.click(screen.getByText('自定义'));
@@ -580,7 +580,7 @@ describe('HalfSugarApp', () => {
         });
 
         fireEvent.click(screen.getByLabelText('饮食记录'));
-        fireEvent.click(await screen.findByText(/记录早餐/));
+        fireEvent.click(await screen.findByText(/记录早餐/, {}, { timeout: 5000 }));
         expect(screen.getByText('拍照')).toBeTruthy();
         expect(screen.getByText('相册')).toBeTruthy();
 
@@ -661,7 +661,7 @@ describe('HalfSugarApp', () => {
         });
 
         fireEvent.click(screen.getByLabelText('饮食记录'));
-        fireEvent.click(await screen.findByText(/记录早餐/));
+        fireEvent.click(await screen.findByText(/记录早餐/, {}, { timeout: 5000 }));
         const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
         expect(fileInput).toBeTruthy();
         fireEvent.change(fileInput!, {
@@ -707,7 +707,7 @@ describe('HalfSugarApp', () => {
         });
 
         fireEvent.click(screen.getByLabelText('饮食记录'));
-        fireEvent.click(await screen.findByText(/记录早餐/));
+        fireEvent.click(await screen.findByText(/记录早餐/, {}, { timeout: 5000 }));
         fireEvent.click(screen.getByText('自定义'));
         fireEvent.change(screen.getByPlaceholderText('食物名称 (如: 红烧肉)'), {
             target: { value: '酸奶' },

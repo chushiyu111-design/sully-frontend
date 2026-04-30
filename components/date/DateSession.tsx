@@ -3,6 +3,7 @@ import { CharacterProfile,Message,DateState,DialogueItem,UserProfile } from '../
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
 import DateSettings from './DateSettings';
+import SummaryFloatingBall from './SummaryFloatingBall';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -57,11 +58,24 @@ interface DateSessionProps {
     initialState?: DateState; // Resume state
     onSendMessage: (text: string) => Promise<string>; // Returns AI content
     onReroll: () => Promise<string>;
-    onExit: (currentState: DateState) => void;
+    onExit: (currentState: DateState, syncMode: DateExitSyncMode) => void;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
-    onSettings: () => void;
+    isSummaryGenerating: boolean;
+    hasPendingSummary: boolean;
+    canManualSummary: boolean;
+    canAutoSummary: boolean;
+    summaryDisabledReason?: string;
+    onRequestSummary: () => void;
+    onReviewPendingSummary: () => void;
+    onDiscardPendingSummary: () => void;
+    onToggleAutoSummary: (enabled: boolean) => void;
+    onToggleAutoHideSummary: (enabled: boolean) => void;
+    onChangeThreshold: (threshold: number) => void;
+    onOpenSummarySettings: () => void;
 }
+
+export type DateExitSyncMode = 'summary' | 'raw' | 'none';
 
 const DateSession: React.FC<DateSessionProps> = ({ 
     char, 
@@ -73,7 +87,19 @@ const DateSession: React.FC<DateSessionProps> = ({
     onReroll, 
     onExit,
     onEditMessage,
-    onDeleteMessage}) => {
+    onDeleteMessage,
+    isSummaryGenerating,
+    hasPendingSummary,
+    canManualSummary,
+    canAutoSummary,
+    summaryDisabledReason,
+    onRequestSummary,
+    onReviewPendingSummary,
+    onDiscardPendingSummary,
+    onToggleAutoSummary,
+    onToggleAutoHideSummary,
+    onChangeThreshold,
+    onOpenSummarySettings}) => {
     const { addToast, registerBackHandler } = useOS();
     
     // Core VN State
@@ -125,12 +151,13 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Filter messages for Novel Mode: Show only current session
     // Logic: Find the LAST message with `isOpening: true`. Show all messages from there onwards.
     const sessionMessages = React.useMemo(() => {
-        const openingIndex = messages.map(m => m.metadata?.isOpening).lastIndexOf(true);
+        const visibleMessages = messages.filter(m => !m.metadata?.hiddenFromUser && !m.metadata?.isSummary && !m.metadata?.isDateContextBridge);
+        const openingIndex = visibleMessages.map(m => m.metadata?.isOpening).lastIndexOf(true);
         if (openingIndex !== -1) {
-            return messages.slice(openingIndex);
+            return visibleMessages.slice(openingIndex);
         }
         // Fallback: If no opening found (legacy data), show all
-        return messages;
+        return visibleMessages;
     }, [messages]);
 
     // Initialization
@@ -309,7 +336,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
-    const handleExitClick = () => {
+    const handleExitClick = (syncMode: DateExitSyncMode) => {
         const currentState: DateState = {
             dialogueQueue,
             dialogueBatch,
@@ -320,7 +347,8 @@ const DateSession: React.FC<DateSessionProps> = ({
             timestamp: Date.now(),
             peekStatus
         };
-        onExit(currentState);
+        setShowExitModal(false);
+        onExit(currentState, syncMode);
     };
 
     // Message Touch Logic (Robust version for scrollable lists)
@@ -404,6 +432,22 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" /></svg>
                 </button>
             </div>
+
+            <SummaryFloatingBall
+                char={char}
+                isGenerating={isSummaryGenerating}
+                hasPendingSummary={hasPendingSummary}
+                canManualSummary={canManualSummary}
+                canAutoSummary={canAutoSummary}
+                disabledReason={summaryDisabledReason}
+                onRequestManualSummary={onRequestSummary}
+                onReviewPendingSummary={onReviewPendingSummary}
+                onDiscardPendingSummary={onDiscardPendingSummary}
+                onToggleAutoSummary={onToggleAutoSummary}
+                onToggleAutoHideSummary={onToggleAutoHideSummary}
+                onChangeThreshold={onChangeThreshold}
+                onOpenSettings={onOpenSummarySettings}
+            />
 
             {/* Novel Mode View */}
             {isNovelMode && (
@@ -491,8 +535,17 @@ const DateSession: React.FC<DateSessionProps> = ({
             )}
 
             {/* Exit Modal */}
-            <Modal isOpen={showExitModal} title="暂时离开?" onClose={() => setShowExitModal(false)} footer={<div className="flex gap-3 w-full"><button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button><button onClick={handleExitClick} className="flex-1 py-3 bg-slate-800 text-white rounded-2xl font-bold">保存并退出</button></div>}>
-                <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">选择“保存并退出”将保留当前对话进度。<br/>下次见面时，你可以选择继续话题。</div>
+            <Modal isOpen={showExitModal} title="离开见面?" onClose={() => setShowExitModal(false)} footer={
+                <div className="flex w-full flex-col gap-2">
+                    <button onClick={() => handleExitClick('summary')} className="w-full py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100">生成总结同步</button>
+                    <button onClick={() => handleExitClick('raw')} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">同步原始记录</button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
+                        <button onClick={() => handleExitClick('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">暂不同步</button>
+                    </div>
+                </div>
+            }>
+                <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">离开时可以把这次线下见面同步给主聊天。同步内容用户不会在聊天列表里看到，但角色之后会自然记得。</div>
             </Modal>
 
             {/* Message Options Modal */}

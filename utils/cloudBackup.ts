@@ -14,12 +14,50 @@ export interface CloudBackupMeta {
     label?: string;
 }
 
+export type CloudBackupSource = 'auto' | 'manual';
+
+export interface CloudBackupUploadResponse {
+    key: string;
+    size: number;
+    uploaded: string;
+    label?: string;
+    source?: CloudBackupSource;
+}
+
 export interface CloudBackupListResponse {
     ok: boolean;
     backups: CloudBackupMeta[];
     count: number;
     maxCount: number;
     maxSizeMB?: number;
+}
+
+interface CloudBackupErrorPayload {
+    ok?: boolean;
+    code?: string;
+    error?: string;
+    latest?: CloudBackupMeta;
+    retryAfterMs?: number;
+}
+
+export class CloudBackupApiError extends Error {
+    status: number;
+    body: string;
+    payload?: CloudBackupErrorPayload;
+    code?: string;
+    retryAfterMs?: number;
+    latest?: CloudBackupMeta;
+
+    constructor(status: number, body: string, payload?: CloudBackupErrorPayload) {
+        super(body ? `Backup API error ${status}: ${body}` : `Backup API error ${status}`);
+        this.name = 'CloudBackupApiError';
+        this.status = status;
+        this.body = body;
+        this.payload = payload;
+        this.code = payload?.code;
+        this.retryAfterMs = payload?.retryAfterMs;
+        this.latest = payload?.latest;
+    }
 }
 
 async function backupFetch(
@@ -47,7 +85,13 @@ async function backupFetch(
 
     if (!res.ok && res.status !== 200) {
         const body = await res.text();
-        throw new Error(`Backup API error ${res.status}: ${body}`);
+        let payload: CloudBackupErrorPayload | undefined;
+        try {
+            payload = JSON.parse(body) as CloudBackupErrorPayload;
+        } catch {
+            payload = undefined;
+        }
+        throw new CloudBackupApiError(res.status, body, payload);
     }
 
     return res;
@@ -56,9 +100,11 @@ async function backupFetch(
 export async function uploadCloudBackup(
     zipBlob: Blob,
     label?: string,
-): Promise<{ key: string; size: number; uploaded: string }> {
+    source: CloudBackupSource = 'manual',
+): Promise<CloudBackupUploadResponse> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/zip',
+        'X-Backup-Source': source,
     };
     if (label) headers['X-Backup-Label'] = label;
 

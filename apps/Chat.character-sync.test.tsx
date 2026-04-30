@@ -118,6 +118,7 @@ vi.mock('../utils/haptics', () => ({
 vi.mock('../utils/autonomousAgent', () => ({
     BackendAgentManager: {
         notifyUserReplied: vi.fn(() => Promise.resolve()),
+        refreshCharacterContext: vi.fn(() => Promise.resolve()),
     },
     getLifeStreamVisibleInChat: vi.fn(() => false),
     LIFE_STREAM_VISIBILITY_EVENT_NAME: 'life-stream-visibility-change',

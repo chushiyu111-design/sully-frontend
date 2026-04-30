@@ -13,6 +13,7 @@ import { loadCharacterGoals, formatGoalListStr } from '../utils/goalService';
 import { EventExtractor } from '../utils/eventExtractor';
 import { extractThinking } from '../utils/thinkingExtractor';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
+import { BackendAgentManager } from '../utils/autonomousAgent';
 import type { HandlerContext } from './handlers/types';
 import { handleRecall } from './handlers/handleRecall';
 import { handleSearch } from './handlers/handleSearch';
@@ -126,6 +127,20 @@ export const useChatAI = ({
 
             // 0. Internal State Layer: senseBefore (和下方 buildSystemPrompt 的 embedding/rerank 并行)
             const secondaryConfig = getSecondaryApiConfig() || apiConfig;
+            const limit = char.contextLimit || 500;
+            let contextMsgs = currentMsgs;
+            if (char.id) {
+                try {
+                    const fullHistory = await DB.getRecentMessagesByCharId(char.id, limit);
+                    if (fullHistory.length > 0) {
+                        console.log(`📊 [Context] Loaded ${fullHistory.length} msgs from DB (React state had ${currentMsgs.length}, contextLimit=${limit})`);
+                        contextMsgs = fullHistory;
+                    }
+                } catch (e) {
+                    console.error('Failed to load full history from DB, using React state:', e);
+                }
+            }
+            const promptContextMsgs = contextMsgs.filter(m => m.metadata?.source !== 'date' || m.metadata?.isDateContextBridge);
 
             // 0.1 Gamygdala — 加载角色目标（并行，静默降级）
             const goalsPromise = loadCharacterGoals(char.id).catch(e => {
@@ -159,14 +174,14 @@ export const useChatAI = ({
 
             const [senseResult, systemPromptResult, playbackContext] = await Promise.all([
                 secondaryConfig.apiKey
-                    ? MindSnapshotExtractor.senseBefore(char, currentMsgs, secondaryConfig, goalListStr, characterGoals)
+                    ? MindSnapshotExtractor.senseBefore(char, promptContextMsgs, secondaryConfig, goalListStr, characterGoals)
                         .catch(e => { console.error('💭 [Sense] Parallel error:', e); return null; })
                     : Promise.resolve(null),
                 (async () => {
                     // If senseBefore finishes first and updates char.moodState (via DB persist),
                     // buildCoreContext will pick it up. But since they run in parallel,
                     // we also manually inject body signals after if needed.
-                    return ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, apiConfig, embeddingApiKey, characterGoals);
+                    return ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, promptContextMsgs, realtimeConfig, apiConfig, embeddingApiKey, characterGoals);
                 })(),
                 playbackContextPromise,
             ]);
@@ -286,20 +301,7 @@ mode 可选值：
             // 2. Build Message History
             // CRITICAL: Load full message history from DB up to contextLimit,
             // not from React state which is capped at 200 for rendering performance
-            const limit = char.contextLimit || 500;
-            let contextMsgs = currentMsgs;
-            if (limit > currentMsgs.length && char.id) {
-                try {
-                    const fullHistory = await DB.getRecentMessagesByCharId(char.id, limit);
-                    if (fullHistory.length > currentMsgs.length) {
-                        console.log(`📊 [Context] Loaded ${fullHistory.length} msgs from DB (React state had ${currentMsgs.length}, contextLimit=${limit})`);
-                        contextMsgs = fullHistory;
-                    }
-                } catch (e) {
-                    console.error('Failed to load full history from DB, using React state:', e);
-                }
-            }
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(promptContextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {
@@ -939,6 +941,7 @@ mode 可选值：
                 // If content was empty (e.g. only actions), just refresh
                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
             }
+            void BackendAgentManager.refreshCharacterContext(char.id, char);
 
             // ====== (secondaryConfig already built above for senseBefore) ======
 

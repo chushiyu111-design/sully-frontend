@@ -137,6 +137,11 @@ export interface CharacterProfile {
     dateCharPerspective?: 'first' | 'third';  // Char's narrative POV in date mode (default: 'third'). 'second' excluded when user is also 'second'
     dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
     activeSkinSetId?: string;     // Currently active skin set ID
+    dateSummaryPrompt?: string;        // User-customized date summary prompt
+    dateSummaryAutoEnabled?: boolean;  // Auto date summary toggle
+    dateSummaryAutoThreshold?: number; // Message threshold for auto summaries
+    dateSummaryLastAutoMsgId?: number; // Last date message id covered by auto summary
+    dateSummaryAutoHideEnabled?: boolean; // Hide summarized date messages, keeping only recent context
 
     savedDateState?: DateState;
     specialMomentRecords?: Record<string, SpecialMomentRecord>;

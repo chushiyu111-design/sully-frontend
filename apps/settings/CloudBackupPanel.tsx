@@ -130,7 +130,7 @@ const CloudBackupPanel: React.FC = () => {
                 month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit',
             });
-            await uploadCloudBackup(blob, label);
+            await uploadCloudBackup(blob, label, 'manual');
             addToast('云备份上传成功', 'success');
             await refreshLatest();
         } catch (e: any) {

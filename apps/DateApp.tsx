@@ -1,5 +1,5 @@
 
-import React,{ useState,useEffect } from 'react';
+import React,{ useState,useEffect,useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { useVirtualTime } from '../context/VirtualTimeContext';
 import { DB } from '../utils/db';
@@ -7,16 +7,83 @@ import { CharacterProfile,Message,DateState } from '../types';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
-import DateSession from '../components/date/DateSession';
+import DateSession,{ DateExitSyncMode } from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { buildDatePreamble,buildTheaterScene,buildDateTail } from '../utils/datePrompts';
 import { extractThinking } from '../utils/thinkingExtractor';
+import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge } from '../utils/dateSummaryPrompts';
+import { getSecondaryApiConfig } from '../utils/runtimeConfig';
+import { renderMarkdown } from '../utils/markdownLite';
 
-type DateHistorySession = { date: string, msgs: Message[] };
+type SummaryType = 'auto' | 'manual';
+const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
+type DateHistorySession = { date: string, msgs: Message[], rawMsgs: Message[], startMsgId: number, summaries: Message[], bridges: Message[] };
+type SummaryDraft = {
+    content: string;
+    summaryType: SummaryType;
+    coveredMsgIds: number[];
+    sessionStartMsgId: number;
+    promptSnapshot: string;
+    lastCoveredMsgId: number;
+    bridgeOnSave?: boolean;
+    bridgeOnly?: boolean;
+    bridgeAlreadySaved?: boolean;
+    sourceSummaryMsgId?: number;
+    exitState?: DateState;
+    fromPendingAuto?: boolean;
+};
+
+const isDateSummaryMessage = (m: Message) => m.metadata?.source === 'date' && m.metadata?.isSummary === true;
+const isDateBridgeMessage = (m: Message) => m.metadata?.source === 'date' && m.metadata?.isDateContextBridge === true;
+const isDateRawDialogueMessage = (m: Message) => (
+    m.metadata?.source === 'date'
+    && !m.metadata?.isSummary
+    && !m.metadata?.isDateContextBridge
+);
+const isDateDialogueMessage = (m: Message) => (
+    isDateRawDialogueMessage(m)
+    && !m.metadata?.hiddenFromUser
+);
+const getBridgeTypeLabel = (m: Message) => m.metadata?.bridgeType === 'raw' ? '原始记录' : '总结';
+
+const getCurrentSessionMessages = (msgs: Message[]) => {
+    const dateMsgs = msgs.filter(isDateRawDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
+    const openingIndex = dateMsgs.map(m => m.metadata?.isOpening).lastIndexOf(true);
+    return openingIndex >= 0 ? dateMsgs.slice(openingIndex) : dateMsgs;
+};
+
+const buildDateSummaryMemoryPrompt = (msgs: Message[]) => {
+    const sessionMessages = getCurrentSessionMessages(msgs);
+    if (sessionMessages.length === 0) return '';
+    const sessionStartMsgId = sessionMessages[0].id;
+    const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+    const summaries = msgs
+        .filter(isDateSummaryMessage)
+        .filter(summary => (
+            summary.metadata?.sessionStartMsgId === sessionStartMsgId
+            || (
+                Array.isArray(summary.metadata?.coveredMsgIds)
+                && summary.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
+            )
+        ))
+        .sort((a, b) => a.timestamp - b.timestamp);
+    if (summaries.length === 0) return '';
+
+    const blocks = summaries.map((summary, index) => {
+        const label = summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
+        return `### 已总结片段 ${index + 1}（${label}）\n${summary.content}`;
+    }).join('\n\n');
+
+    return `\n\n### 【本次见面的已总结上下文】\n以下是本次见面中较早内容的压缩总结。它们是刚才线下见面已经发生过的事，不是新的用户消息。继续当前线下见面时，请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
+};
+
+const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } => (
+    !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim()
+);
 
 const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     const dateMsgs = msgs
-        .filter(m => m.metadata?.source === 'date')
+        .filter(isDateRawDialogueMessage)
         .sort((a, b) => b.timestamp - a.timestamp);
 
     const sessions: DateHistorySession[] = [];
@@ -34,7 +101,11 @@ const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
             const sessionStartMsg = currentSession[currentSession.length - 1];
             sessions.push({
                 date: new Date(sessionStartMsg.timestamp).toLocaleString(),
-                msgs: [...currentSession].reverse(),
+                msgs: [...currentSession].reverse().filter(m => !m.metadata?.hiddenFromUser),
+                rawMsgs: [...currentSession].reverse(),
+                startMsgId: sessionStartMsg.id,
+                summaries: [],
+                bridges: [],
             });
             currentSession = [curr];
         } else {
@@ -45,10 +116,30 @@ const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     const sessionStartMsg = currentSession[currentSession.length - 1];
     sessions.push({
         date: new Date(sessionStartMsg.timestamp).toLocaleString(),
-        msgs: [...currentSession].reverse(),
+        msgs: [...currentSession].reverse().filter(m => !m.metadata?.hiddenFromUser),
+        rawMsgs: [...currentSession].reverse(),
+        startMsgId: sessionStartMsg.id,
+        summaries: [],
+        bridges: [],
     });
 
-    return sessions;
+    const summaries = msgs.filter(isDateSummaryMessage).sort((a, b) => a.timestamp - b.timestamp);
+    const bridges = msgs.filter(isDateBridgeMessage).sort((a, b) => a.timestamp - b.timestamp);
+    return sessions.map(session => {
+        const rawIds = new Set(session.rawMsgs.map(m => m.id));
+        const matchesSession = (m: Message) => (
+            m.metadata?.sessionStartMsgId === session.startMsgId
+            || (
+                Array.isArray(m.metadata?.coveredMsgIds)
+                && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && rawIds.has(id))
+            )
+        );
+        return {
+            ...session,
+            summaries: summaries.filter(matchesSession),
+            bridges: bridges.filter(matchesSession),
+        };
+    });
 };
 
 const DateApp: React.FC = () => {
@@ -65,6 +156,7 @@ const DateApp: React.FC = () => {
 
     // History State
     const [historySessions, setHistorySessions] = useState<DateHistorySession[]>([]);
+    const [expandedSummarySessions, setExpandedSummarySessions] = useState<Set<number>>(() => new Set());
 
     // Resume Logic State
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
@@ -77,15 +169,25 @@ const DateApp: React.FC = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editTargetMsg, setEditTargetMsg] = useState<Message | null>(null);
     const [editContent, setEditContent] = useState('');
+    const [isSummaryGenerating, setIsSummaryGenerating] = useState(false);
+    const [activeSummaryDraft, setActiveSummaryDraft] = useState<SummaryDraft | null>(null);
+    const [pendingAutoSummary, setPendingAutoSummary] = useState<SummaryDraft | null>(null);
+    const [showSummarySettings, setShowSummarySettings] = useState(false);
+    const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
+    const summaryGeneratingRef = useRef(false);
 
     const char = characters.find(c => c.id === activeCharacterId);
+    const secondaryApiConfig = getSecondaryApiConfig();
+    const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
+    const canAutoSummary = hasCompleteApiConfig(secondaryApiConfig);
+    const summaryDisabledReason = canManualSummary ? undefined : '请先配置主 API 或副 API';
 
     // --- Data Loading ---
     const loadDateMessages = async () => {
         if (char) {
             const msgs = await DB.getMessagesByCharId(char.id);
             // 只筛选 source='date' 的消息用于小说模式显示
-            const filtered = msgs.filter(m => m.metadata?.source === 'date').sort((a, b) => a.timestamp - b.timestamp);
+            const filtered = msgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
             setDateMessages(filtered);
 
             // 检查数据库中是否已经包含当前的 peekStatus（通过内容比对），避免重复保存
@@ -147,6 +249,393 @@ const DateApp: React.FC = () => {
                 onChange={e => setEditContent(e.target.value)}
                 className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
             />
+        </Modal>
+    );
+
+    const buildTimeLabel = () => `${virtualTime.day} ${formatTime()}`;
+
+    const openSummarySettings = () => {
+        if (!char) return;
+        setSummaryPromptDraft(char.dateSummaryPrompt || DEFAULT_DATE_SUMMARY_PROMPT);
+        setShowSummarySettings(true);
+    };
+
+    const saveSummarySettings = () => {
+        if (!char) return;
+        updateCharacter(char.id, {
+            dateSummaryPrompt: summaryPromptDraft.trim() || DEFAULT_DATE_SUMMARY_PROMPT,
+        });
+        setShowSummarySettings(false);
+        addToast('总结设置已保存', 'success');
+    };
+
+    const restoreDefaultSummarySettings = () => {
+        if (!char) return;
+        setSummaryPromptDraft(DEFAULT_DATE_SUMMARY_PROMPT);
+        updateCharacter(char.id, { dateSummaryPrompt: DEFAULT_DATE_SUMMARY_PROMPT });
+        addToast('总结提示词已恢复默认', 'success');
+    };
+
+    const generateSummaryDraft = async (summaryType: SummaryType): Promise<SummaryDraft | null> => {
+        if (!char || summaryGeneratingRef.current) return null;
+
+        const secondaryConfig = getSecondaryApiConfig();
+        const selectedApi = summaryType === 'auto'
+            ? secondaryConfig
+            : (hasCompleteApiConfig(secondaryConfig) ? secondaryConfig : apiConfig);
+
+        if (!hasCompleteApiConfig(selectedApi)) {
+            if (summaryType === 'manual') addToast('请先配置 API', 'error');
+            return null;
+        }
+
+        summaryGeneratingRef.current = true;
+        setIsSummaryGenerating(true);
+
+        try {
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const sessionMessages = getCurrentSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) {
+                if (summaryType === 'manual') addToast('还没有可总结的见面内容', 'info');
+                return null;
+            }
+
+            const targetMessages = summaryType === 'auto'
+                ? sessionMessages.filter(m => (!char.dateSummaryLastAutoMsgId || m.id > char.dateSummaryLastAutoMsgId) && !m.metadata?.dateSummaryAutoHidden)
+                : sessionMessages;
+
+            const threshold = char.dateSummaryAutoThreshold || 20;
+            if (summaryType === 'auto' && targetMessages.length < threshold) return null;
+            if (targetMessages.length < 4) {
+                if (summaryType === 'manual') addToast('消息太少，无法总结', 'info');
+                return null;
+            }
+
+            const promptSnapshot = char.dateSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
+            const prompt = buildSummaryPrompt(char.name, userProfile.name, buildTimeLabel(), targetMessages, promptSnapshot);
+
+            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
+                body: JSON.stringify({
+                    model: selectedApi.model,
+                    messages: [
+                        { role: 'system', content: '你负责把线下见面记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
+                        { role: 'user', content: prompt }
+                    ],
+                    temperature: 0.45,
+                }),
+            });
+
+            if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
+            const data = await safeResponseJson(response);
+            const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+            const content = extracted.content.trim();
+            if (!content) throw new Error('Summary content empty');
+
+            const sessionStartMsgId = sessionMessages[0].id;
+            const coveredMsgIds = targetMessages.map(m => m.id);
+            return {
+                content,
+                summaryType,
+                coveredMsgIds,
+                sessionStartMsgId,
+                promptSnapshot,
+                lastCoveredMsgId: coveredMsgIds[coveredMsgIds.length - 1],
+            };
+        } catch (e: any) {
+            if (summaryType === 'manual') addToast(`总结生成失败: ${e.message || e}`, 'error');
+            else console.warn('[DateSummary] auto summary failed:', e);
+            return null;
+        } finally {
+            summaryGeneratingRef.current = false;
+            setIsSummaryGenerating(false);
+        }
+    };
+
+    const saveSummaryDraft = async (draft: SummaryDraft) => {
+        if (!char) return;
+        if (draft.bridgeAlreadySaved) {
+            if (char.dateSummaryAutoHideEnabled && draft.sourceSummaryMsgId) {
+                await hideSummarizedDateMessages(draft, draft.sourceSummaryMsgId);
+            }
+            setActiveSummaryDraft(null);
+            addToast('已复用已保存总结同步到主聊天', 'success');
+            if (draft.exitState) finishExitSession(draft.exitState);
+            return;
+        }
+
+        if (draft.bridgeOnly) {
+            const bridgeMsgId = await DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'text',
+                content: draft.content,
+                metadata: {
+                    source: 'date',
+                    hiddenFromUser: true,
+                    isDateContextBridge: true,
+                    bridgeType: 'summary',
+                    coveredMsgIds: draft.coveredMsgIds,
+                    sessionStartMsgId: draft.sessionStartMsgId,
+                    promptSnapshot: draft.promptSnapshot,
+                    summarySourceMsgId: draft.sourceSummaryMsgId,
+                },
+            });
+            if (char.dateSummaryAutoHideEnabled) {
+                await hideSummarizedDateMessages(draft, draft.sourceSummaryMsgId || bridgeMsgId);
+            }
+            setActiveSummaryDraft(null);
+            await loadDateMessages();
+            addToast('已复用已保存总结同步到主聊天', 'success');
+            if (draft.exitState) finishExitSession(draft.exitState);
+            return;
+        }
+
+        const savedSummaryId = await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'text',
+            content: draft.content,
+            metadata: {
+                source: 'date',
+                hiddenFromUser: true,
+                isSummary: true,
+                summaryType: draft.summaryType,
+                coveredMsgIds: draft.coveredMsgIds,
+                sessionStartMsgId: draft.sessionStartMsgId,
+                promptSnapshot: draft.promptSnapshot,
+                ...(draft.bridgeOnSave ? { isDateContextBridge: true, bridgeType: 'summary' } : {}),
+            },
+        });
+
+        if (char.dateSummaryAutoHideEnabled) {
+            await hideSummarizedDateMessages(draft, savedSummaryId);
+        }
+        if (draft.summaryType === 'auto') {
+            updateCharacter(char.id, { dateSummaryLastAutoMsgId: draft.lastCoveredMsgId });
+        }
+        if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) {
+            setPendingAutoSummary(null);
+        }
+
+        setActiveSummaryDraft(null);
+        await loadDateMessages();
+        addToast(draft.bridgeOnSave ? '总结已同步到主聊天' : '总结已保存', 'success');
+        if (draft.exitState) finishExitSession(draft.exitState);
+    };
+
+    const closeSummaryModal = () => {
+        setActiveSummaryDraft(null);
+    };
+
+    const discardSummaryDraft = () => {
+        if (!char || !activeSummaryDraft) return;
+        const draft = activeSummaryDraft;
+        if (draft.summaryType === 'auto') {
+            updateCharacter(char.id, { dateSummaryLastAutoMsgId: draft.lastCoveredMsgId });
+            setPendingAutoSummary(null);
+        }
+        setActiveSummaryDraft(null);
+        addToast('已丢弃总结草稿', 'info');
+        if (draft.exitState) finishExitSession(draft.exitState);
+    };
+
+    const discardPendingAutoSummary = () => {
+        if (!char || !pendingAutoSummary) return;
+        updateCharacter(char.id, { dateSummaryLastAutoMsgId: pendingAutoSummary.lastCoveredMsgId });
+        setPendingAutoSummary(null);
+        addToast('已丢弃自动总结', 'info');
+    };
+
+    const hideCoveredDateMessageIds = async (coveredMsgIds: number[], summaryMsgId: number) => {
+        const idsToHide = coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - DATE_SUMMARY_CONTEXT_KEEP_COUNT));
+        if (idsToHide.length === 0) return;
+
+        await Promise.all(idsToHide.map(id => DB.updateMessageMetadata(id, {
+            hiddenFromUser: true,
+            dateSummaryAutoHidden: true,
+            hiddenBySummaryMsgId: summaryMsgId,
+        })));
+    };
+
+    const hideSummarizedDateMessages = async (draft: SummaryDraft, summaryMsgId: number) => {
+        await hideCoveredDateMessageIds(draft.coveredMsgIds, summaryMsgId);
+    };
+
+    const compressExistingDateSummaries = async () => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const summaries = allMsgs
+            .filter(isDateSummaryMessage)
+            .sort((a, b) => a.timestamp - b.timestamp);
+
+        for (const summary of summaries) {
+            if (!Array.isArray(summary.metadata?.coveredMsgIds)) continue;
+            const coveredMsgIds = summary.metadata.coveredMsgIds.filter((id: unknown): id is number => typeof id === 'number');
+            await hideCoveredDateMessageIds(coveredMsgIds, summary.id);
+        }
+
+        await loadDateMessages();
+    };
+
+    const requestManualSummary = async () => {
+        const draft = await generateSummaryDraft('manual');
+        if (draft) setActiveSummaryDraft(draft);
+    };
+
+    const maybeTriggerAutoSummary = async (msgs: Message[]) => {
+        if (!char || !char.dateSummaryAutoEnabled || pendingAutoSummary || summaryGeneratingRef.current) return;
+        if (!hasCompleteApiConfig(getSecondaryApiConfig())) return;
+        const sessionMessages = getCurrentSessionMessages(msgs);
+        const unsummarizedSessionMessages = sessionMessages.filter(m => !m.metadata?.dateSummaryAutoHidden);
+        const newCount = char.dateSummaryLastAutoMsgId
+            ? unsummarizedSessionMessages.filter(m => m.id > char.dateSummaryLastAutoMsgId!).length
+            : unsummarizedSessionMessages.length;
+        const threshold = char.dateSummaryAutoThreshold || 20;
+        if (newCount < threshold) return;
+
+        const draft = await generateSummaryDraft('auto');
+        if (draft) {
+            setPendingAutoSummary(draft);
+        }
+    };
+
+    const finishExitSession = (finalState: DateState) => {
+        if (char) {
+            updateCharacter(char.id, { savedDateState: finalState });
+            addToast('进度已保存', 'success');
+        }
+        setPendingAutoSummary(null);
+        setActiveSummaryDraft(null);
+        setMode('select');
+        setPeekStatus('');
+        setHasSavedOpening(false);
+    };
+
+    const saveRawBridgeAndExit = async (finalState: DateState) => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentSessionMessages(allMsgs);
+        if (sessionMessages.length > 0) {
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'text',
+                content: formatDateMessagesForBridge(sessionMessages, char.name, userProfile.name),
+                metadata: {
+                    source: 'date',
+                    hiddenFromUser: true,
+                    isDateContextBridge: true,
+                    bridgeType: 'raw',
+                    coveredMsgIds: sessionMessages.map(m => m.id),
+                    sessionStartMsgId: sessionMessages[0].id,
+                },
+            });
+            addToast('原始记录已同步到主聊天', 'success');
+        }
+        finishExitSession(finalState);
+    };
+
+    const buildDraftFromSavedSummary = async (finalState: DateState): Promise<SummaryDraft | null> => {
+        if (!char) return null;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentSessionMessages(allMsgs);
+        if (sessionMessages.length === 0) return null;
+
+        const sessionStartMsgId = sessionMessages[0].id;
+        const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+        const savedSummaries = allMsgs
+            .filter(isDateSummaryMessage)
+            .sort((a, b) => b.timestamp - a.timestamp || b.id - a.id);
+        const savedSummary = savedSummaries.find(m => m.metadata?.sessionStartMsgId === sessionStartMsgId)
+            || savedSummaries.find(m => (
+                Array.isArray(m.metadata?.coveredMsgIds)
+                && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
+            ));
+
+        if (!savedSummary) return null;
+
+        const coveredMsgIds = Array.isArray(savedSummary.metadata?.coveredMsgIds)
+            ? savedSummary.metadata.coveredMsgIds.filter((id: unknown): id is number => typeof id === 'number')
+            : sessionMessages.map(m => m.id);
+        const lastCoveredMsgId = coveredMsgIds[coveredMsgIds.length - 1] || savedSummary.id;
+
+        return {
+            content: savedSummary.content,
+            summaryType: savedSummary.metadata?.summaryType === 'auto' ? 'auto' : 'manual',
+            coveredMsgIds,
+            sessionStartMsgId,
+            promptSnapshot: typeof savedSummary.metadata?.promptSnapshot === 'string' ? savedSummary.metadata.promptSnapshot : '',
+            lastCoveredMsgId,
+            bridgeOnSave: true,
+            bridgeOnly: true,
+            bridgeAlreadySaved: savedSummary.metadata?.isDateContextBridge === true,
+            sourceSummaryMsgId: savedSummary.id,
+            exitState: finalState,
+        };
+    };
+
+    const renderSummaryModal = () => {
+        if (!activeSummaryDraft) return null;
+        const saveLabel = activeSummaryDraft.exitState ? '保存并退出' : '保存';
+        return (
+            <Modal
+                isOpen={!!activeSummaryDraft}
+                title="场次总结预览"
+                onClose={closeSummaryModal}
+                footer={
+                    <>
+                        <button
+                            onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))}
+                            className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold"
+                        >
+                            复制
+                        </button>
+                        <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
+                        <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{saveLabel}</button>
+                    </>
+                }
+            >
+                <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+                    {renderMarkdown(activeSummaryDraft.content)}
+                </div>
+            </Modal>
+        );
+    };
+
+    const renderSummarySettingsModal = () => (
+        <Modal
+            isOpen={showSummarySettings}
+            title="总结设置"
+            onClose={() => setShowSummarySettings(false)}
+            footer={
+                <>
+                    <button onClick={() => setShowSummarySettings(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">取消</button>
+                    <button onClick={saveSummarySettings} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">保存</button>
+                </>
+            }
+        >
+            <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs leading-relaxed text-slate-400">只影响见面总结生成，不会改动立绘、场景等其他见面设置。</p>
+                    <button
+                        onClick={restoreDefaultSummarySettings}
+                        className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-500 active:scale-95"
+                    >
+                        恢复默认
+                    </button>
+                </div>
+                <textarea
+                    value={summaryPromptDraft}
+                    onChange={e => setSummaryPromptDraft(e.target.value)}
+                    rows={9}
+                    className="w-full resize-y rounded-2xl border border-slate-100 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-700 outline-none focus:border-emerald-300/60 focus:ring-2 focus:ring-emerald-100"
+                />
+                <div className="rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-400">
+                    可用变量: <span className="font-mono text-slate-500">${'{charName}'}</span> <span className="font-mono text-slate-500">${'{userName}'}</span> <span className="font-mono text-slate-500">${'{time}'}</span> <span className="font-mono text-slate-500">${'{messages}'}</span>
+                </div>
+            </div>
         </Modal>
     );
 
@@ -231,7 +720,7 @@ const DateApp: React.FC = () => {
         setHasSavedOpening(false);
 
         try {
-            const msgs = await DB.getMessagesByCharId(c.id);
+            const msgs = (await DB.getMessagesByCharId(c.id)).filter(m => !m.metadata?.hiddenFromUser);
             const limit = c.contextLimit || 500;
             const peekLimit = Math.min(limit, 50);
             const lastMsg = msgs[msgs.length - 1];
@@ -309,16 +798,17 @@ const DateApp: React.FC = () => {
         const allMsgs = await DB.getMessagesByCharId(char.id);
 
         // Update local state for display
-        const dateFiltered = allMsgs.filter(m => m.metadata?.source === 'date').sort((a, b) => a.timestamp - b.timestamp);
+        const dateFiltered = allMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
         setDateMessages(dateFiltered);
 
         const limit = char.contextLimit || 500;
+        const visibleHistory = allMsgs.filter(m => !m.metadata?.hiddenFromUser);
 
         // Construct History for AI
         // We exclude the very last message (UserMsg we just sent) from history array 
         // because we'll pass it as the explicit user prompt "content".
         // BUT, we must ensure the Opening (Assistant) is included in history.
-        const historyMsgs = allMsgs.slice(-limit, -1).map(m => ({
+        const historyMsgs = visibleHistory.slice(-limit, -1).map(m => ({
             role: m.role,
             content: m.type === 'image' ? '[User sent an image]' : m.content
         }));
@@ -326,6 +816,7 @@ const DateApp: React.FC = () => {
         // ====== Build full immersive theater system prompt ======
         let systemPrompt = buildDatePreamble(char.name, userProfile.name);
         systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+        systemPrompt += buildDateSummaryMemoryPrompt(allMsgs);
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
         const userPov = char.datePerspective || 'second';
@@ -358,7 +849,8 @@ const DateApp: React.FC = () => {
 
         // Refresh local state
         const freshMsgs = await DB.getMessagesByCharId(char.id);
-        setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a, b) => a.timestamp - b.timestamp));
+        setDateMessages(freshMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp));
+        void maybeTriggerAutoSummary(freshMsgs);
 
         return content;
     };
@@ -374,8 +866,9 @@ const DateApp: React.FC = () => {
 
         // 2. Find the user input that triggered it
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id);
-        const lastUserMsg = validMsgs[validMsgs.length - 1];
+        const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id && !m.metadata?.hiddenFromUser);
+        const validDateMsgs = validMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
+        const lastUserMsg = [...validDateMsgs].reverse().find(m => m.role === 'user');
 
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
 
@@ -389,6 +882,7 @@ const DateApp: React.FC = () => {
         // ====== Build full immersive theater system prompt (reroll) ======
         let systemPrompt = buildDatePreamble(char.name, userProfile.name);
         systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+        systemPrompt += buildDateSummaryMemoryPrompt(allMsgs);
         const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
         const userPovR = char.datePerspective || 'second';
@@ -421,7 +915,7 @@ const DateApp: React.FC = () => {
 
         // Sync
         const freshMsgs = await DB.getMessagesByCharId(char.id);
-        setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a, b) => a.timestamp - b.timestamp));
+        setDateMessages(freshMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp));
 
         return content;
     };
@@ -453,7 +947,7 @@ const DateApp: React.FC = () => {
 
     const handleDeleteHistorySession = async (session: DateHistorySession) => {
         if (!char) return;
-        const sessionMessageIds = session.msgs.map(msg => msg.id);
+        const sessionMessageIds = Array.from(new Set([...session.rawMsgs, ...session.summaries, ...session.bridges].map(msg => msg.id)));
         if (sessionMessageIds.length === 0) return;
         if (!window.confirm(`删除这次见面记录？共 ${sessionMessageIds.length} 条消息会被移除。`)) return;
         await DB.deleteMessages(sessionMessageIds);
@@ -461,14 +955,35 @@ const DateApp: React.FC = () => {
         addToast('已删除本次见面记录', 'success');
     };
 
-    const onExitSession = (finalState: DateState) => {
-        if (char) {
-            updateCharacter(char.id, { savedDateState: finalState });
-            addToast('进度已保存', 'success');
+    const onExitSession = async (finalState: DateState, syncMode: DateExitSyncMode) => {
+        if (!char) return;
+        if (syncMode === 'none') {
+            finishExitSession(finalState);
+            return;
         }
-        setMode('select');
-        setPeekStatus('');
-        setHasSavedOpening(false);
+        if (syncMode === 'raw') {
+            await saveRawBridgeAndExit(finalState);
+            return;
+        }
+
+        if (pendingAutoSummary) {
+            setActiveSummaryDraft({ ...pendingAutoSummary, bridgeOnSave: true, fromPendingAuto: true, exitState: finalState });
+            return;
+        }
+
+        const savedSummaryDraft = await buildDraftFromSavedSummary(finalState);
+        if (savedSummaryDraft) {
+            setActiveSummaryDraft(savedSummaryDraft);
+            return;
+        }
+
+        const draft = await generateSummaryDraft('manual');
+        if (!draft) {
+            addToast('未同步总结，仅保存进度', 'info');
+            finishExitSession(finalState);
+            return;
+        }
+        setActiveSummaryDraft({ ...draft, bridgeOnSave: true, exitState: finalState });
     };
 
     const openHistory = async (c: CharacterProfile) => {
@@ -557,6 +1072,44 @@ const DateApp: React.FC = () => {
                                         </React.Fragment>
                                     );
                                 })}
+                                {session.bridges.length > 0 && (
+                                    <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+                                        <span className="font-bold text-emerald-700">已同步到主聊天</span>
+                                        <span className="text-[11px] text-emerald-500">
+                                            {Array.from(new Set(session.bridges.map(getBridgeTypeLabel))).join(' / ')}
+                                        </span>
+                                    </div>
+                                )}
+                                {session.summaries.length > 0 && (
+                                    <div className="border-t border-slate-100 pt-3">
+                                        <button
+                                            onClick={() => setExpandedSummarySessions(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(session.startMsgId)) next.delete(session.startMsgId);
+                                                else next.add(session.startMsgId);
+                                                return next;
+                                            })}
+                                            className="flex w-full items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500"
+                                        >
+                                            <span>📋 总结 ({session.summaries.length})</span>
+                                            <span>{expandedSummarySessions.has(session.startMsgId) ? '▾' : '▸'}</span>
+                                        </button>
+                                        {expandedSummarySessions.has(session.startMsgId) && (
+                                            <div className="mt-3 space-y-3">
+                                                {session.summaries.map(summary => (
+                                                    <div key={summary.id} className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+                                                        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                                            {summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结'}
+                                                        </div>
+                                                        <div className="text-xs leading-relaxed text-slate-700">
+                                                            {renderMarkdown(summary.content)}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}
@@ -612,13 +1165,32 @@ const DateApp: React.FC = () => {
                     onExit={onExitSession}
                     onEditMessage={openEditModal}
                     onDeleteMessage={handleDeleteMessage}
-                    onSettings={() => { }} // Removed parent state change, DateSession handles it internally now
+                    isSummaryGenerating={isSummaryGenerating}
+                    hasPendingSummary={!!pendingAutoSummary}
+                    canManualSummary={canManualSummary}
+                    canAutoSummary={canAutoSummary}
+                    summaryDisabledReason={summaryDisabledReason}
+                    onRequestSummary={requestManualSummary}
+                    onReviewPendingSummary={() => pendingAutoSummary && setActiveSummaryDraft({ ...pendingAutoSummary, fromPendingAuto: true })}
+                    onDiscardPendingSummary={discardPendingAutoSummary}
+                    onToggleAutoSummary={(enabled) => updateCharacter(char.id, { dateSummaryAutoEnabled: enabled })}
+                    onToggleAutoHideSummary={async (enabled) => {
+                        updateCharacter(char.id, { dateSummaryAutoHideEnabled: enabled });
+                        if (enabled) {
+                            await compressExistingDateSummaries();
+                            addToast('已开启压缩旧记录', 'success');
+                        }
+                    }}
+                    onChangeThreshold={(threshold) => updateCharacter(char.id, { dateSummaryAutoThreshold: threshold })}
+                    onOpenSummarySettings={openSummarySettings}
                 />
 
                 {/* Global Message Edit Modal for Session Mode */}
                 <Modal isOpen={isEditModalOpen} title="编辑内容" onClose={() => setIsEditModalOpen(false)} footer={<><button onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}>
                     <textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" />
                 </Modal>
+                {renderSummaryModal()}
+                {renderSummarySettingsModal()}
             </>
         );
     }

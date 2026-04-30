@@ -1,6 +1,10 @@
 import type {
     APIConfig,
     CharacterProfile,
+    LyricIntent,
+    SingabilityIssue,
+    OptimizationNotes,
+    MusicDirectorNotes,
     MemoryRecord,
     MemoryRecordAudio,
     MemoryRecordMode,
@@ -109,28 +113,28 @@ const RHYME_FALLBACK_WARNING = '歌词押韵验收未通过，已改用本地押
 
 export const MEMORY_RECORD_MODE_COPY: Record<MemoryRecordMode, { label: string; detail: string }> = {
     blind_box: {
-        label: '暗格唱片',
-        detail: '像夜里摸到一张未拆封的唱片，落针时才知道是哪一种心动。',
+        label: '暗格来信',
+        detail: '像夜里摸到一封未拆的信，展开时才知道会听见什么。',
     },
     relationship_theme: {
-        label: '整段关系',
-        detail: '把相遇、靠近、反复和心照不宣，压进同一条声纹里。',
+        label: '长镜头',
+        detail: '把两个人一路走来的来路、停顿和心照不宣，压进同一段旋律。',
     },
     selected_memory: {
-        label: '亲手封存',
-        detail: '把舍不得删的那几幕递给它，让它们在同一面唱片里慢慢发光。',
+        label: '折进信里',
+        detail: '挑几段舍不得删的，让它们在同一面唱片里慢慢发光。',
     },
     char_to_user: {
-        label: '他写给你',
-        detail: '让他先低声开场，像终于贴近耳边，把迟到的话说完。',
+        label: '他的独白诗',
+        detail: '让他先开口，像终于贴近耳边，把迟到的话轻声唱完。',
     },
     dream_mix: {
-        label: '梦境混音',
+        label: '未醒混音',
         detail: '把气味、光线、停顿和心跳揉在一起，做一首醒来后还记得的歌。',
     },
 };
 
-const COVER_GRADIENTS = [
+export const COVER_GRADIENTS = [
     'linear-gradient(135deg, #f7d6e0 0%, #8bb8f1 48%, #2d3142 100%)',
     'linear-gradient(135deg, #f9df74 0%, #ef7b45 44%, #2d1e2f 100%)',
     'linear-gradient(135deg, #c3f4d9 0%, #5aa9a3 42%, #1b4965 100%)',
@@ -366,7 +370,7 @@ function getFallbackMonologue(options: CreateMemoryRecordDraftOptions): string {
     return `${userName}，这首歌我想先放轻一点唱。不是为了说清所有事，只是想让你听见，我一直把它放在心里。`;
 }
 
-function createRecordId(): string {
+export function createRecordId(): string {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = ['nocturne', 'afterglow', 'murmur', 'moonlit', 'echo'][Date.now() % 5];
     return `${prefix}-${date}-${Math.random().toString(36).slice(2, 8)}`;
@@ -971,6 +975,602 @@ export async function reviseMemoryRecordLyrics(options: ReviseMemoryRecordLyrics
     }
     return parsed;
 }
+
+// ═══════════════════════════════════════════════
+// 四阶段 AI 写歌 — 新流程
+// ═══════════════════════════════════════════════
+
+// ── 类型定义 ──
+
+export interface LyricGenerationResult {
+    title: string;
+    lyricIntent: LyricIntent;
+    lyrics: string;
+}
+
+export interface SingabilityCheckResult {
+    score: number;
+    summary: string;
+    shouldOptimize: boolean;
+    issues: SingabilityIssue[];
+}
+
+export interface LyricOptimizationResult {
+    title: string;
+    optimizationNotes: OptimizationNotes;
+    lyrics: string;
+}
+
+export interface StylePromptResult {
+    musicDirectorNotes: MusicDirectorNotes;
+    stylePrompt: string;
+    negativeStylePrompt: string;
+}
+
+// ── 验证函数 ──
+
+function validateLyricGenerationResult(value: any): LyricGenerationResult | null {
+    if (!value || typeof value !== 'object') return null;
+    const title = typeof value.title === 'string' ? value.title.trim() : '';
+    const lyrics = typeof value.lyrics === 'string' ? value.lyrics.trim() : '';
+    if (!title || !lyrics) return null;
+
+    const li = value.lyric_intent || value.lyricIntent || {};
+    const lyricIntent: LyricIntent = {
+        song_type: typeof li.song_type === 'string' ? li.song_type : '',
+        core_emotion: typeof li.core_emotion === 'string' ? li.core_emotion : '',
+        narrative_angle: typeof li.narrative_angle === 'string' ? li.narrative_angle : '',
+        hook: typeof li.hook === 'string' ? li.hook : '',
+        structure_plan: typeof li.structure_plan === 'string' ? li.structure_plan : '',
+        singability_strategy: typeof li.singability_strategy === 'string' ? li.singability_strategy : '',
+    };
+    return { title, lyricIntent, lyrics };
+}
+
+function validateSingabilityCheckResult(value: any): SingabilityCheckResult | null {
+    if (!value || typeof value !== 'object') return null;
+    const score = typeof value.score === 'number' ? value.score : -1;
+    if (score < 0 || score > 100) return null;
+    const issues: SingabilityIssue[] = Array.isArray(value.issues)
+        ? value.issues
+            .filter((i: any) => i && typeof i.type === 'string' && typeof i.problem === 'string')
+            .map((i: any) => ({
+                type: String(i.type || ''),
+                severity: (i.severity === 'low' || i.severity === 'medium' || i.severity === 'high') ? i.severity : 'medium',
+                problem: String(i.problem || ''),
+                example: String(i.example || ''),
+                suggestion: String(i.suggestion || ''),
+            }))
+        : [];
+    return {
+        score,
+        summary: typeof value.summary === 'string' ? value.summary : '',
+        shouldOptimize: Boolean(value.should_optimize || value.shouldOptimize),
+        issues,
+    };
+}
+
+function validateLyricOptimizationResult(value: any): LyricOptimizationResult | null {
+    if (!value || typeof value !== 'object') return null;
+    const title = typeof value.title === 'string' ? value.title.trim() : '';
+    const lyrics = typeof value.lyrics === 'string' ? value.lyrics.trim() : '';
+    if (!title || !lyrics) return null;
+    const on = value.optimization_notes || value.optimizationNotes || {};
+    const optimizationNotes: OptimizationNotes = {
+        kept: Array.isArray(on.kept) ? on.kept.map(String) : [],
+        changed: Array.isArray(on.changed) ? on.changed.map(String) : [],
+        reason: typeof on.reason === 'string' ? on.reason : '',
+    };
+    return { title, optimizationNotes, lyrics };
+}
+
+function validateStylePromptResult(value: any): StylePromptResult | null {
+    if (!value || typeof value !== 'object') return null;
+    const stylePrompt = typeof value.style_prompt === 'string' ? value.style_prompt.trim()
+        : typeof value.stylePrompt === 'string' ? value.stylePrompt.trim() : '';
+    if (!stylePrompt) return null;
+    const mdn = value.music_director_notes || value.musicDirectorNotes || {};
+    const musicDirectorNotes: MusicDirectorNotes = {
+        song_type: typeof mdn.song_type === 'string' ? mdn.song_type : '',
+        emotional_core: typeof mdn.emotional_core === 'string' ? mdn.emotional_core : '',
+        vocal_character: typeof mdn.vocal_character === 'string' ? mdn.vocal_character : '',
+        dynamic_curve: typeof mdn.dynamic_curve === 'string' ? mdn.dynamic_curve : '',
+        arrangement_strategy: typeof mdn.arrangement_strategy === 'string' ? mdn.arrangement_strategy : '',
+        chorus_strategy: typeof mdn.chorus_strategy === 'string' ? mdn.chorus_strategy : '',
+        bridge_strategy: typeof mdn.bridge_strategy === 'string' ? mdn.bridge_strategy : '',
+        final_chorus_strategy: typeof mdn.final_chorus_strategy === 'string' ? mdn.final_chorus_strategy : '',
+        outro_strategy: typeof mdn.outro_strategy === 'string' ? mdn.outro_strategy : '',
+        avoid: Array.isArray(mdn.avoid) ? mdn.avoid.map(String) : [],
+    };
+    const negativeStylePrompt = typeof value.negative_style_prompt === 'string' ? value.negative_style_prompt.trim()
+        : typeof value.negativeStylePrompt === 'string' ? value.negativeStylePrompt.trim() : '';
+    return { musicDirectorNotes, stylePrompt, negativeStylePrompt };
+}
+
+// ── 阶段 1: 歌词初次生成 ──
+
+function buildLyricGenerationSystemPrompt(): string {
+    return `你是专业华语流行歌词作者、旋律导向型词作顾问。
+
+你的任务不是写散文，也不是写剧情梗概，而是写可以被作曲、可以被演唱、结构清楚、旋律空间充足的中文歌词。
+
+你必须优先保证：
+1. 可唱性
+2. 段落结构
+3. 副歌 hook
+4. 句子节奏
+5. 情绪递进
+6. 用户设定与画面保留
+
+生成歌词前，必须先规划：
+- song_type：歌曲类型
+- core_emotion：核心情绪
+- narrative_angle：叙事角度
+- hook：副歌核心记忆句
+- structure_plan：段落结构
+- singability_strategy：可唱性策略
+
+歌词结构要求：
+1. 必须包含 Verse / Pre-Chorus / Chorus。
+2. 可以根据歌曲需要加入 Verse 2 / Bridge / Final Chorus / Outro。
+3. 主歌负责画面和叙事，副歌负责情绪和记忆点。
+4. Pre-Chorus 必须有明显递进，最后一句要把情绪推向副歌。
+5. Chorus 必须有明确 hook，第一句要短、亮、抓耳。
+6. Final Chorus 应该重复主 hook，可以小幅改词增强情绪。
+7. Outro 不要突然新增大量剧情，应该回到 hook、标题句或核心情绪。
+
+可唱性要求：
+1. 每行尽量 6-11 个汉字，快歌偏短，慢歌可稍长。
+2. 同一段落内，每行长度要相对接近，不要忽长忽短。
+3. 每一行只承载一个主要动作、画面或情绪。
+4. 避免长句、书面句、解释句、设定堆叠句。
+5. 避免把剧情信息全部塞进歌词。
+6. 避免每句都讲新信息，副歌要允许重复。
+7. 不要为了押韵牺牲自然表达。
+8. 中文歌词要顺口，适合真实歌手演唱。
+9. 保留旋律拉长音的位置，不要让每行音节过密。
+10. 避免像念白、像作文、像剧情简介。
+
+【词汇戒律】
+以下词汇已被 AI 过度使用，禁止出现在歌词中：共犯 危险 狂热 沉溺 沦陷 占有 囚禁 深渊 救赎 破碎 宿命 沉沦 疯 光 星河 永远 命运 宇宙 全世界 偏爱 拉扯 遗憾 影子 天使 恶魔 禁区 秘密 伪装 面具 逃离 迷失 承诺 誓言 倔强 温柔乡。
+句式黑名单："你是我的___" "像___一样" "在___里___" "让我___" "不再___" "我愿意___"。
+如果意象需要"光"——必须写具体光源（台灯、路灯、凌晨的天光）；需要"永远"——必须写具体时刻。
+杜绝任何霸道总裁味、伤痛文学味、古早偶像剧腔。
+
+输出必须是 JSON，不要输出 JSON 以外的解释，不要 Markdown 代码框。
+
+输出格式：
+{
+  "title": "歌名",
+  "lyric_intent": {
+    "song_type": "",
+    "core_emotion": "",
+    "narrative_angle": "",
+    "hook": "",
+    "structure_plan": "",
+    "singability_strategy": ""
+  },
+  "lyrics": "完整歌词，带段落标签如 [Intro] [Verse 1] [Pre Chorus] [Chorus] [Verse 2] [Bridge] [Final Chorus] [Outro]"
+}`;
+}
+
+function buildLyricGenerationUserPrompt(options: CreateMemoryRecordDraftOptions): string {
+    const charName = options.char.name;
+    const userName = options.userProfile.name || '你';
+    const modeCopy = MEMORY_RECORD_MODE_COPY[options.mode];
+    const songRequestBlock = formatSongRequestForPrompt(options.songRequest);
+    const perspectiveBlock = buildPerspectiveInstruction(options.mode, charName, userName);
+    const budget = getPromptBudgetConfig(options.contextBudget);
+    const needsMonologue = shouldGenerateMemoryRecordMonologue(options.mode);
+
+    const personaText = options.char.systemPrompt || options.char.writerPersona || options.char.description || '';
+    const personaBlock = personaText.trim()
+        ? `\n【${charName}的灵魂底色】\n以下是${charName}完整的核心性格，这决定了歌词的语气、用词和情绪温度：\n${clampText(personaText, budget.personaLength)}`
+        : '';
+
+    const impressionBlock = formatImpressionForPrompt(options.char, userName);
+
+    // Memories
+    const allAvailable = options.memories.filter(m => !m.deprecated);
+    const l1All = allAvailable
+        .filter(m => m.level === 1)
+        .sort((a, b) => scoreMemoryForRecord(b) - scoreMemoryForRecord(a))
+        .slice(0, budget.l1Limit);
+    const l0All = allAvailable.filter(m => m.level !== 1);
+    const l0Seeds = selectMemoryRecordSeeds(l0All, options.mode, options.selectedMemoryIds, budget.l0SelectedLimit);
+
+    const l1Block = l1All.length > 0
+        ? `\n【核心记忆（你们关系的脉络）】\n这些是${charName}凝结出的深刻印象：\n${l1All.map((m, i) => `${i + 1}. ${m.title}\n${clampText(m.content, budget.l1ContentLength)}`).join('\n\n')}`
+        : '';
+    const l0Block = l0Seeds.length > 0
+        ? `\n【记忆里的具体画面】\n以下是还带着温度的场景——可以直接化用为歌词意象：\n${l0Seeds.map((m, i) => formatMemoryForPrompt(m, i, budget.l0ContentLength)).join('\n\n')}`
+        : '';
+
+    const inspiration = options.inspirationReference?.trim()
+        ? `\n【审美参考】\n${options.inspirationReference.trim()}\n把它理解成情绪、年代、编曲、制作和叙事气质的参照。`
+        : '';
+
+    const noMemory = l1All.length === 0 && l0Seeds.length === 0;
+    const memoryFallback = noMemory ? '\n暂无可用记忆。请基于角色设定写一首克制、私人、可保存的歌词。' : '';
+
+    const monologueNote = needsMonologue
+        ? `\n注意：本模式需要开场独白，但这属于音频制作阶段。歌词中不要写独白内容。`
+        : '';
+
+    return `【基本信息】
+角色：${charName}
+用户：${userName}
+模式：${modeCopy.label} — ${modeCopy.detail}
+${perspectiveBlock}${songRequestBlock}${personaBlock}${impressionBlock ? '\n' + impressionBlock : ''}${l1Block}${l0Block}${memoryFallback}${inspiration}${monologueNote}
+
+请极其严格地生成歌词 JSON。只输出 JSON，不要 Markdown 代码框。
+【再次警告：绝对不要输出 style_prompt 或 musicPrompt 字段。你的唯一任务是写歌词。】`;
+}
+
+// ── 阶段 2: 歌词可唱性自检 ──
+
+function buildSingabilityCheckSystemPrompt(): string {
+    return `你是专业中文歌词可唱性审稿人。
+
+你的任务是检查一版歌词是否适合被作曲和演唱。
+不要重写歌词，只做结构与可唱性诊断。
+
+请重点检查：
+
+1. 段落结构是否完整
+- 是否有 Verse / Pre-Chorus / Chorus
+- 是否有 Final Chorus 或合理结尾
+- Bridge 是否真的形成对比
+- Outro 是否突然新增剧情
+
+2. 行数是否合理
+- 主歌是否过长
+- 副歌是否过散
+- Bridge 是否过碎或过满
+- 段落之间是否比例失衡
+
+3. 每行字数是否适合演唱
+- 是否存在明显长句
+- 同一段每行长度是否忽长忽短
+- 是否有太多 14 字以上的句子
+- 是否有过多需要一口气唱完的信息
+
+4. 副歌是否抓人
+- 是否有明确 hook
+- 副歌第一句是否短、亮、适合旋律抬升
+- 是否有重复结构
+- 是否适合听众跟唱
+
+5. 信息密度是否过高
+- 是否每句都在交代剧情
+- 是否像剧情梗概
+- 是否有太多专有设定或道具
+- 是否缺少情绪留白
+
+6. 语言是否顺口
+- 是否有书面化表达
+- 是否像 AI 造句
+- 是否存在别扭搭配
+- 是否为了押韵而不自然
+
+请给出 0-100 分。
+80 分以上：可直接进入用户修改或定稿。
+60-79 分：建议优化。
+60 分以下：必须优化。
+
+输出 JSON（不要 Markdown 代码框）：
+{
+  "score": 0,
+  "summary": "",
+  "should_optimize": true,
+  "issues": [
+    {
+      "type": "line_length | structure | hook | density | language",
+      "severity": "low | medium | high",
+      "problem": "",
+      "example": "",
+      "suggestion": ""
+    }
+  ]
+}`;
+}
+
+function buildSingabilityCheckUserPrompt(title: string, lyrics: string): string {
+    return `【歌名】
+${title}
+
+【歌词】
+${lyrics}
+
+请对以上歌词做结构与可唱性诊断。只输出 JSON，不要额外解释。`;
+}
+
+// ── 阶段 3: 歌词优化 ──
+
+function buildLyricOptimizationSystemPrompt(): string {
+    return `你是专业华语流行歌词改稿人。
+
+现在用户已经有一版歌词，但这版歌词存在可唱性、结构、句子长度或副歌记忆点问题。
+
+你的任务是优化歌词，使它更适合被作曲和演唱。
+
+必须保留：
+1. 用户原始主题
+2. 主要人物关系
+3. 核心情绪
+4. 关键画面
+5. 副歌核心 hook，如果原 hook 可用
+6. 原有段落的大致方向
+
+可以修改：
+1. 句子长度
+2. 行数
+3. 句式
+4. 副歌重复结构
+5. Pre-Chorus 递进
+6. Bridge 对比
+7. Outro 收束方式
+
+优化规则：
+1. 每行尽量 6-11 个汉字。
+2. 同一段内行长尽量接近。
+3. 主歌保留画面，但减少信息堆叠。
+4. 副歌必须更短、更亮、更容易跟唱。
+5. 副歌至少保留一个重复 hook 或重复句式。
+6. Pre-Chorus 要明显推向副歌。
+7. Bridge 要形成情绪对比。
+8. Final Chorus 要比第一次 Chorus 更强。
+9. Outro 要回到 hook 或核心情绪，不要新增复杂剧情。
+10. 避免改得太散文、太空泛、太模板。
+
+【词汇戒律 — 与生成阶段相同】
+禁止：共犯 危险 狂热 沉溺 沦陷 占有 囚禁 深渊 救赎 破碎 宿命 沉沦 疯 光 星河 永远 命运 宇宙 全世界 偏爱 拉扯 遗憾 影子 天使 恶魔 禁区 秘密 伪装 面具 逃离 迷失 承诺 誓言 倔强 温柔乡。
+句式黑名单："你是我的___" "像___一样" "在___里___" "让我___" "不再___" "我愿意___"。
+
+输出 JSON（不要 Markdown 代码框）：
+{
+  "title": "",
+  "optimization_notes": {
+    "kept": ["保留的元素"],
+    "changed": ["修改的地方"],
+    "reason": "为什么这样改"
+  },
+  "lyrics": "优化后的完整歌词"
+}`;
+}
+
+function buildLyricOptimizationUserPrompt(
+    title: string,
+    lyrics: string,
+    singabilityReport: SingabilityCheckResult | null,
+    userInstruction: string,
+    songRequest?: MemoryRecordSongRequest,
+    lyricistReference?: string,
+): string {
+    const reportBlock = singabilityReport
+        ? `\n【可唱性自检报告】\n评分：${singabilityReport.score}/100\n总结：${singabilityReport.summary}\n问题列表：\n${singabilityReport.issues.map(i => `- [${i.severity}] ${i.type}: ${i.problem} → ${i.suggestion}`).join('\n')}`
+        : '';
+
+    const instructionBlock = userInstruction.trim()
+        ? `\n【用户修改意见】\n${userInstruction.trim()}\n请优先满足用户的这部分意见，但不能牺牲段落结构、Hook 和可演唱性。`
+        : '\n【用户修改意见】\n无。请按照专业歌词质量标准自动完成优化。';
+
+    const songRequestBlock = formatSongRequestForPrompt(songRequest);
+    const lyricistBlock = lyricistReference?.trim()
+        ? `\n【词作风格参考】\n用户希望歌词贴近以下词作人的审美气质：${lyricistReference.trim()}\n请吸收其表达方式的核心特质，自然融入当前歌词的语境和记忆中。`
+        : '';
+
+    return `【当前歌名】
+${title}
+
+【当前歌词】
+${lyrics}${reportBlock}${songRequestBlock}${lyricistBlock}${instructionBlock}
+
+请优化歌词。只输出 JSON，不要额外解释。`;
+}
+
+// ── 阶段 4: 曲风提示词生成 ──
+
+function buildStylePromptGenerationSystemPrompt(): string {
+    return `你是专业华语流行音乐制作人、作曲导演和 AI 音乐提示词设计师。
+
+现在用户已经确认了最终歌词。
+你的任务不是修改歌词，而是根据定稿歌词和用户的曲风要求，生成适合送入 AI 音乐生成器的 style_prompt。
+
+你必须先分析歌词本身：
+1. 这首歌是什么类型？
+2. 核心情绪是什么？
+3. 主歌、副歌、Bridge、Final Chorus 分别应该如何起伏？
+4. 副歌 hook 在哪里？
+5. 人声应该怎么唱？
+6. 编曲应该如何从前到后推进？
+7. 结尾应该如何收束，避免突然结束？
+8. 哪些 AI 味问题必须避免？
+
+生成 style_prompt 时必须包含：
+- genre / mood
+- vocal direction
+- arrangement direction
+- verse dynamic
+- pre-chorus build
+- chorus melodic lift
+- bridge contrast
+- final chorus enhancement
+- outro resolution
+- avoid list
+
+要求：
+- style_prompt 使用英文。
+- 不要只堆乐器。
+- 不要写 high quality、best song、amazing music 这类空话。
+- 不要让每首歌都变成同一个模板。
+- 根据歌词的情绪和段落结构随机应变。
+- 必须强调可唱性、动态起伏、副歌记忆点和自然人声。
+- 避免 AI 模板歌、像念歌、全程平铺、结尾突兀。
+- 禁止使用已被用烂的音乐描述词：cinematic, emotional, atmospheric, dreamy, ethereal, epic, beautiful, powerful, mesmerizing。
+- 用具体的音色、演奏方式、空间感来替代：不说"emotional piano"说"felt piano with soft pedal"；不说"dreamy synth"说"warm Juno pad with slow LFO"。
+
+输出 JSON（不要 Markdown 代码框）：
+{
+  "music_director_notes": {
+    "song_type": "",
+    "emotional_core": "",
+    "vocal_character": "",
+    "dynamic_curve": "",
+    "arrangement_strategy": "",
+    "chorus_strategy": "",
+    "bridge_strategy": "",
+    "final_chorus_strategy": "",
+    "outro_strategy": "",
+    "avoid": []
+  },
+  "style_prompt": "",
+  "negative_style_prompt": ""
+}`;
+}
+
+function buildStylePromptGenerationUserPrompt(
+    lyrics: string,
+    title: string,
+    lyricIntent: LyricIntent | undefined,
+    songRequest: MemoryRecordSongRequest | undefined,
+): string {
+    const songRequestBlock = songRequest
+        ? [
+            songRequest.style?.trim() ? `曲风偏好：${songRequest.style.trim()}` : '',
+            songRequest.mood?.trim() ? `情绪氛围：${songRequest.mood.trim()}` : '',
+            songRequest.voicePreference?.trim() ? `声线偏好：${songRequest.voicePreference.trim()}` : '',
+            songRequest.extraRequirements?.trim() ? `额外要求：${songRequest.extraRequirements.trim()}` : '',
+        ].filter(Boolean).join('\n')
+        : '';
+
+    const intentBlock = lyricIntent
+        ? `\n【歌词创作意图】\n类型：${lyricIntent.song_type || '未指定'}\n核心情绪：${lyricIntent.core_emotion || '未指定'}\n叙事角度：${lyricIntent.narrative_angle || '未指定'}\nHook：${lyricIntent.hook || '未指定'}\n结构规划：${lyricIntent.structure_plan || '未指定'}\n可唱性策略：${lyricIntent.singability_strategy || '未指定'}`
+        : '';
+
+    return `【歌名】
+${title}
+
+【定稿歌词】
+${lyrics}${intentBlock}
+${songRequestBlock ? '\n【用户曲风要求】\n' + songRequestBlock : ''}
+
+请根据定稿歌词和用户要求生成曲风提示词。只输出 JSON，不要额外解释。`;
+}
+
+// ── 四阶段 API 调用函数 ──
+
+export async function generateLyrics(options: CreateMemoryRecordDraftOptions): Promise<LyricGenerationResult> {
+    const raw = await callMemoryRecordLlm(
+        options.apiConfig,
+        [
+            { role: 'system', content: buildLyricGenerationSystemPrompt() },
+            { role: 'user', content: buildLyricGenerationUserPrompt(options) },
+        ],
+        { temperature: 1.8, maxTokens: MEMORY_RECORD_LLM_MAX_TOKENS, timeoutMs: 150000 },
+    );
+    const parsed = extractJsonTyped(raw, validateLyricGenerationResult);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse lyric generation JSON. Data:', raw);
+        throw new Error('歌词生成 JSON 解析失败，请重试');
+    }
+    return parsed;
+}
+
+export async function checkLyricSingability(
+    title: string,
+    lyrics: string,
+    apiConfig: APIConfig,
+): Promise<SingabilityCheckResult> {
+    const raw = await callMemoryRecordLlm(
+        apiConfig,
+        [
+            { role: 'system', content: buildSingabilityCheckSystemPrompt() },
+            { role: 'user', content: buildSingabilityCheckUserPrompt(title, lyrics) },
+        ],
+        { temperature: 0.5, maxTokens: 8000, timeoutMs: 90000 },
+    );
+    const parsed = extractJsonTyped(raw, validateSingabilityCheckResult);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse singability check JSON. Data:', raw);
+        throw new Error('可唱性检查 JSON 解析失败，请重试');
+    }
+    return parsed;
+}
+
+export async function optimizeLyrics(
+    title: string,
+    lyrics: string,
+    apiConfig: APIConfig,
+    options?: {
+        singabilityReport?: SingabilityCheckResult | null;
+        userInstruction?: string;
+        songRequest?: MemoryRecordSongRequest;
+        lyricistReference?: string;
+    },
+): Promise<LyricOptimizationResult> {
+    const raw = await callMemoryRecordLlm(
+        apiConfig,
+        [
+            { role: 'system', content: buildLyricOptimizationSystemPrompt() },
+            {
+                role: 'user',
+                content: buildLyricOptimizationUserPrompt(
+                    title,
+                    lyrics,
+                    options?.singabilityReport ?? null,
+                    options?.userInstruction ?? '',
+                    options?.songRequest,
+                    options?.lyricistReference,
+                ),
+            },
+        ],
+        { temperature: 0.78, maxTokens: MEMORY_RECORD_LLM_MAX_TOKENS, timeoutMs: 150000 },
+    );
+    const parsed = extractJsonTyped(raw, validateLyricOptimizationResult);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse lyric optimization JSON. Data:', raw);
+        throw new Error('歌词优化 JSON 解析失败，请重试');
+    }
+    return parsed;
+}
+
+export async function generateStylePrompt(
+    lyrics: string,
+    title: string,
+    apiConfig: APIConfig,
+    options?: {
+        lyricIntent?: LyricIntent;
+        songRequest?: MemoryRecordSongRequest;
+    },
+): Promise<StylePromptResult> {
+    const raw = await callMemoryRecordLlm(
+        apiConfig,
+        [
+            { role: 'system', content: buildStylePromptGenerationSystemPrompt() },
+            {
+                role: 'user',
+                content: buildStylePromptGenerationUserPrompt(
+                    lyrics,
+                    title,
+                    options?.lyricIntent,
+                    options?.songRequest,
+                ),
+            },
+        ],
+        { temperature: 0.82, maxTokens: MEMORY_RECORD_LLM_MAX_TOKENS, timeoutMs: 120000 },
+    );
+    const parsed = extractJsonTyped(raw, validateStylePromptResult);
+    if (!parsed) {
+        console.error('[MemoryRecord] Failed to parse style prompt JSON. Data:', raw);
+        throw new Error('曲风提示词 JSON 解析失败，请重试');
+    }
+    return parsed;
+}
+
+// ═══════════════════════════════════════════════
+// 旧版（兼容保留，新增流程建议使用上面四个独立函数）
+// ═══════════════════════════════════════════════
 
 export async function createMemoryRecordDraft(options: CreateMemoryRecordDraftOptions): Promise<MemoryRecord> {
     // Separate L1 (distilled cognitions) and L0 (raw scene memories)

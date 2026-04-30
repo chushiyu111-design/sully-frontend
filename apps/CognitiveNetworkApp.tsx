@@ -8,7 +8,7 @@ import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
-import { createMemoryRecordDraft,MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,reviseMemoryRecordLyrics,shouldGenerateMemoryRecordMonologue } from '../utils/memoryRecordService';
+import { MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,shouldGenerateMemoryRecordMonologue,generateLyrics,checkLyricSingability,optimizeLyrics,generateStylePrompt,createRecordId,COVER_GRADIENTS,type MemoryRecordMemoryHeader,type SingabilityCheckResult,type StylePromptResult } from '../utils/memoryRecordService';
 import { getMemoryRecordCoverImage } from '../utils/memoryRecordCovers';
 import { hasPlayableMemoryRecordAudio,memoryRecordToPlayable } from '../utils/memoryRecordPlayable';
 import type { MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
@@ -85,18 +85,28 @@ type MemoryRecordFlowStatus =
     | 'idle'
     | 'generating_lyrics'
     | 'lyrics_ready'
+    | 'checking_singability'
+    | 'singability_checked'
+    | 'optimizing_lyrics'
+    | 'lyrics_optimized'
     | 'revising_lyrics'
     | 'lyrics_confirmed'
+    | 'generating_style'
+    | 'style_ready'
     | 'generating_song'
     | 'song_ready'
     | 'error';
 
 interface LyricsEditorDraft {
     title: string;
-    stylePrompt: string;
     lyrics: string;
+    stylePrompt: string;
+    negativeStylePrompt: string;
     revisionInstruction: string;
     lyricistReference: string;
+    optimizedLyrics?: string;
+    optimizedTitle?: string;
+    optimizationNotes?: import('../types').OptimizationNotes;
 }
 
 const createEmptySongRequest = (): MemoryRecordSongRequest => ({
@@ -110,8 +120,9 @@ const createEmptySongRequest = (): MemoryRecordSongRequest => ({
 
 const createEmptyLyricsDraft = (): LyricsEditorDraft => ({
     title: '',
-    stylePrompt: '',
     lyrics: '',
+    stylePrompt: '',
+    negativeStylePrompt: '',
     revisionInstruction: '',
     lyricistReference: '',
 });
@@ -193,6 +204,9 @@ const CognitiveNetworkApp: React.FC = () => {
     const [recordMode, setRecordMode] = useState<MemoryRecordMode>('blind_box');
     const [recordReference, setRecordReference] = useState('');
     const [selectedRecordMemoryIds, setSelectedRecordMemoryIds] = useState<string[]>([]);
+    const [recordMemoryOptions, setRecordMemoryOptions] = useState<MemoryRecordMemoryHeader[]>([]);
+    const [recordMemoryOptionsLoading, setRecordMemoryOptionsLoading] = useState(false);
+    const [recordMemoryOptionsError, setRecordMemoryOptionsError] = useState('');
     const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>([]);
     const [recordGenerating, setRecordGenerating] = useState(false);
     const [recordStatusText, setRecordStatusText] = useState('');
@@ -201,6 +215,9 @@ const CognitiveNetworkApp: React.FC = () => {
     const [activeDraftRecordId, setActiveDraftRecordId] = useState<string | null>(null);
     const [lyricsDraft, setLyricsDraft] = useState<LyricsEditorDraft>(() => createEmptyLyricsDraft());
     const [recordFlowError, setRecordFlowError] = useState('');
+    const [singabilityResult, setSingabilityResult] = useState<SingabilityCheckResult | null>(null);
+    const [stylePromptResult, setStylePromptResult] = useState<StylePromptResult | null>(null);
+    const [showOptimizedLyrics, setShowOptimizedLyrics] = useState(false);
     const monologuePreviewRef = React.useRef<HTMLAudioElement | null>(null);
     const monologuePreviewUrlRef = React.useRef<string | null>(null);
 
@@ -820,8 +837,9 @@ const CognitiveNetworkApp: React.FC = () => {
         setActiveDraftRecordId(record.id);
         setLyricsDraft({
             title: record.title,
-            stylePrompt: record.musicPrompt,
             lyrics: record.lyrics,
+            stylePrompt: record.stylePrompt || record.musicPrompt || '',
+            negativeStylePrompt: record.negativeStylePrompt || '',
             revisionInstruction: '',
             lyricistReference: '',
         });
@@ -829,6 +847,26 @@ const CognitiveNetworkApp: React.FC = () => {
             ...createEmptySongRequest(),
             ...(record.songRequest || {}),
         });
+        setSingabilityResult(record.singabilityCheck ? {
+            score: record.singabilityCheck.score,
+            summary: record.singabilityCheck.summary,
+            shouldOptimize: record.singabilityCheck.should_optimize,
+            issues: record.singabilityCheck.issues,
+        } : null);
+        if (record.musicDirectorNotes && (record.stylePrompt || record.musicPrompt)) {
+            setStylePromptResult({
+                musicDirectorNotes: record.musicDirectorNotes || {
+                    song_type: '', emotional_core: '', vocal_character: '', dynamic_curve: '',
+                    arrangement_strategy: '', chorus_strategy: '', bridge_strategy: '',
+                    final_chorus_strategy: '', outro_strategy: '', avoid: [],
+                },
+                stylePrompt: record.stylePrompt || record.musicPrompt || '',
+                negativeStylePrompt: record.negativeStylePrompt || '',
+            });
+        } else {
+            setStylePromptResult(null);
+        }
+        setShowOptimizedLyrics(false);
         setRecordFlowError(record.error || '');
         setRecordFlowStatus(status);
     }, []);
@@ -865,7 +903,41 @@ const CognitiveNetworkApp: React.FC = () => {
 
     useEffect(() => {
         setSelectedRecordMemoryIds([]);
+        setRecordMemoryOptions([]);
+        setRecordMemoryOptionsError('');
     }, [selectedCharId, recordMode]);
+
+    useEffect(() => {
+        if (recordMode !== 'selected_memory' || !selectedCharId) {
+            setRecordMemoryOptionsLoading(false);
+            return;
+        }
+
+        let alive = true;
+        setRecordMemoryOptionsLoading(true);
+        setRecordMemoryOptionsError('');
+
+        DB.getVectorMemoryHeaders(selectedCharId)
+            .then((headers) => {
+                if (!alive) return;
+                const options = headers
+                    .filter((memory) => !memory.deprecated)
+                    .sort((a, b) => (b.lastMentioned || b.createdAt || 0) - (a.lastMentioned || a.createdAt || 0));
+                setRecordMemoryOptions(options);
+            })
+            .catch((error: any) => {
+                if (!alive) return;
+                setRecordMemoryOptions([]);
+                setRecordMemoryOptionsError(error?.message || '读取记忆失败');
+            })
+            .finally(() => {
+                if (alive) setRecordMemoryOptionsLoading(false);
+            });
+
+        return () => {
+            alive = false;
+        };
+    }, [recordMode, selectedCharId]);
 
     const toggleRecordMemorySeed = useCallback((memoryId: string) => {
         setSelectedRecordMemoryIds(prev => {
@@ -938,15 +1010,17 @@ const CognitiveNetworkApp: React.FC = () => {
         const next: MemoryRecord = {
             ...activeDraftRecord,
             title: lyricsDraft.title.trim(),
-            musicPrompt: lyricsDraft.stylePrompt.trim(),
             lyrics: lyricsDraft.lyrics.trim(),
+            musicPrompt: lyricsDraft.stylePrompt.trim() || activeDraftRecord.musicPrompt,
+            stylePrompt: lyricsDraft.stylePrompt.trim() || undefined,
+            negativeStylePrompt: lyricsDraft.negativeStylePrompt.trim() || undefined,
             songRequest: normalizeSongRequest(recordSongRequest),
             updatedAt: Date.now(),
         };
         return persistMemoryRecord(next);
-    }, [activeDraftRecord, lyricsDraft.lyrics, lyricsDraft.stylePrompt, lyricsDraft.title, persistMemoryRecord, recordSongRequest]);
+    }, [activeDraftRecord, lyricsDraft.lyrics, lyricsDraft.stylePrompt, lyricsDraft.negativeStylePrompt, lyricsDraft.title, persistMemoryRecord, recordSongRequest]);
 
-    const handleLyricsFieldChange = useCallback((field: keyof Pick<LyricsEditorDraft, 'title' | 'stylePrompt' | 'lyrics' | 'revisionInstruction' | 'lyricistReference'>, value: string) => {
+    const handleLyricsFieldChange = useCallback((field: keyof Pick<LyricsEditorDraft, 'title' | 'stylePrompt' | 'negativeStylePrompt' | 'lyrics' | 'revisionInstruction' | 'lyricistReference'>, value: string) => {
         setLyricsDraft(prev => ({ ...prev, [field]: value }));
 
         if (!activeDraftRecord || field === 'revisionInstruction' || field === 'lyricistReference') return;
@@ -955,8 +1029,10 @@ const CognitiveNetworkApp: React.FC = () => {
             field === 'title'
                 ? { title: value }
                 : field === 'stylePrompt'
-                    ? { musicPrompt: value }
-                    : { lyrics: value };
+                    ? { musicPrompt: value, stylePrompt: value }
+                    : field === 'negativeStylePrompt'
+                        ? { negativeStylePrompt: value }
+                        : { lyrics: value };
         const next: MemoryRecord = {
             ...activeDraftRecord,
             ...patch,
@@ -992,6 +1068,7 @@ const CognitiveNetworkApp: React.FC = () => {
         await Promise.all(ids.map(id => DB.deleteMemoryRecordAudio(id)));
     }, []);
 
+    // ── 阶段 1: 只生成歌词（不含 style_prompt）──
     const handleCreateMemoryRecord = useCallback(async () => {
         if (!selectedCharId || !selectedBrowserChar) {
             addToast('先选一个人，唱片匣才知道要为谁落针', 'info');
@@ -1001,15 +1078,22 @@ const CognitiveNetworkApp: React.FC = () => {
             addToast('先写一个歌曲主题，歌词才知道从哪里落笔', 'info');
             return;
         }
+        if (recordMode === 'selected_memory' && selectedRecordMemoryIds.length === 0) {
+            addToast('亲手封存要先挑至少一段记忆', 'info');
+            return;
+        }
 
         setRecordGenerating(true);
         setRecordFlowStatus('generating_lyrics');
         setRecordFlowError('');
-        setRecordStatusText('正在生成歌词草稿，并做一次自检润色...');
+        setRecordStatusText('正在生成歌词...');
+        setSingabilityResult(null);
+        setStylePromptResult(null);
+        setShowOptimizedLyrics(false);
 
         try {
             const memoryHeaders = await DB.getVectorMemoryHeaders(selectedCharId);
-            const draft = await createMemoryRecordDraft({
+            const result = await generateLyrics({
                 char: selectedBrowserChar,
                 userProfile,
                 mode: recordMode,
@@ -1021,60 +1105,256 @@ const CognitiveNetworkApp: React.FC = () => {
                 contextBudget: 'expanded',
             });
 
+            const now = Date.now();
+            const recordId = createRecordId();
+            const draft: MemoryRecord = {
+                id: recordId,
+                charId: selectedBrowserChar.id,
+                charName: selectedBrowserChar.name,
+                userName: userProfile.name || '你',
+                mode: recordMode,
+                status: 'draft',
+                title: result.title,
+                albumName: '回忆唱片匣',
+                artistName: selectedBrowserChar.name,
+                monologueText: '',
+                lyrics: result.lyrics,
+                musicPrompt: '',
+                lyricIntent: result.lyricIntent,
+                songRequest: normalizeSongRequest(recordSongRequest),
+                inspirationReference: recordReference?.trim() || undefined,
+                coverGradient: COVER_GRADIENTS[Math.floor(Math.random() * COVER_GRADIENTS.length)],
+                seedMemoryIds: [],
+                selectedMemoryIds: recordMode === 'selected_memory' ? selectedRecordMemoryIds?.slice() : undefined,
+                createdAt: now,
+                updatedAt: now,
+            };
+
             await DB.saveMemoryRecord(draft);
             upsertMemoryRecord(draft);
-            loadRecordIntoLyricsEditor(draft);
-            addToast(draft.error ? '歌词草稿已生成，但有一条自检记录需要你看一下' : '歌词草稿已写好，先确认再生成歌曲', draft.error ? 'info' : 'success');
+            setLyricsDraft({
+                title: result.title,
+                lyrics: result.lyrics,
+                stylePrompt: '',
+                negativeStylePrompt: '',
+                revisionInstruction: '',
+                lyricistReference: '',
+            });
+            setActiveDraftRecordId(recordId);
+            setRecordFlowStatus('lyrics_ready');
+            addToast('歌词已生成，可以查看可唱性评分', 'success');
         } catch (e: any) {
             setRecordFlowStatus('error');
             setRecordFlowError(e.message);
-            addToast(`歌词草稿生成失败: ${e.message}`, 'error');
+            addToast(`歌词生成失败: ${e.message}`, 'error');
         } finally {
             setRecordGenerating(false);
             setRecordStatusText('');
         }
-    }, [addToast, apiConfig, loadRecordIntoLyricsEditor, recordMode, recordReference, recordSongRequest, selectedBrowserChar, selectedCharId, selectedRecordMemoryIds, upsertMemoryRecord, userProfile]);
+    }, [addToast, apiConfig, recordMode, recordReference, recordSongRequest, selectedBrowserChar, selectedCharId, selectedRecordMemoryIds, upsertMemoryRecord, userProfile]);
 
-    const handleReviseMemoryRecordLyrics = useCallback(async () => {
-        if (!activeDraftRecord) {
-            addToast('先生成一版歌词草稿', 'info');
+    // ── 阶段 2: 可唱性自检 ──
+    const handleCheckSingability = useCallback(async () => {
+        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
+            addToast('先生成歌词再检查可唱性', 'info');
             return;
         }
 
         setRecordGenerating(true);
-        setRecordFlowStatus('revising_lyrics');
+        setRecordFlowStatus('checking_singability');
         setRecordFlowError('');
-        setRecordStatusText('正在按你的意见改词...');
+        setRecordStatusText('正在检查歌词可唱性...');
 
         try {
-            const current = await saveActiveLyricsSnapshot();
-            const revised = await reviseMemoryRecordLyrics({
-                record: current,
+            const result = await checkLyricSingability(
+                lyricsDraft.title || activeDraftRecord.title,
+                lyricsDraft.lyrics,
                 apiConfig,
-                instruction: lyricsDraft.revisionInstruction,
-                songRequest: normalizeSongRequest(recordSongRequest),
-                lyricistReference: lyricsDraft.lyricistReference,
-            });
-            const next: MemoryRecord = {
-                ...current,
-                title: revised.title,
-                musicPrompt: revised.stylePrompt,
-                lyrics: revised.lyrics,
-                error: undefined,
+            );
+            setSingabilityResult(result);
+            setRecordFlowStatus('singability_checked');
+
+            // Persist to record
+            const updated: MemoryRecord = {
+                ...activeDraftRecord,
+                singabilityCheck: {
+                    score: result.score,
+                    summary: result.summary,
+                    should_optimize: result.shouldOptimize,
+                    issues: result.issues,
+                },
                 updatedAt: Date.now(),
             };
-            await persistMemoryRecord(next);
-            loadRecordIntoLyricsEditor(next);
-            addToast('歌词已经改好，可以继续手动微调', 'success');
+            await persistMemoryRecord(updated);
+
+            if (result.shouldOptimize) {
+                addToast(`可唱性评分 ${result.score}/100 — 建议优化歌词`, 'info');
+            } else {
+                addToast(`可唱性评分 ${result.score}/100 — 歌词结构良好`, 'success');
+            }
         } catch (e: any) {
-            setRecordFlowStatus('lyrics_ready');
             setRecordFlowError(e.message);
-            addToast(`修改歌词失败: ${e.message}`, 'error');
+            addToast(`可唱性检查失败: ${e.message}`, 'error');
         } finally {
             setRecordGenerating(false);
             setRecordStatusText('');
         }
-    }, [activeDraftRecord, addToast, apiConfig, loadRecordIntoLyricsEditor, lyricsDraft.revisionInstruction, persistMemoryRecord, recordSongRequest, saveActiveLyricsSnapshot]);
+    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord]);
+
+    // ── 阶段 3: 歌词优化（用户可选）──
+    const handleOptimizeLyrics = useCallback(async () => {
+        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
+            addToast('先生成歌词再优化', 'info');
+            return;
+        }
+
+        setRecordGenerating(true);
+        setRecordFlowStatus('optimizing_lyrics');
+        setRecordFlowError('');
+        setRecordStatusText('正在优化歌词可唱性...');
+
+        try {
+            const current = await saveActiveLyricsSnapshot();
+            const result = await optimizeLyrics(
+                lyricsDraft.title || current.title,
+                lyricsDraft.lyrics,
+                apiConfig,
+                {
+                    singabilityReport: singabilityResult,
+                    userInstruction: lyricsDraft.revisionInstruction,
+                    songRequest: normalizeSongRequest(recordSongRequest),
+                    lyricistReference: lyricsDraft.lyricistReference,
+                },
+            );
+
+            // Save optimized version alongside original
+            setLyricsDraft(prev => ({
+                ...prev,
+                optimizedTitle: result.title,
+                optimizedLyrics: result.lyrics,
+                optimizationNotes: result.optimizationNotes,
+            }));
+            setShowOptimizedLyrics(true);
+            setRecordFlowStatus('lyrics_optimized');
+
+            // Persist optimization notes
+            const updated: MemoryRecord = {
+                ...current,
+                optimizationNotes: result.optimizationNotes,
+                updatedAt: Date.now(),
+            };
+            await persistMemoryRecord(updated);
+
+            addToast('歌词已优化，可以对比原版和优化版', 'success');
+        } catch (e: any) {
+            setRecordFlowError(e.message);
+            addToast(`歌词优化失败: ${e.message}`, 'error');
+        } finally {
+            setRecordGenerating(false);
+            setRecordStatusText('');
+        }
+    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft, persistMemoryRecord, recordSongRequest, saveActiveLyricsSnapshot, singabilityResult]);
+
+    // ── 用户选择采用优化版或原版 ──
+    const handleAdoptOptimizedLyrics = useCallback(() => {
+        if (!lyricsDraft.optimizedLyrics) return;
+        setLyricsDraft(prev => ({
+            ...prev,
+            title: prev.optimizedTitle || prev.title,
+            lyrics: prev.optimizedLyrics || prev.lyrics,
+            optimizedLyrics: undefined,
+            optimizedTitle: undefined,
+            revisionInstruction: '',
+        }));
+        setShowOptimizedLyrics(false);
+        setRecordFlowStatus('lyrics_ready');
+        addToast('已采用优化版歌词', 'success');
+    }, [addToast, lyricsDraft.optimizedLyrics, lyricsDraft.optimizedTitle]);
+
+    const handleKeepOriginalLyrics = useCallback(() => {
+        setShowOptimizedLyrics(false);
+        setRecordFlowStatus('lyrics_ready');
+    }, []);
+
+    // ── 确认歌词定稿（不生成歌曲，只标记定稿）──
+    const handleConfirmLyricsFinal = useCallback(async () => {
+        if (!activeDraftRecord) {
+            addToast('先生成歌词草稿', 'info');
+            return;
+        }
+        if (!lyricsDraft.title.trim() || !lyricsDraft.lyrics.trim()) {
+            addToast('歌名和歌词都不能为空', 'info');
+            return;
+        }
+
+        try {
+            const current = await saveActiveLyricsSnapshot();
+            const confirmed: MemoryRecord = {
+                ...current,
+                lyricsConfirmedAt: Date.now(),
+                updatedAt: Date.now(),
+            };
+            await persistMemoryRecord(confirmed);
+            setRecordFlowStatus('lyrics_confirmed');
+            addToast('歌词已定稿，现在可以生成曲风提示词', 'success');
+        } catch (e: any) {
+            setRecordFlowError(e.message);
+            addToast(`保存失败: ${e.message}`, 'error');
+        }
+    }, [activeDraftRecord, addToast, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord, saveActiveLyricsSnapshot]);
+
+    // ── 阶段 4: 生成曲风提示词 ──
+    const handleGenerateStylePrompt = useCallback(async () => {
+        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
+            addToast('先确认歌词定稿', 'info');
+            return;
+        }
+
+        setRecordGenerating(true);
+        setRecordFlowStatus('generating_style');
+        setRecordFlowError('');
+        setRecordStatusText('正在根据定稿歌词生成曲风方案...');
+
+        try {
+            const current = await saveActiveLyricsSnapshot();
+            const result = await generateStylePrompt(
+                lyricsDraft.lyrics,
+                lyricsDraft.title || current.title,
+                apiConfig,
+                {
+                    lyricIntent: current.lyricIntent,
+                    songRequest: normalizeSongRequest(recordSongRequest),
+                },
+            );
+
+            setStylePromptResult(result);
+            setLyricsDraft(prev => ({
+                ...prev,
+                stylePrompt: result.stylePrompt,
+                negativeStylePrompt: result.negativeStylePrompt,
+            }));
+            setRecordFlowStatus('style_ready');
+
+            // Persist
+            const updated: MemoryRecord = {
+                ...current,
+                stylePrompt: result.stylePrompt,
+                negativeStylePrompt: result.negativeStylePrompt,
+                musicPrompt: result.stylePrompt,
+                musicDirectorNotes: result.musicDirectorNotes,
+                updatedAt: Date.now(),
+            };
+            await persistMemoryRecord(updated);
+
+            addToast('曲风提示词已生成，你可以继续调整', 'success');
+        } catch (e: any) {
+            setRecordFlowError(e.message);
+            addToast(`曲风生成失败: ${e.message}`, 'error');
+        } finally {
+            setRecordGenerating(false);
+            setRecordStatusText('');
+        }
+    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord, recordSongRequest, saveActiveLyricsSnapshot]);
 
     const handleConfirmLyricsAndGenerateSong = useCallback(async () => {
         if (!selectedBrowserChar) return;
@@ -1082,8 +1362,12 @@ const CognitiveNetworkApp: React.FC = () => {
             addToast('先生成并确认歌词草稿', 'info');
             return;
         }
-        if (!lyricsDraft.title.trim() || !lyricsDraft.stylePrompt.trim() || !lyricsDraft.lyrics.trim()) {
-            addToast('歌名、风格提示词和歌词都不能为空', 'info');
+        if (!lyricsDraft.title.trim() || !lyricsDraft.lyrics.trim()) {
+            addToast('歌名和歌词都不能为空', 'info');
+            return;
+        }
+        if (!lyricsDraft.stylePrompt.trim()) {
+            addToast('请先生成曲风提示词', 'info');
             return;
         }
 
@@ -1663,6 +1947,73 @@ const CognitiveNetworkApp: React.FC = () => {
                             </section>
 
                             {selectedCharId && selectedBrowserChar ? (
+                                <>
+                                {/* ── 落针方式 ── */}
+                                <section className="rounded-[20px] border border-white/[0.07] bg-[#131016]/72 p-4">
+                                    <div className="mb-3">
+                                        <p className="text-[9px] font-semibold tracking-[0.28em] text-[#d8bd90]/48">NEEDLE DROP</p>
+                                        <h3 className="mt-1.5 text-[16px] font-semibold tracking-[0.10em] text-[#fff1bd]" style={{ fontFamily: "'Noto Serif SC', serif" }}>落针方式</h3>
+                                        <p className="mt-1 text-[11px] leading-relaxed text-white/36">选一种方式，决定这段旋律从哪里开始</p>
+                                    </div>
+                                    <div className="grid gap-2 sm:grid-cols-5">
+                                        {(Object.keys(MEMORY_RECORD_MODE_COPY) as MemoryRecordMode[]).map(mode => (
+                                            <button
+                                                key={mode}
+                                                type="button"
+                                                onClick={() => { setRecordMode(mode); haptic.light(); }}
+                                                className={`rounded-[14px] border px-3 py-3 text-left transition-all active:scale-[0.97] ${
+                                                    recordMode === mode
+                                                        ? 'border-[#f2d290]/54 bg-[#f2d290]/14 text-[#fff1bd]'
+                                                        : 'border-white/[0.07] bg-white/[0.035] text-white/48 hover:border-[#f2d290]/24'
+                                                }`}
+                                            >
+                                                <span className="block text-[12px] font-bold tracking-[0.08em]">{MEMORY_RECORD_MODE_COPY[mode].label}</span>
+                                                <span className="mt-1 block text-[9px] leading-relaxed opacity-62">{MEMORY_RECORD_MODE_COPY[mode].detail}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {recordMode === 'selected_memory' ? (
+                                        <div className="mt-3 rounded-[16px] border border-white/[0.07] bg-white/[0.035] p-3">
+                                            <div className="mb-2 flex items-center justify-between gap-3 text-[10px] text-white/40">
+                                                <span>封存片段</span>
+                                                <span>{selectedRecordMemoryIds.length}/8 · {recordMemoryOptions.length} 段可选</span>
+                                            </div>
+                                            {recordMemoryOptionsLoading ? (
+                                                <p className="text-[11px] leading-relaxed text-white/34">正在取出这位角色的全部记忆...</p>
+                                            ) : recordMemoryOptionsError ? (
+                                                <p className="text-[11px] leading-relaxed text-[#ffb4a8]/70">读取记忆失败：{recordMemoryOptionsError}</p>
+                                            ) : recordMemoryOptions.length > 0 ? (
+                                                <div className="max-h-[220px] overflow-y-auto no-scrollbar rounded-[12px] border border-white/[0.055] bg-black/12 p-2">
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {recordMemoryOptions.map((memory) => {
+                                                            const picked = selectedRecordMemoryIds.includes(memory.id);
+                                                            const label = memory.title || memory.content?.slice(0, 28) || '未命名回忆';
+                                                            return (
+                                                                <button
+                                                                    key={memory.id}
+                                                                    type="button"
+                                                                    title={label}
+                                                                    onClick={() => toggleRecordMemorySeed(memory.id)}
+                                                                    className={`max-w-full rounded-full border px-3 py-1.5 text-[10px] font-semibold transition-all active:scale-[0.97] ${
+                                                                        picked
+                                                                            ? 'border-[#f2d290]/54 bg-[#f2d290]/18 text-[#fff1bd]'
+                                                                            : 'border-white/[0.08] bg-black/14 text-white/44'
+                                                                    }`}
+                                                                >
+                                                                    <span className="block max-w-[220px] truncate">{label}</span>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <p className="text-[11px] leading-relaxed text-white/34">这位角色本机还没有可封存的记忆。</p>
+                                            )}
+                                            <p className="mt-2 text-[10px] leading-relaxed text-white/30">已列出本机全部回忆，最多挑 8 段交给这张唱片。</p>
+                                        </div>
+                                    ) : null}
+                                </section>
+
                                 <section className="relative overflow-hidden rounded-[24px] border border-[#d4af37]/20 bg-[#131016]/82 p-5 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_1px_0_rgba(255,244,214,0.08)_inset] backdrop-blur-2xl">
                                     <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#ffe4a3]/42 to-transparent" />
                                     <div className="absolute -right-10 -top-12 h-32 w-32 rounded-full bg-[#e5bf7f]/[0.045] blur-2xl" />
@@ -1673,11 +2024,12 @@ const CognitiveNetworkApp: React.FC = () => {
                                                 <h3 className="mt-2 text-[20px] font-semibold tracking-[0.12em] text-[#fff1bd]" style={{ fontFamily: "'Noto Serif SC', serif" }}>词曲手札</h3>
                                                 <p className="mt-2 max-w-[460px] text-[12px] leading-relaxed text-white/42">把心事写成词，反复斟酌，最后让旋律替你轻声唱出来。</p>
                                             </div>
-                                            <div className="grid grid-cols-3 gap-2 rounded-[16px] border border-white/[0.07] bg-black/16 p-1.5">
+                                            <div className="grid grid-cols-4 gap-2 rounded-[16px] border border-white/[0.07] bg-black/16 p-1.5">
                                                 {[
-                                                    { step: 1, label: '写心', active: recordFlowStatus === 'idle' || recordFlowStatus === 'generating_lyrics' },
-                                                    { step: 2, label: '斟酌', active: recordFlowStatus === 'lyrics_ready' || recordFlowStatus === 'revising_lyrics' },
-                                                    { step: 3, label: '谱曲', active: recordFlowStatus === 'lyrics_confirmed' || recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready' },
+                                                    { step: 1, label: '写词', active: recordFlowStatus === 'idle' || recordFlowStatus === 'generating_lyrics' || recordFlowStatus === 'lyrics_ready' || recordFlowStatus === 'checking_singability' || recordFlowStatus === 'singability_checked' || recordFlowStatus === 'optimizing_lyrics' || recordFlowStatus === 'lyrics_optimized' },
+                                                    { step: 2, label: '定稿', active: recordFlowStatus === 'lyrics_confirmed' },
+                                                    { step: 3, label: '曲风', active: recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready' },
+                                                    { step: 4, label: '生歌', active: recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready' },
                                                 ].map(item => (
                                                     <div
                                                         key={item.step}
@@ -1713,7 +2065,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                                     {([
                                                         ['theme', '歌曲主题', '雨夜重逢、秘密恋爱、梦醒前的告白'],
                                                         ['mood', '情绪/氛围', '暧昧、克制、热烈、失落但不伤感'],
-                                                        ['perspective', '演唱视角', '我对你唱、他写给你、旁观者回望'],
+                                                        ['perspective', '叙事口吻', '我唱给你听、第三人称旁观、像在讲故事'],
                                                     ] as const).map(([field, label, placeholder]) => (
                                                         <label key={field} className="block">
                                                             <span className="mb-1 block text-[10px] font-semibold tracking-[0.06em] text-white/48">{label}</span>
@@ -1766,165 +2118,221 @@ const CognitiveNetworkApp: React.FC = () => {
                                                 />
                                             </label>
 
-                                            <div className="mt-4 grid gap-2 sm:grid-cols-5">
-                                                {(Object.keys(MEMORY_RECORD_MODE_COPY) as MemoryRecordMode[]).map(mode => (
-                                                    <button
-                                                        key={mode}
-                                                        type="button"
-                                                        onClick={() => { setRecordMode(mode); haptic.light(); }}
-                                                        className={`rounded-[14px] border px-3 py-3 text-left transition-all active:scale-[0.97] ${
-                                                            recordMode === mode
-                                                                ? 'border-[#f2d290]/54 bg-[#f2d290]/14 text-[#fff1bd]'
-                                                                : 'border-white/[0.07] bg-white/[0.035] text-white/48 hover:border-[#f2d290]/24'
-                                                        }`}
-                                                    >
-                                                        <span className="block text-[12px] font-bold tracking-[0.08em]">{MEMORY_RECORD_MODE_COPY[mode].label}</span>
-                                                        <span className="mt-1 block text-[9px] leading-relaxed opacity-62">{MEMORY_RECORD_MODE_COPY[mode].detail}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-
-                                            {recordMode === 'selected_memory' ? (
-                                                <div className="mt-3 rounded-[16px] border border-white/[0.07] bg-white/[0.035] p-3">
-                                                    <div className="mb-2 flex items-center justify-between gap-3 text-[10px] text-white/40">
-                                                        <span>封存片段</span>
-                                                        <span>{selectedRecordMemoryIds.length}/8</span>
-                                                    </div>
-                                                    {browserMemories && browserMemories.length > 0 ? (
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {browserMemories.slice(0, 18).map((memory: any) => {
-                                                                const picked = selectedRecordMemoryIds.includes(memory.id);
-                                                                return (
-                                                                    <button
-                                                                        key={memory.id}
-                                                                        type="button"
-                                                                        onClick={() => toggleRecordMemorySeed(memory.id)}
-                                                                        className={`max-w-full rounded-full border px-3 py-1.5 text-[10px] font-semibold transition-all active:scale-[0.97] ${
-                                                                            picked
-                                                                                ? 'border-[#f2d290]/54 bg-[#f2d290]/18 text-[#fff1bd]'
-                                                                                : 'border-white/[0.08] bg-black/14 text-white/44'
-                                                                        }`}
-                                                                    >
-                                                                        {memory.title || '未命名回忆'}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    ) : (
-                                                        <p className="text-[11px] leading-relaxed text-white/34">从下方挑几枚舍不得删的片段，交给这张唱片。</p>
-                                                    )}
-                                                </div>
-                                            ) : null}
                                         </div>
 
+                                        {/* ── STEP 2: 歌词工作区 ── */}
                                         {activeDraftRecord ? (
                                             <div className="rounded-[18px] border border-[#f2d290]/18 bg-black/18 p-4">
                                                 <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                                     <div>
                                                         <p className="text-[9px] font-semibold tracking-[0.24em] text-[#d8bd90]/48">STEP 2</p>
-                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#fff1bd]">确认/修改歌词</h4>
+                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#fff1bd]">歌词工作区</h4>
                                                     </div>
                                                     <div className="text-[10px] font-semibold text-white/38">
-                                                        {recordFlowStatus === 'revising_lyrics' ? '正在修改歌词...' : '草稿会自动保存到本机'}
+                                                        {recordGenerating ? '处理中...' : '草稿会自动保存到本机'}
                                                     </div>
                                                 </div>
 
-                                                <div className="grid gap-3 sm:grid-cols-2">
-                                                    <label className="block">
-                                                        <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">歌名 title</span>
-                                                        <input
-                                                            value={lyricsDraft.title}
-                                                            onChange={e => handleLyricsFieldChange('title', e.target.value)}
-                                                            className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[13px] font-semibold text-[#fff1bd] outline-none focus:border-[#f2d290]/34"
-                                                        />
-                                                    </label>
-                                                    <label className="block">
-                                                        <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">曲风提示词 style prompt</span>
-                                                        <textarea
-                                                            value={lyricsDraft.stylePrompt}
-                                                            onChange={e => handleLyricsFieldChange('stylePrompt', e.target.value)}
-                                                            className="min-h-[88px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none focus:border-[#f2d290]/34"
-                                                        />
-                                                    </label>
-                                                </div>
+                                                {/* 歌名 + 歌词 */}
+                                                <label className="block">
+                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">歌名 title</span>
+                                                    <input
+                                                        value={lyricsDraft.title}
+                                                        onChange={e => handleLyricsFieldChange('title', e.target.value)}
+                                                        className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[13px] font-semibold text-[#fff1bd] outline-none focus:border-[#f2d290]/34"
+                                                    />
+                                                </label>
 
                                                 <label className="mt-3 block">
                                                     <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">完整歌词 lyrics</span>
                                                     <textarea
                                                         value={lyricsDraft.lyrics}
                                                         onChange={e => handleLyricsFieldChange('lyrics', e.target.value)}
-                                                        className="min-h-[360px] w-full resize-y rounded-[16px] border border-white/[0.08] bg-[#08070b]/72 px-4 py-4 font-mono text-[12px] leading-6 text-[#fff6d8] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34 sm:min-h-[460px]"
+                                                        className="min-h-[320px] w-full resize-y rounded-[16px] border border-white/[0.08] bg-[#08070b]/72 px-4 py-4 font-mono text-[12px] leading-6 text-[#fff6d8] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34 sm:min-h-[400px]"
                                                         spellCheck={false}
                                                     />
                                                 </label>
 
-                                                <label className="mt-3 block">
-                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">修改意见</span>
+                                                {/* 可唱性评分卡片 */}
+                                                {singabilityResult ? (
+                                                    <div className={`mt-3 rounded-[14px] border p-3 ${singabilityResult.score >= 80 ? 'border-[#81b29a]/24 bg-[#81b29a]/[0.06]' : singabilityResult.score >= 60 ? 'border-[#f2d290]/24 bg-[#f2d290]/[0.06]' : 'border-[#d99aae]/24 bg-[#d99aae]/[0.06]'}`}>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[11px] font-semibold text-white/60">可唱性评分</span>
+                                                            <span className={`text-[18px] font-black ${singabilityResult.score >= 80 ? 'text-[#81b29a]' : singabilityResult.score >= 60 ? 'text-[#f2d290]' : 'text-[#d99aae]'}`}>{singabilityResult.score}<span className="text-[11px] font-normal">/100</span></span>
+                                                        </div>
+                                                        {singabilityResult.summary ? <p className="mt-1.5 text-[10px] leading-relaxed text-white/48">{singabilityResult.summary}</p> : null}
+                                                        {singabilityResult.issues.length > 0 ? (
+                                                            <div className="mt-2 space-y-1.5">
+                                                                {singabilityResult.issues.slice(0, 5).map((issue, i) => (
+                                                                    <div key={i} className="flex items-start gap-2 text-[10px]">
+                                                                        <span className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold ${issue.severity === 'high' ? 'bg-[#d99aae]/20 text-[#d99aae]' : issue.severity === 'medium' ? 'bg-[#f2d290]/18 text-[#f2d290]' : 'bg-white/[0.06] text-white/40'}`}>{issue.severity}</span>
+                                                                        <span className="text-white/52">{issue.problem}{issue.suggestion ? ` → ${issue.suggestion}` : ''}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
+                                                ) : null}
+
+                                                {/* 优化版歌词预览 */}
+                                                {showOptimizedLyrics && lyricsDraft.optimizedLyrics ? (
+                                                    <div className="mt-3 rounded-[14px] border border-[#81b29a]/22 bg-[#81b29a]/[0.06] p-3">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <span className="text-[11px] font-semibold text-[#81b29a]">优化版歌词</span>
+                                                            <div className="flex gap-2">
+                                                                <button type="button" onClick={handleAdoptOptimizedLyrics} disabled={recordGenerating} className="rounded-full bg-[#81b29a] px-3 py-1.5 text-[10px] font-bold text-[#152033] active:scale-[0.97] disabled:opacity-45">采用优化版</button>
+                                                                <button type="button" onClick={handleKeepOriginalLyrics} disabled={recordGenerating} className="rounded-full border border-white/[0.12] px-3 py-1.5 text-[10px] font-bold text-white/52 active:scale-[0.97]">保留原版</button>
+                                                            </div>
+                                                        </div>
+                                                        {lyricsDraft.optimizationNotes ? (
+                                                            <div className="mb-2 space-y-1 text-[10px]">
+                                                                {lyricsDraft.optimizationNotes.kept.length > 0 ? <p className="text-[#81b29a]/70">保留：{lyricsDraft.optimizationNotes.kept.join('、')}</p> : null}
+                                                                {lyricsDraft.optimizationNotes.changed.length > 0 ? <p className="text-[#f2d290]/70">修改：{lyricsDraft.optimizationNotes.changed.join('、')}</p> : null}
+                                                                {lyricsDraft.optimizationNotes.reason ? <p className="text-white/38">原因：{lyricsDraft.optimizationNotes.reason}</p> : null}
+                                                            </div>
+                                                        ) : null}
+                                                        <pre className="max-h-[280px] overflow-y-auto rounded-[10px] bg-black/20 p-3 text-[11px] leading-5 text-[#dce9ff]/80 whitespace-pre-wrap font-mono">{lyricsDraft.optimizedLyrics}</pre>
+                                                    </div>
+                                                ) : null}
+
+                                                {/* 歌词操作按钮行 */}
+                                                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-between">
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {/* 可唱性检查 */}
+                                                        {['lyrics_ready', 'lyrics_optimized'].includes(recordFlowStatus) ? (
+                                                            <button type="button" disabled={recordGenerating} onClick={handleCheckSingability}
+                                                                className="rounded-full border border-[#cfe0ff]/28 px-3 py-2 text-[10px] font-bold text-[#cfe0ff] active:scale-[0.97] disabled:opacity-45">
+                                                                {recordFlowStatus === 'checking_singability' ? '检查中...' : '查看可唱性评分'}
+                                                            </button>
+                                                        ) : null}
+                                                        {/* 优化歌词 */}
+                                                        {singabilityResult?.shouldOptimize && ['singability_checked', 'lyrics_optimized'].includes(recordFlowStatus) ? (
+                                                            <button type="button" disabled={recordGenerating} onClick={handleOptimizeLyrics}
+                                                                className="rounded-full border border-[#f2d290]/30 px-3 py-2 text-[10px] font-bold text-[#fff1bd] active:scale-[0.97] disabled:opacity-45">
+                                                                {recordFlowStatus === 'optimizing_lyrics' ? '优化中...' : '优化歌词'}
+                                                            </button>
+                                                        ) : null}
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {/* 确认歌词定稿 */}
+                                                        {['lyrics_ready', 'singability_checked', 'lyrics_optimized'].includes(recordFlowStatus) ? (
+                                                            <button type="button" disabled={recordGenerating} onClick={handleConfirmLyricsFinal}
+                                                                className="rounded-full bg-[#f2d290] px-4 py-2.5 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] active:scale-[0.97] disabled:opacity-50">
+                                                                确认歌词定稿
+                                                            </button>
+                                                        ) : null}
+                                                    </div>
+                                                </div>
+
+                                                {/* 修改意见 + 词作人（折叠区） */}
+                                                {(recordFlowStatus === 'lyrics_ready' || recordFlowStatus === 'singability_checked' || recordFlowStatus === 'lyrics_optimized') ? (
+                                                    <div className="mt-3 border-t border-white/[0.06] pt-3">
+                                                        <label className="block">
+                                                            <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">修改意见（优化歌词时使用）</span>
+                                                            <textarea
+                                                                value={lyricsDraft.revisionInstruction}
+                                                                onChange={e => handleLyricsFieldChange('revisionInstruction', e.target.value)}
+                                                                placeholder="例如：副歌更暧昧一点，不要太伤感"
+                                                                className="min-h-[72px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
+                                                            />
+                                                        </label>
+                                                        <label className="mt-2 block">
+                                                            <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">想模仿的词作人 <span className="text-white/20">· 选填</span></span>
+                                                            <input type="text" value={lyricsDraft.lyricistReference} onChange={e => handleLyricsFieldChange('lyricistReference', e.target.value)}
+                                                                placeholder="例如：林夕、方文山、吴青峰"
+                                                                className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        ) : null}
+
+                                        {/* ── STEP 3: 曲风生成（歌词定稿后）── */}
+                                        {activeDraftRecord && (recordFlowStatus === 'lyrics_confirmed' || recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready' || recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready') ? (
+                                            <div className="rounded-[18px] border border-[#cfe0ff]/18 bg-[#cfe0ff]/[0.04] p-4">
+                                                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                                    <div>
+                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#cfe0ff]/62">STEP 3</p>
+                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#dce9ff]">曲风制作</h4>
+                                                    </div>
+                                                </div>
+
+                                                {/* 曲风提示词编辑 */}
+                                                <label className="block">
+                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">style_prompt（英文，可手动调整）</span>
                                                     <textarea
-                                                        value={lyricsDraft.revisionInstruction}
-                                                        onChange={e => handleLyricsFieldChange('revisionInstruction', e.target.value)}
-                                                        placeholder="例如：副歌更暧昧一点，不要太伤感。留空则纯自检优化"
-                                                        className="min-h-[90px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
+                                                        value={lyricsDraft.stylePrompt}
+                                                        onChange={e => handleLyricsFieldChange('stylePrompt', e.target.value)}
+                                                        className="min-h-[72px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[11px] leading-relaxed text-[#fff1bd] outline-none focus:border-[#cfe0ff]/34 font-mono"
+                                                        spellCheck={false}
                                                     />
                                                 </label>
 
-                                                <label className="mt-3 block">
-                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">想模仿的词作人 <span className="text-white/20">· 选填</span></span>
-                                                    <input
-                                                        type="text"
-                                                        value={lyricsDraft.lyricistReference}
-                                                        onChange={e => handleLyricsFieldChange('lyricistReference', e.target.value)}
-                                                        placeholder="例如：林夕、方文山、吴青峰"
-                                                        className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
-                                                    />
-                                                </label>
+                                                {lyricsDraft.negativeStylePrompt ? (
+                                                    <label className="mt-2 block">
+                                                        <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/32">negative_style_prompt</span>
+                                                        <textarea
+                                                            value={lyricsDraft.negativeStylePrompt}
+                                                            onChange={e => handleLyricsFieldChange('negativeStylePrompt', e.target.value)}
+                                                            className="min-h-[48px] w-full resize-y rounded-[14px] border border-white/[0.06] bg-black/18 px-4 py-3 text-[11px] leading-relaxed text-white/48 outline-none focus:border-[#cfe0ff]/28 font-mono"
+                                                            spellCheck={false}
+                                                        />
+                                                    </label>
+                                                ) : null}
+
+                                                {/* music_director_notes */}
+                                                {stylePromptResult?.musicDirectorNotes ? (
+                                                    <div className="mt-3 rounded-[12px] border border-white/[0.06] bg-black/14 p-3">
+                                                        <p className="text-[9px] font-semibold tracking-[0.14em] text-white/32 mb-2">制作人笔记</p>
+                                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                                                            {stylePromptResult.musicDirectorNotes.song_type ? <p className="text-white/42">类型：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.song_type}</span></p> : null}
+                                                            {stylePromptResult.musicDirectorNotes.emotional_core ? <p className="text-white/42">情绪：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.emotional_core}</span></p> : null}
+                                                            {stylePromptResult.musicDirectorNotes.vocal_character ? <p className="text-white/42">人声：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.vocal_character}</span></p> : null}
+                                                            {stylePromptResult.musicDirectorNotes.dynamic_curve ? <p className="text-white/42">动态：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.dynamic_curve}</span></p> : null}
+                                                        </div>
+                                                    </div>
+                                                ) : null}
 
                                                 <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                                    <button
-                                                        type="button"
-                                                        disabled={recordGenerating}
-                                                        onClick={handleReviseMemoryRecordLyrics}
-                                                        className="rounded-full border border-[#f2d290]/30 px-4 py-2.5 text-[11px] font-bold text-[#fff1bd] transition-all active:scale-[0.97] disabled:opacity-45"
-                                                    >
-                                                        {recordFlowStatus === 'revising_lyrics' ? '修改中...' : '修改歌词'}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        disabled={recordGenerating}
-                                                        onClick={handleConfirmLyricsAndGenerateSong}
-                                                        className="rounded-full bg-[#f2d290] px-4 py-2.5 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] transition-all active:scale-[0.97] disabled:opacity-50"
-                                                    >
-                                                        确认歌词并生成歌曲
-                                                    </button>
+                                                    {/* 生成曲风按钮 */}
+                                                    {(recordFlowStatus === 'lyrics_confirmed' || recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready') ? (
+                                                        <button type="button" disabled={recordGenerating} onClick={handleGenerateStylePrompt}
+                                                            className="rounded-full border border-[#cfe0ff]/30 px-4 py-2.5 text-[11px] font-bold text-[#dce9ff] active:scale-[0.97] disabled:opacity-45">
+                                                            {recordFlowStatus === 'generating_style' ? '生成中...' : '生成曲风提示词'}
+                                                        </button>
+                                                    ) : null}
+                                                    {/* 确认并生成歌曲 */}
+                                                    {(recordFlowStatus === 'style_ready' || recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready') ? (
+                                                        <button type="button" disabled={recordGenerating} onClick={handleConfirmLyricsAndGenerateSong}
+                                                            className="rounded-full bg-[#f2d290] px-4 py-2.5 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] active:scale-[0.97] disabled:opacity-50">
+                                                            {recordFlowStatus === 'generating_song' ? '歌曲生成中...' : '确认并生成歌曲'}
+                                                        </button>
+                                                    ) : null}
                                                 </div>
                                             </div>
                                         ) : null}
 
+                                        {/* ── STEP 4: 歌曲生成状态 ── */}
                                         {(recordStatusText || recordFlowError || recordFlowStatus === 'song_ready') ? (
                                             <div className="rounded-[18px] border border-[#8bb8f1]/18 bg-[#8bb8f1]/[0.055] p-4">
                                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                                     <div>
-                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#cfe0ff]/62">STEP 3</p>
+                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#cfe0ff]/62">STEP 4</p>
                                                         <h4 className="mt-1 text-[15px] font-semibold text-[#dce9ff]">生成歌曲</h4>
                                                         {recordStatusText ? <p className="mt-2 text-[11px] leading-relaxed text-[#dce9ff]/70">{recordStatusText}</p> : null}
                                                         {recordFlowError ? <p className="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-[#ffd0d8]/82">{recordFlowError}</p> : null}
                                                         {recordFlowStatus === 'song_ready' ? <p className="mt-2 text-[11px] leading-relaxed text-[#dce9ff]/70">歌曲已经生成，可以播放，也可以回到歌词继续修改后重新生成。</p> : null}
                                                     </div>
                                                     <div className="flex shrink-0 flex-wrap gap-2">
-                                                        <button
-                                                            type="button"
-                                                            disabled={!activeDraftRecord || !hasPlayableMemoryRecordAudio(activeDraftRecord)}
+                                                        <button type="button" disabled={!activeDraftRecord || !hasPlayableMemoryRecordAudio(activeDraftRecord)}
                                                             onClick={() => activeDraftRecord && playMemoryRecord(activeDraftRecord)}
-                                                            className="rounded-full border border-[#8bb8f1]/30 px-3 py-2 text-[10px] font-bold text-[#dce9ff] disabled:opacity-35"
-                                                        >
+                                                            className="rounded-full border border-[#8bb8f1]/30 px-3 py-2 text-[10px] font-bold text-[#dce9ff] disabled:opacity-35">
                                                             播放
                                                         </button>
-                                                        <button
-                                                            type="button"
-                                                            disabled={!activeDraftRecord || recordGenerating}
+                                                        <button type="button" disabled={!activeDraftRecord || recordGenerating}
                                                             onClick={handleReturnToLyrics}
-                                                            className="rounded-full bg-[#dce9ff] px-3 py-2 text-[10px] font-bold text-[#152033] disabled:opacity-45"
-                                                        >
+                                                            className="rounded-full bg-[#dce9ff] px-3 py-2 text-[10px] font-bold text-[#152033] disabled:opacity-45">
                                                             返回修改歌词
                                                         </button>
                                                     </div>
@@ -2017,6 +2425,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                         ) : null}
                                     </div>
                                 </section>
+                                </>
                             ) : null}
 
                             {!selectedCharId ? (

@@ -4,6 +4,7 @@ import { useOS } from '../../context/OSContext';
 import { CharacterProfile,SpriteConfig,SkinSet } from '../../types';
 import { processImage } from '../../utils/file';
 import { getGuardedInputProps } from '../../utils/inputGuards';
+import { DEFAULT_DATE_SUMMARY_PROMPT } from '../../utils/dateSummaryPrompts';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -22,6 +23,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
     const [tempSpriteConfig, setTempSpriteConfig] = useState<SpriteConfig>(DEFAULT_SPRITE_CONFIG);
     const [newEmotionName, setNewEmotionName] = useState<string>('');
+    const [summaryPrompt, setSummaryPrompt] = useState<string>(char.dateSummaryPrompt || DEFAULT_DATE_SUMMARY_PROMPT);
 
     // Skin system state
     const [newSkinName, setNewSkinName] = useState('');
@@ -38,6 +40,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         if (char.spriteConfig) {
             setTempSpriteConfig(char.spriteConfig);
         }
+        setSummaryPrompt(char.dateSummaryPrompt || DEFAULT_DATE_SUMMARY_PROMPT);
     }, [char.id]);
 
     const sprites = char.sprites || {};
@@ -151,9 +154,18 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     };
 
     const handleSaveSettings = () => {
-        updateCharacter(char.id, { spriteConfig: tempSpriteConfig });
+        updateCharacter(char.id, {
+            spriteConfig: tempSpriteConfig,
+            dateSummaryPrompt: summaryPrompt.trim() || DEFAULT_DATE_SUMMARY_PROMPT,
+        });
         addToast('配置已保存', 'success');
         onBack();
+    };
+
+    const handleRestoreDefaultSummaryPrompt = () => {
+        setSummaryPrompt(DEFAULT_DATE_SUMMARY_PROMPT);
+        updateCharacter(char.id, { dateSummaryPrompt: DEFAULT_DATE_SUMMARY_PROMPT });
+        addToast('总结提示词已恢复默认', 'success');
     };
 
     const customEmotions = char.customDateSprites || [];
@@ -531,6 +543,31 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         >
                             创建
                         </button>
+                    </div>
+                </section>
+
+                <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <div className="mb-3 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-xs font-bold text-slate-400 uppercase">总结设定</h3>
+                            <p className="mt-1 text-[11px] text-slate-400">见面总结会先生成草稿，确认后才保存。</p>
+                        </div>
+                        <button
+                            onClick={handleRestoreDefaultSummaryPrompt}
+                            className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-500 active:scale-95"
+                        >
+                            恢复默认
+                        </button>
+                    </div>
+                    <label className="mb-2 block text-[11px] font-bold text-slate-500">总结提示词</label>
+                    <textarea
+                        value={summaryPrompt}
+                        onChange={e => setSummaryPrompt(e.target.value)}
+                        rows={8}
+                        className="w-full resize-y rounded-2xl border border-slate-100 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                    />
+                    <div className="mt-3 rounded-xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-400">
+                        可用变量: <span className="font-mono text-slate-500">${'{charName}'}</span> <span className="font-mono text-slate-500">${'{userName}'}</span> <span className="font-mono text-slate-500">${'{time}'}</span> <span className="font-mono text-slate-500">${'{messages}'}</span>
                     </div>
                 </section>
 

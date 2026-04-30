@@ -256,9 +256,6 @@ const Chat: React.FC = () => {
         return () => window.removeEventListener('rerank-trial-exhausted', handler);
     }, []);
 
-    const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
-
-
     // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
     const handleTranslateToggle = useCallback((msgId: number) => {
         setShowingTargetIds(prev => {
@@ -372,6 +369,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
+                    .filter(m => !m.metadata?.hiddenFromUser)
                     .filter(m => m.metadata?.source !== 'date')
                     .filter(m => (m.type as string) !== 'health_signal')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'))
@@ -477,6 +475,7 @@ const Chat: React.FC = () => {
 
         // Notify backend agent that user replied (resets consecutiveIgnored)
         BackendAgentManager.notifyUserReplied(char.id).catch(() => {});
+        void BackendAgentManager.refreshCharacterContext(char.id, char);
 
         // Detect XHS link in user text and create xhs_card via MCP
         if (type === 'text') {
@@ -509,22 +508,23 @@ const Chat: React.FC = () => {
     };
 
     const handleReroll = async () => {
-        if (isTyping || messages.length === 0) return;
+        const rerollableMessages = messages.filter(m => !m.metadata?.hiddenFromUser && m.metadata?.source !== 'date');
+        if (isTyping || rerollableMessages.length === 0) return;
 
-        const lastMsg = messages[messages.length - 1];
+        const lastMsg = rerollableMessages[rerollableMessages.length - 1];
         if (lastMsg.role !== 'assistant') return;
 
         const toDeleteIds: number[] = [];
-        let index = messages.length - 1;
-        while (index >= 0 && messages[index].role === 'assistant') {
-            toDeleteIds.push(messages[index].id);
+        let index = rerollableMessages.length - 1;
+        while (index >= 0 && rerollableMessages[index].role === 'assistant') {
+            toDeleteIds.push(rerollableMessages[index].id);
             index--;
         }
 
         if (toDeleteIds.length === 0) return;
 
         await DB.deleteMessages(toDeleteIds);
-        const newHistory = messages.slice(0, index + 1);
+        const newHistory = rerollableMessages.slice(0, index + 1);
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
 
@@ -1159,6 +1159,7 @@ const Chat: React.FC = () => {
     };
 
     const displayMessages = useMemo(() => messages
+        .filter(m => !m.metadata?.hiddenFromUser)
         .filter(m => m.metadata?.source !== 'date')
         .filter(m => (m.type as string) !== 'health_signal')  // 半糖健康感知：永远不在聊天UI显示
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
@@ -1169,6 +1170,8 @@ const Chat: React.FC = () => {
         })
         .slice(-visibleCount),
         [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
+
+    const canReroll = !isTyping && displayMessages.length > 0 && displayMessages[displayMessages.length - 1].role === 'assistant';
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
@@ -1275,6 +1278,8 @@ const Chat: React.FC = () => {
 
             // 5. Refresh UI — 不自动触发 AI（与文字消息一致，用户点按钮手动触发）
             await reloadMessages(visibleCountRef.current);
+            BackendAgentManager.notifyUserReplied(char.id).catch(() => {});
+            void BackendAgentManager.refreshCharacterContext(char.id, char);
         } catch (err) {
             console.error('🎤 [VoiceRecord] Error:', err);
             addToast('语音消息发送失败', 'error');

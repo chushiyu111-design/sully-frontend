@@ -38,6 +38,18 @@ export const MEMORY_RECORD_COVER_URLS = [
     '/images/music-record-covers/cover-35.jpg',
     '/images/music-record-covers/cover-36.jpg',
     '/images/music-record-covers/cover-37.jpg',
+    '/images/music-record-covers/cover-38.png',
+    '/images/music-record-covers/cover-39.png',
+    '/images/music-record-covers/cover-40.png',
+    '/images/music-record-covers/cover-41.png',
+    '/images/music-record-covers/cover-42.png',
+    '/images/music-record-covers/cover-43.png',
+    '/images/music-record-covers/cover-44.png',
+    '/images/music-record-covers/cover-45.jpg',
+    '/images/music-record-covers/cover-46.jpg',
+    '/images/music-record-covers/cover-47.jpg',
+    '/images/music-record-covers/cover-48.jpg',
+    '/images/music-record-covers/cover-49.png',
 ] as const;
 
 function hashString(value: string): number {

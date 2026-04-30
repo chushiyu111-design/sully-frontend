@@ -213,7 +213,6 @@ ${htmlBody}
 - 视觉必须像一个真实可用的小型状态栏，不像宣传海报
 - 宽度以 330px 为基准，自适应移动端
 - 字体、间距、圆角、阴影要克制
-- 颜色最多 3 个主色，不要整张卡全是同一色相
 - 正文文字对比度必须足够，不要低透明度灰字
 - 字段值要比字段名更醒目
 - 动效只能轻微增强状态感，不能抢内容
@@ -225,7 +224,6 @@ ${htmlBody}
 - 不要装饰性光球、blob、bokeh
 - 不要过大的圆角、过重阴影、过亮描边
 - 不要把所有元素都做成卡片套卡片
-- 不要使用外部图片、外部字体、CDN
 - 不要修改 HTML，不要新增字段，不要改 $1/$2 占位符
 
 CSS 要求：
@@ -265,7 +263,6 @@ ${cssTemplate}
 请只优化 CSS。目标是去掉明显 AI 味，让视觉更稳、更干净、更耐看。
 
 重点：
-- 收敛颜色数量，最多 3 个主色
 - 统一间距、字号、行高和圆角
 - 减弱过重阴影、描边、模糊和高饱和装饰
 - 提高文字对比度和字段值识别度
@@ -485,7 +482,7 @@ const StatusWorkshopApp: React.FC = () => {
             if (event.data.channel !== frameChannel) return;
 
             const nextHeight = typeof event.data.height === 'number'
-                ? Math.min(Math.max(event.data.height + 16, 220), 560)
+                ? Math.max(event.data.height + 16, 220)
                 : 240;
 
             setPreviewHeight(nextHeight);
@@ -568,7 +565,7 @@ const StatusWorkshopApp: React.FC = () => {
             : userIdea;
         const validFields = getValidGeneratorFields(genFields);
 
-        if (step !== 'js' && userIdea.length < 4) {
+        if ((step === 'protocol' || step === 'html') && userIdea.length < 4) {
             addToast('先把想要的状态栏说清楚一点，再生成', 'error');
             return;
         }
@@ -964,7 +961,7 @@ const StatusWorkshopApp: React.FC = () => {
                     <textarea
                         value={cssIdea}
                         onChange={e => setCssIdea(e.target.value)}
-                        placeholder="只描述视觉和动效：比如更像冷静的手机状态卡、少颜色、信息密一点、不要玻璃拟态、字段值更醒目。这里会影响“生成 CSS”和“优化 CSS 审美”。"
+                        placeholder={'视觉方向（可选）：比如更像杂志内页、极简主义、字段值更醒目。这里会影响「生成 CSS」和「优化 CSS 审美」。'}
                         className="mb-4 h-24 w-full resize-none rounded-2xl border border-white/[0.05] bg-white/[0.03] px-4 py-3 text-[12px] leading-6 text-white/80 outline-none transition-colors placeholder:text-white/20 focus:border-white/15"
                     />
                     <textarea
@@ -980,7 +977,7 @@ const StatusWorkshopApp: React.FC = () => {
                 </div>
 
                 <div className="rounded-[24px] border border-white/[0.05] bg-white/[0.03] px-4 py-3 text-[11px] leading-6 text-white/32">
-                    CSS 质量闸门：少颜色、稳间距、清晰文字、克制阴影。不要光球、blob、廉价渐变和卡片套卡片。
+                    CSS 质量闸门：稳间距、清晰文字、克制阴影。不要光球、blob、廉价渐变和卡片套卡片。
                 </div>
             </div>
         );
@@ -1172,7 +1169,7 @@ const StatusWorkshopApp: React.FC = () => {
             </div>
 
             <div className="relative z-10 flex flex-col gap-4 px-4 pb-24 sm:pb-4 lg:min-h-0 lg:flex-1 lg:flex-row">
-                <div className="lg:order-2 lg:w-[400px] lg:shrink-0">
+                <div className="lg:order-2 lg:min-w-[360px] lg:max-w-[480px] lg:flex-1">
                     <div className="rounded-[32px] border border-white/[0.06] bg-white/[0.03] p-4 backdrop-blur-sm">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
@@ -1192,13 +1189,13 @@ const StatusWorkshopApp: React.FC = () => {
                         </div>
 
                         <div
-                            className={`overflow-hidden transition-all duration-300 ${
+                            className={`transition-all duration-300 ${
                                 showMobilePreview
                                     ? 'mt-3 max-h-[960px] opacity-100'
                                     : 'max-h-0 opacity-0 pointer-events-none'
                             } lg:mt-3 lg:max-h-none lg:opacity-100 lg:pointer-events-auto`}
                         >
-                            <div className="flex min-h-[200px] items-center justify-center overflow-hidden rounded-[28px] border border-white/[0.05] bg-[#06060d] px-3 py-5 sm:min-h-[220px]">
+                            <div className="flex min-h-[200px] items-center justify-center rounded-[28px] border border-white/[0.05] bg-[#06060d] px-3 py-5 sm:min-h-[220px]">
                                 <iframe
                                     ref={previewRef}
                                     srcDoc={STATUS_CARD_IFRAME_SHELL}

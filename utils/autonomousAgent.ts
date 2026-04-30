@@ -15,6 +15,7 @@ import { CharacterProfile,VectorMemory } from '../types';
 import { pullMemories } from './backendClient';
 import { buildCoreMemoryDigest,buildMountedWorldbooksDigest } from './agentContextSnapshot';
 import { getPrimaryApiConfig as getRuntimePrimaryApiConfig,getRealtimeConfig } from './runtimeConfig';
+import { buildCurrentLifeAnchorForCharacter } from './lifeAnchor';
 import {
     readJsonStorage,
     safeLocalStorageGet,
@@ -85,6 +86,7 @@ type ContextSnapshot = {
     lastAIMsgWasAutonomous: boolean;
     emojiNames: string[];
     topMemory?: string;
+    lifeContextAnchor?: ReturnType<typeof buildCurrentLifeAnchorForCharacter>;
     updatedAt: number;
 };
 
@@ -363,6 +365,7 @@ async function buildContextSnapshot(
     const cityReferenceReal = char.isFictionalCity
         ? (char.cityReferenceReal?.trim() || undefined)
         : undefined;
+    const lifeContextAnchor = buildCurrentLifeAnchorForCharacter(char, recentMessages);
 
     return {
         charId,
@@ -388,6 +391,7 @@ async function buildContextSnapshot(
         lastAIMsgWasAutonomous,
         emojiNames,
         topMemory,
+        lifeContextAnchor,
         updatedAt: now,
     };
 }
@@ -810,6 +814,39 @@ export class BackendAgentManager {
             await notifyAgentUserReplied(charId);
         } catch {
             // Silent on purpose. User replies should not block the chat flow.
+        }
+    }
+
+    static async refreshCharacterContext(charId: string, char?: CharacterProfile): Promise<void> {
+        if (!charId) return;
+
+        try {
+            if (activeInstance && !activeInstance.stopped && activeInstance.charId === charId) {
+                await activeInstance.pushContext(char);
+                return;
+            }
+
+            let freshChar = char && char.id === charId ? char : undefined;
+            if (!freshChar) {
+                try {
+                    const allChars = await DB.getAllCharacters();
+                    freshChar = allChars.find(candidate => candidate.id === charId);
+                } catch {
+                    // Keep the refresh best-effort; local chat must remain uninterrupted.
+                }
+            }
+            if (!freshChar) return;
+
+            const contextSnapshot = await buildContextSnapshot(charId, freshChar);
+            await pushAgentContextSnapshot(contextSnapshot);
+
+            if (getAutonomousDebugEnabled()) {
+                console.log('[Agent] Context refreshed to backend');
+            }
+        } catch (error: any) {
+            if (getAutonomousDebugEnabled()) {
+                console.warn('[Agent] Context refresh failed:', error.message);
+            }
         }
     }
 }

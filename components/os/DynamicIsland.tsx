@@ -173,7 +173,7 @@ const DynamicIsland: React.FC = () => {
         ? (isSongPlayable(currentSong)
             ? currentSong.album.picUrl
             : isMemoryRecordPlayable(currentSong)
-                ? undefined
+                ? currentSong.coverImageUrl
             : currentSong.coverUrl
                 || currentSong.radio?.picUrl
                 || currentSong.mainSong?.album.picUrl)

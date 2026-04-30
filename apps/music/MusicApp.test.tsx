@@ -166,6 +166,7 @@ function buildPlayerState(currentSong: MusicPlayable | null) {
         currentIndex: currentSong ? 0 : -1,
         playSong: vi.fn(),
         pause: vi.fn(),
+        stop: vi.fn(),
         resume: vi.fn(),
         togglePlay: vi.fn(),
         seek: vi.fn(),

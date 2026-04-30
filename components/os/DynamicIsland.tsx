@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useWillChange } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import { useAudioPlayer } from '../../hooks/useAudioPlayer';
@@ -45,6 +45,8 @@ const CONTENT_INITIAL = {
     y: 10,
     filter: 'blur(6px)',
 };
+const LONG_PRESS_DISMISS_MS = 650;
+const LONG_PRESS_MOVE_TOLERANCE_PX = 12;
 
 /** Convert HSL (h: 0-360, s/l: 0-1) to "R, G, B" CSS string */
 function hslToRgbString(h: number, s: number, l: number): string {
@@ -89,11 +91,15 @@ const DynamicIsland: React.FC = () => {
         playNext,
         playPrev,
         seek,
+        stop,
     } = useAudioPlayer();
     const [expanded, setExpanded] = useState(false);
     const [lyricsEnabled, setLyricsEnabled] = useState(
         () => readFloatingLyricsSettings().enabled,
     );
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+    const suppressNextClickRef = useRef(false);
 
     const shouldShow = useMemo(
         () => activeApp !== AppID.Music && currentSong !== null,
@@ -115,42 +121,112 @@ const DynamicIsland: React.FC = () => {
         return () => window.removeEventListener('storage', handleStorage);
     }, []);
 
-    const handleToggleExpand = useCallback((event: React.MouseEvent) => {
-        event.stopPropagation();
-        setExpanded((prev) => !prev);
+    const clearLongPressTimer = useCallback(() => {
+        if (longPressTimerRef.current !== null) {
+            window.clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+        longPressStartRef.current = null;
     }, []);
 
-    const handleOpenMusicApp = useCallback(() => {
+    useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
+
+    const consumeSuppressedClick = useCallback((event: React.SyntheticEvent) => {
+        if (!suppressNextClickRef.current) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextClickRef.current = false;
+        return true;
+    }, []);
+
+    const handleStopPlayback = useCallback(() => {
+        suppressNextClickRef.current = true;
+        setExpanded(false);
+        stop();
+    }, [stop]);
+
+    const handleLongPressPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+        event.stopPropagation();
+        clearLongPressTimer();
+        longPressStartRef.current = { x: event.clientX, y: event.clientY };
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTimerRef.current = null;
+            longPressStartRef.current = null;
+            handleStopPlayback();
+        }, LONG_PRESS_DISMISS_MS);
+    }, [clearLongPressTimer, handleStopPlayback]);
+
+    const handleLongPressPointerMove = useCallback((event: React.PointerEvent<HTMLElement>) => {
+        const startPoint = longPressStartRef.current;
+        if (!startPoint) return;
+
+        const deltaX = event.clientX - startPoint.x;
+        const deltaY = event.clientY - startPoint.y;
+        const distance = Math.hypot(deltaX, deltaY);
+        if (distance > LONG_PRESS_MOVE_TOLERANCE_PX) {
+            clearLongPressTimer();
+        }
+    }, [clearLongPressTimer]);
+
+    const handleLongPressPointerEnd = useCallback((event: React.PointerEvent<HTMLElement>) => {
+        if (suppressNextClickRef.current) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        clearLongPressTimer();
+    }, [clearLongPressTimer]);
+
+    const longPressHandlers = {
+        onPointerDown: handleLongPressPointerDown,
+        onPointerMove: handleLongPressPointerMove,
+        onPointerUp: handleLongPressPointerEnd,
+        onPointerCancel: handleLongPressPointerEnd,
+        onPointerLeave: handleLongPressPointerEnd,
+    };
+
+    const handleToggleExpand = useCallback((event: React.MouseEvent) => {
+        if (consumeSuppressedClick(event)) return;
+        event.stopPropagation();
+        setExpanded((prev) => !prev);
+    }, [consumeSuppressedClick]);
+
+    const handleOpenMusicApp = useCallback((event: React.MouseEvent) => {
+        if (consumeSuppressedClick(event)) return;
+        event.stopPropagation();
         setExpanded(false);
         openApp(AppID.Music);
-    }, [openApp]);
+    }, [consumeSuppressedClick, openApp]);
 
     const handleTogglePlay = useCallback(
         (event: React.MouseEvent) => {
+            if (consumeSuppressedClick(event)) return;
             event.stopPropagation();
             togglePlay();
         },
-        [togglePlay],
+        [consumeSuppressedClick, togglePlay],
     );
 
     const handlePrev = useCallback(
         (event: React.MouseEvent) => {
+            if (consumeSuppressedClick(event)) return;
             event.stopPropagation();
             void playPrev();
         },
-        [playPrev],
+        [consumeSuppressedClick, playPrev],
     );
 
     const handleNext = useCallback(
         (event: React.MouseEvent) => {
+            if (consumeSuppressedClick(event)) return;
             event.stopPropagation();
             void playNext();
         },
-        [playNext],
+        [consumeSuppressedClick, playNext],
     );
 
     const handleProgressClick = useCallback(
         (event: React.MouseEvent<HTMLDivElement>) => {
+            if (consumeSuppressedClick(event)) return;
             event.stopPropagation();
             const rect = event.currentTarget.getBoundingClientRect();
             const percent = Math.max(
@@ -159,14 +235,15 @@ const DynamicIsland: React.FC = () => {
             );
             seek(percent);
         },
-        [seek],
+        [consumeSuppressedClick, seek],
     );
 
     const handleToggleLyrics = useCallback((event: React.MouseEvent) => {
+        if (consumeSuppressedClick(event)) return;
         event.stopPropagation();
         const nextSettings = toggleFloatingLyricsEnabled();
         setLyricsEnabled(nextSettings.enabled);
-    }, []);
+    }, [consumeSuppressedClick]);
 
     // ── 封面色提取（hook 必须在条件 return 之前调用）──
     const coverUrl = currentSong
@@ -233,6 +310,7 @@ const DynamicIsland: React.FC = () => {
                         key="capsule"
                         className="di-capsule"
                         onClick={handleToggleExpand}
+                        {...longPressHandlers}
                         initial={CONTENT_INITIAL}
                         animate={CONTENT_ENTER}
                         exit={CONTENT_EXIT}
@@ -290,6 +368,7 @@ const DynamicIsland: React.FC = () => {
                     <motion.div
                         key="expanded"
                         className="di-expanded"
+                        {...longPressHandlers}
                         initial={CONTENT_INITIAL}
                         animate={CONTENT_ENTER}
                         exit={CONTENT_EXIT}

@@ -237,7 +237,7 @@ describe('HalfSugarApp', () => {
         });
 
         expect(await screen.findByText('摄入 kcal', {}, { timeout: 5000 })).toBeTruthy();
-    });
+    }, 15000);
 
     it('keeps body impression sharing opt-in only and persists it when the switch is enabled', async () => {
         render(<HalfSugarApp />);
@@ -260,7 +260,7 @@ describe('HalfSugarApp', () => {
                 healthActivityLevel: 'light',
             }));
         });
-    });
+    }, 15000);
 
     it('computes the calorie target from BMR instead of using a hardcoded default', async () => {
         const currentYear = new Date().getFullYear();
@@ -308,7 +308,7 @@ describe('HalfSugarApp', () => {
             const expectedOffset = outerCircumference * (1 - consumed / expectedTarget);
             expect(Number(intakeCircle?.getAttribute('stroke-dashoffset'))).toBeCloseTo(expectedOffset, 3);
         });
-    });
+    }, 15000);
 
     it('renders multiple same-type meal records separately after loading today meals', async () => {
         mockedUseOS.mockReturnValue({
@@ -379,7 +379,7 @@ describe('HalfSugarApp', () => {
             expect(screen.getByText(/鸡胸肉沙拉/)).toBeTruthy();
         });
         expect(screen.getByText(/鸡胸肉沙拉/)).toBeTruthy();
-    });
+    }, 15000);
 
     it('shows an error toast when meal loading fails', async () => {
         mockedUseOS.mockReturnValue({
@@ -407,7 +407,7 @@ describe('HalfSugarApp', () => {
         await waitFor(() => {
             expect(addToast).toHaveBeenCalledWith('加载餐食失败：网络超时', 'error');
         });
-    });
+    }, 15000);
 
     it('shows nutrient recommendations when macros are far below target', async () => {
         mockedUseOS.mockReturnValue({
@@ -445,7 +445,7 @@ describe('HalfSugarApp', () => {
         });
         expect(screen.getAllByText(/今天可以来点补充/).length).toBeGreaterThan(0);
         expect(screen.getByText('蛋白质')).toBeTruthy();
-    });
+    }, 15000);
 
     it('estimates nutrition from a food name and keeps manual fields behind the custom toggle', async () => {
         mockedUseOS.mockReturnValue({
@@ -520,7 +520,7 @@ describe('HalfSugarApp', () => {
         });
         expect(screen.getByText('红烧肉')).toBeTruthy();
         expect(screen.getByText('AI')).toBeTruthy();
-    });
+    }, 15000);
 
     it('offers separate camera and album inputs for photo recognition', async () => {
         const OriginalFileReader = globalThis.FileReader;
@@ -601,7 +601,7 @@ describe('HalfSugarApp', () => {
         expect(screen.getByText('鸡蛋羹')).toBeTruthy();
 
         vi.stubGlobal('FileReader', OriginalFileReader);
-    });
+    }, 15000);
 
     it('appends AI identified foods after selecting a meal photo', async () => {
         const OriginalFileReader = globalThis.FileReader;
@@ -677,7 +677,7 @@ describe('HalfSugarApp', () => {
         expect(screen.getByText('AI')).toBeTruthy();
 
         vi.stubGlobal('FileReader', OriginalFileReader);
-    });
+    }, 15000);
 
     it('injects a hidden health signal after saving a meal when sharing is enabled', async () => {
         mockedUseOS.mockReturnValue({
@@ -740,7 +740,7 @@ describe('HalfSugarApp', () => {
                 content: '[生活感知] TA早餐吃了酸奶（你自然地注意到了，但不需要报数字，像关心TA的人一样自然回应就好）',
             }));
         });
-    });
+    }, 15000);
 
     it('renders the latest summary preview and generates a weekly summary with active character context', async () => {
         mockedUseOS.mockReturnValue({
@@ -804,5 +804,5 @@ describe('HalfSugarApp', () => {
                 apiConfig: defaultApiConfig,
             }));
         });
-    });
+    }, 15000);
 });

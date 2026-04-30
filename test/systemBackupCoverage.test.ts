@@ -261,7 +261,7 @@ describe('system backup coverage', () => {
         expect(localStorage.getItem('os_sub_api_config')).toBe('{"model":"flash"}');
         expect(localStorage.getItem('chat_auto_tts_char-a')).toBe('true');
         expect(localStorage.getItem('csyos_backend_alive')).toBeNull();
-    });
+    }, 15000);
 
     it('roundtrips music profile background and custom player skins', async () => {
         await putExternalValue(

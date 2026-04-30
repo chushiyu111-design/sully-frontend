@@ -61,6 +61,9 @@ const SubApiSettings: React.FC = () => {
         setSubStatusMsg('配置已保存');
         setTimeout(() => setSubStatusMsg(''), 2000);
         setSubTestStatus('idle');
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('agent-config-changed'));
+        }
     };
 
     const fetchSubModels = async () => {

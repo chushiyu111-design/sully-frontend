@@ -6,7 +6,10 @@ import {
 } from '../utils/autonomousAgent';
 import { didCharacterContextRelevantFieldsChange } from '../utils/agentContextSnapshot';
 import { disablePushSubscription,initPushSubscription } from '../utils/pushSubscription';
-import { getSecondaryApiConfig as getRuntimeSecondaryApiConfig } from '../utils/runtimeConfig';
+import {
+    getPrimaryApiConfig as getRuntimePrimaryApiConfig,
+    getSecondaryApiConfig as getRuntimeSecondaryApiConfig,
+} from '../utils/runtimeConfig';
 import { consumeCharacterUpdateOptions,useCharacter } from './CharacterContext';
 import { useConfig } from './ConfigContext';
 
@@ -14,17 +17,27 @@ export interface AgentContextType {}
 
 const AgentContext = createContext<AgentContextType | undefined>(undefined);
 
-const getSecondaryApiConfig = (): SecondaryApiConfig | undefined => {
-    const config = getRuntimeSecondaryApiConfig();
-    if (!config) {
+const toAgentApiConfig = (
+    config?: { apiKey?: string; baseUrl?: string; model?: string } | null,
+): SecondaryApiConfig | undefined => {
+    const apiKey = config?.apiKey?.trim();
+    const baseUrl = config?.baseUrl?.trim();
+    const model = config?.model?.trim();
+    if (!apiKey || !baseUrl || !model) {
         return undefined;
     }
 
     return {
-        apiKey: config.apiKey,
-        baseUrl: config.baseUrl,
-        model: config.model,
+        apiKey,
+        baseUrl,
+        model,
     };
+};
+
+const getAgentStartApiConfig = (): SecondaryApiConfig | undefined => {
+    const secondaryApi = toAgentApiConfig(getRuntimeSecondaryApiConfig());
+    const primaryApi = toAgentApiConfig(getRuntimePrimaryApiConfig());
+    return secondaryApi || primaryApi;
 };
 
 export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -57,12 +70,12 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const char = activeCharacterRef.current;
         if (!char) return;
 
-        const secondaryApi = getSecondaryApiConfig();
-        if (!secondaryApi) return;
+        const apiConfig = getAgentStartApiConfig();
+        if (!apiConfig) return;
 
         const manager = new BackendAgentManager();
         managerRef.current = manager;
-        manager.start(activeCharacterId, char, secondaryApi);
+        manager.start(activeCharacterId, char, apiConfig);
 
         let keepBackendAlive = false;
         const markPageExit = () => {

@@ -7,6 +7,10 @@ import { AgentProvider } from './AgentContext';
 const mockUseCharacter = vi.hoisted(() => vi.fn());
 const mockConsumeCharacterUpdateOptions = vi.hoisted(() => vi.fn());
 const mockUseConfig = vi.hoisted(() => vi.fn());
+const runtimeConfigMocks = vi.hoisted(() => ({
+    getPrimaryApiConfig: vi.fn(),
+    getSecondaryApiConfig: vi.fn(),
+}));
 const agentMocks = vi.hoisted(() => ({
     disconnectFrontend: vi.fn(),
     getAgentConfig: vi.fn(() => ({ notificationsEnabled: false })),
@@ -35,11 +39,8 @@ vi.mock('../utils/autonomousAgent', () => ({
 }));
 
 vi.mock('../utils/runtimeConfig', () => ({
-    getSecondaryApiConfig: vi.fn(() => ({
-        apiKey: 'sub-key',
-        baseUrl: 'https://example.com',
-        model: 'gpt-test',
-    })),
+    getPrimaryApiConfig: runtimeConfigMocks.getPrimaryApiConfig,
+    getSecondaryApiConfig: runtimeConfigMocks.getSecondaryApiConfig,
 }));
 
 vi.mock('../utils/pushSubscription', () => ({
@@ -71,6 +72,79 @@ describe('AgentContext location updates', () => {
         mockUseCharacter.mockImplementation(() => characterState);
         mockUseConfig.mockReturnValue({ isConfigLoaded: true });
         mockConsumeCharacterUpdateOptions.mockReturnValue(null);
+        runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
+            apiKey: '',
+            baseUrl: '',
+            model: 'gpt-4o-mini',
+        });
+        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue({
+            apiKey: 'sub-key',
+            baseUrl: 'https://sub.example.com',
+            model: 'gpt-sub',
+        });
+    });
+
+    it('starts backend agent with the secondary API when both primary and secondary API are configured', () => {
+        runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
+            apiKey: 'main-key',
+            baseUrl: 'https://main.example.com',
+            model: 'gpt-main',
+        });
+
+        render(
+            <AgentProvider>
+                <div>child</div>
+            </AgentProvider>,
+        );
+
+        expect(agentMocks.start).toHaveBeenCalledTimes(1);
+        expect(agentMocks.start).toHaveBeenCalledWith(
+            'char-1',
+            baseCharacter,
+            {
+                apiKey: 'sub-key',
+                baseUrl: 'https://sub.example.com',
+                model: 'gpt-sub',
+            },
+        );
+    });
+
+    it('starts backend agent with the primary API when secondary API is missing', () => {
+        runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
+            apiKey: 'main-key',
+            baseUrl: 'https://main.example.com',
+            model: 'gpt-main',
+        });
+        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue(undefined);
+
+        render(
+            <AgentProvider>
+                <div>child</div>
+            </AgentProvider>,
+        );
+
+        expect(agentMocks.start).toHaveBeenCalledTimes(1);
+        expect(agentMocks.start).toHaveBeenCalledWith(
+            'char-1',
+            baseCharacter,
+            {
+                apiKey: 'main-key',
+                baseUrl: 'https://main.example.com',
+                model: 'gpt-main',
+            },
+        );
+    });
+
+    it('does not start backend agent when neither primary nor secondary API is complete', () => {
+        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue(undefined);
+
+        render(
+            <AgentProvider>
+                <div>child</div>
+            </AgentProvider>,
+        );
+
+        expect(agentMocks.start).not.toHaveBeenCalled();
     });
 
     it('does not push agent context immediately for location updates marked to skip', async () => {

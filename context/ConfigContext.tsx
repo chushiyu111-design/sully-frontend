@@ -71,6 +71,9 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const newConfig = { ...apiConfig, ...updates };
         setApiConfig(newConfig);
         setPrimaryApiConfig(newConfig);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('agent-config-changed'));
+        }
     };
 
     const setAvailableModelsStateValue = (models: string[]) => {

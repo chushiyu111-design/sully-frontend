@@ -22,6 +22,7 @@ import {
     safeLocalStorageSet,
     writeJsonStorage,
 } from './storage';
+import { getCharacterContentId } from './characterIdentity';
 import {
   ackAgentMessages,
   AgentBackendMessage,
@@ -36,6 +37,7 @@ import {
   startAgentOnBackend,
   stopAgentOnBackend,
 } from './agentBackendClient';
+import { getClientId } from './backendClient';
 
 export interface SecondaryApiConfig {
     baseUrl: string;
@@ -214,6 +216,24 @@ function parseBackendMetadata(
         return metadata;
     }
     return {};
+}
+
+function getBackendMessageTargetClientId(
+    message: AgentBackendMessage,
+    metadata: Record<string, unknown>,
+): string {
+    const candidates = [
+        message.targetClientId,
+        message.target_client_id,
+        metadata.targetClientId,
+        metadata.target_client_id,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+    return '';
 }
 
 function pickTopMemory(memories: MemorySummary[]): MemorySummary | undefined {
@@ -408,6 +428,7 @@ export class BackendAgentManager {
     private eventSource: EventSource | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private stopped = false;
+    private uiCharId = '';
     private charId = '';
     private charRef: CharacterProfile | null = null;
     private sseFailCount = 0;
@@ -427,7 +448,8 @@ export class BackendAgentManager {
         activeInstance = this;
 
         this.stopped = false;
-        this.charId = charId;
+        this.uiCharId = charId;
+        this.charId = getCharacterContentId(char);
         this.charRef = char;
         this.sseFailCount = 0;
         this.useFallbackPolling = false;
@@ -438,7 +460,7 @@ export class BackendAgentManager {
 
         (async () => {
             try {
-                const contextSnapshot = await buildContextSnapshot(charId, char);
+                const contextSnapshot = await buildContextSnapshot(this.charId, char);
                 const mainApiConfig = getPrimaryApiConfig();
 
                 if (!mainApiConfig) {
@@ -446,7 +468,7 @@ export class BackendAgentManager {
                 }
 
                 await startAgentOnBackend({
-                    charId,
+                    charId: this.charId,
                     apiConfig: secondaryApi,
                     mainApiConfig,
                     weatherConfig: getCharWeatherConfig(),
@@ -567,6 +589,26 @@ export class BackendAgentManager {
         const now = Date.now();
         const metadata = parseBackendMetadata(message.metadata);
         const role = message.role || 'assistant';
+        const source = (metadata.source as string) || 'autonomous';
+        const targetClientId = getBackendMessageTargetClientId(message, metadata);
+
+        if (source === 'weixin') {
+            const currentClientId = getClientId();
+            if (!targetClientId) {
+                console.warn('[Agent] Rejected Weixin backend message without target client id', {
+                    backendMessageId: message.id,
+                });
+                return;
+            }
+            if (targetClientId !== currentClientId) {
+                console.warn('[Agent] Rejected Weixin backend message for a different client', {
+                    backendMessageId: message.id,
+                    targetClientId,
+                    currentClientId,
+                });
+                return;
+            }
+        }
 
         await DB.saveScheduledMessage({
             id: `backend-${message.id}`,
@@ -576,10 +618,11 @@ export class BackendAgentManager {
             dueAt: now + (options.delayMs || 0),
             createdAt: message.createdAt || message.created_at || now,
             metadata: {
-                source: (metadata.source as string) || 'autonomous',
+                source,
                 reason: metadata.reason,
                 backendMessageId: String(message.id),
                 fromBackend: true,
+                ...(targetClientId ? { targetClientId } : {}),
                 ...(metadata.originalTimestamp ? { originalTimestamp: metadata.originalTimestamp } : {}),
                 ...(metadata.fromWeixinId ? { fromWeixinId: metadata.fromWeixinId } : {}),
                 ...(metadata.bubbleIndex !== undefined ? { bubbleIndex: metadata.bubbleIndex } : {}),
@@ -768,18 +811,20 @@ export class BackendAgentManager {
     }
 
     async pushContext(nextChar?: CharacterProfile): Promise<void> {
-        if (nextChar?.id === this.charId) {
+        if (nextChar && (nextChar.id === this.uiCharId || getCharacterContentId(nextChar) === this.charId)) {
             this.charRef = nextChar;
         }
         if (!this.charId || !this.charRef) return;
 
         try {
-            let freshChar = nextChar && nextChar.id === this.charId
+            let freshChar = nextChar && (nextChar.id === this.uiCharId || getCharacterContentId(nextChar) === this.charId)
                 ? nextChar
                 : this.charRef;
             try {
                 const allChars = await DB.getAllCharacters();
-                const found = allChars.find(char => char.id === this.charId);
+                const found = allChars.find(char =>
+                    char.id === this.uiCharId || getCharacterContentId(char) === this.charId,
+                );
                 if (found) {
                     freshChar = found;
                     this.charRef = found;
@@ -814,7 +859,7 @@ export class BackendAgentManager {
 
     static async notifyUserReplied(charId: string): Promise<void> {
         try {
-            await notifyAgentUserReplied(charId);
+            await notifyAgentUserReplied(await DB.resolveCharacterContentId(charId));
         } catch {
             // Silent on purpose. User replies should not block the chat flow.
         }
@@ -824,23 +869,28 @@ export class BackendAgentManager {
         if (!charId) return;
 
         try {
-            if (activeInstance && !activeInstance.stopped && activeInstance.charId === charId) {
+            if (activeInstance && !activeInstance.stopped && (
+                activeInstance.uiCharId === charId || activeInstance.charId === charId
+            )) {
                 await activeInstance.pushContext(char);
                 return;
             }
 
-            let freshChar = char && char.id === charId ? char : undefined;
+            let freshChar = char && (char.id === charId || getCharacterContentId(char) === charId) ? char : undefined;
             if (!freshChar) {
                 try {
                     const allChars = await DB.getAllCharacters();
-                    freshChar = allChars.find(candidate => candidate.id === charId);
+                    freshChar = allChars.find(candidate =>
+                        candidate.id === charId || getCharacterContentId(candidate) === charId,
+                    );
                 } catch {
                     // Keep the refresh best-effort; local chat must remain uninterrupted.
                 }
             }
             if (!freshChar) return;
 
-            const contextSnapshot = await buildContextSnapshot(charId, freshChar);
+            const contentCharId = getCharacterContentId(freshChar);
+            const contextSnapshot = await buildContextSnapshot(contentCharId, freshChar);
             await pushAgentContextSnapshot(contextSnapshot);
 
             if (getAutonomousDebugEnabled()) {

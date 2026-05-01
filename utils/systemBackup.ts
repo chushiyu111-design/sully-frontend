@@ -767,8 +767,6 @@ export const SYSTEM_BACKUP_LOCAL_STORAGE_KEYS = [
     'music_profile_bg_setting', 'music_player_skin', 'music_player_glass',
     'floating_lyrics_settings', 'temporal_pending_events',
     SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY,
-    // User ID
-    'csyos_user_id',
 ];
 
 export const SYSTEM_BACKUP_LOCAL_STORAGE_PREFIXES = [
@@ -786,6 +784,8 @@ export const SYSTEM_BACKUP_LOCAL_STORAGE_PREFIXES = [
 export const SYSTEM_BACKUP_EXCLUDED_LOCAL_STORAGE_KEYS = [
     'csyos_backend_alive',
     'csyos_backend_runtime_debug',
+    'csyos_user_id',
+    'csyos_client_id',
     'rerank_dismissed_until',
     'sullyos_valentine_2026_dismissed',
     'sullyos_valentine_2026_completed',
@@ -1216,6 +1216,7 @@ export async function importSystemData(
     // Restore extra localStorage config (sub API, embedding, backend, etc.)
     if (data.extraLocalStorageConfig) {
         for (const [key, value] of Object.entries(data.extraLocalStorageConfig)) {
+            if (!shouldIncludeLocalStorageKey(key)) continue;
             localStorage.setItem(key, value);
         }
     }

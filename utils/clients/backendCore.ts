@@ -30,6 +30,7 @@ import {
     writeJsonStorage,
 } from '../storage';
 import { safeTimeoutSignal } from '../safeTimeout';
+import { resolveCharacterContentId } from '../db/characterStore';
 
 export {
     getBackendResolutionDebug,
@@ -43,6 +44,7 @@ export {
     getBackendUrl,
     getFrontendOrigin,
     getTtsWsProxyUrl,
+    getClientId,
     getUserId,
     sanitizeBackendHeader,
     setBackendUrl,
@@ -549,6 +551,7 @@ export async function tryBackendRetrieval(
     }
 
     const url = getBackendUrl()!;
+    const contentCharId = await resolveCharacterContentId(charId);
     console.log(`🔎 [Backend Debug] Starting retrieval request to ${url}/api/retrieval/search...`);
     const headers = buildHeaders();
     publishBackendRuntimeDebug({
@@ -565,7 +568,7 @@ export async function tryBackendRetrieval(
             {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ charId, charName, userName, contextMsgs, currentHormoneState }),
+                body: JSON.stringify({ charId: contentCharId, charName, userName, contextMsgs, currentHormoneState }),
             },
             { timeoutMs: 15000, maxAttempts: 2 },
         );
@@ -613,6 +616,7 @@ export async function tryBackendExtraction(
     if (!await isBackendAlive()) return false;
 
     const url = getBackendUrl()!;
+    const contentCharId = await resolveCharacterContentId(charId);
     const headers = buildHeaders();
     addLlmHeaders(headers, subApiConfig);
 
@@ -622,7 +626,7 @@ export async function tryBackendExtraction(
         const resp = await fetch(`${url}/api/extraction/extract`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ charId, charName, messages }),
+            body: JSON.stringify({ charId: contentCharId, charName, messages }),
             signal: safeTimeoutSignal(120000),
         });
 
@@ -654,6 +658,7 @@ export async function tryBackendCallExtraction(
     if (!await isBackendAlive()) return false;
 
     const url = getBackendUrl()!;
+    const contentCharId = await resolveCharacterContentId(charId);
     const headers = buildHeaders();
     addLlmHeaders(headers, subApiConfig);
 
@@ -663,7 +668,7 @@ export async function tryBackendCallExtraction(
         const resp = await fetch(`${url}/api/extraction/extract-call`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ charId, charName, callHistory, callTimestamp }),
+            body: JSON.stringify({ charId: contentCharId, charName, callHistory, callTimestamp }),
             signal: safeTimeoutSignal(60000),
         });
 

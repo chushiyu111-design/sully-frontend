@@ -112,6 +112,7 @@ export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer
 export interface Message {
     id: number;
     charId: string;
+    ownerUserId?: string;
     groupId?: string;
     role: 'user' | 'assistant' | 'system';
     type: MessageType;

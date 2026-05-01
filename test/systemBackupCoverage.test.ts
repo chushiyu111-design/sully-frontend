@@ -263,6 +263,30 @@ describe('system backup coverage', () => {
         expect(localStorage.getItem('csyos_backend_alive')).toBeNull();
     }, 15000);
 
+    it('does not export or restore device identity localStorage keys', async () => {
+        localStorage.setItem('csyos_user_id', 'csy-user-original');
+        localStorage.setItem('csyos_client_id', 'csy-client-original');
+        localStorage.setItem('os_sub_api_config', '{"model":"flash"}');
+
+        const data = await readBackupData(await exportSystemData('full', makeStateSnapshot(), noopProgress));
+        expect(data.extraLocalStorageConfig?.csyos_user_id).toBeUndefined();
+        expect(data.extraLocalStorageConfig?.csyos_client_id).toBeUndefined();
+
+        await importWithoutReload(JSON.stringify({
+            timestamp: Date.now(),
+            version: 3,
+            extraLocalStorageConfig: {
+                csyos_user_id: 'csy-user-from-backup',
+                csyos_client_id: 'csy-client-from-backup',
+                os_sub_api_config: '{"model":"restored"}',
+            },
+        }));
+
+        expect(localStorage.getItem('csyos_user_id')).toBe('csy-user-original');
+        expect(localStorage.getItem('csyos_client_id')).toBe('csy-client-original');
+        expect(localStorage.getItem('os_sub_api_config')).toBe('{"model":"restored"}');
+    });
+
     it('roundtrips music profile background and custom player skins', async () => {
         await putExternalValue(
             'music_profile_bg_db',

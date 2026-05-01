@@ -28,6 +28,8 @@ export const DB = {
     getCharacterById: characterStore.getCharacterById,
     saveCharacter: characterStore.saveCharacter,
     deleteCharacter: characterStore.deleteCharacter,
+    resolveCharacterContentId: characterStore.resolveCharacterContentId,
+    migrateLocalCharacterContentToInstance: characterStore.migrateLocalCharacterContentToInstance,
 
     // Messages
     getMessagesByCharId: characterStore.getMessagesByCharId,

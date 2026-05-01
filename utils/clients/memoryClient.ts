@@ -1,5 +1,6 @@
 import type { HormoneSnapshot,VectorMemory } from '../../types';
 import { markVectorMemoryAsBackendGenerated } from '../vectorMemorySyncState';
+import { resolveCharacterContentId } from '../db/characterStore';
 import {
     buildBackendUrl,
     buildHeaders,
@@ -175,6 +176,8 @@ export async function pushMemories(charId: string, memories: any[]): Promise<{ s
 
     const url = getBackendUrl()!;
     const headers = buildHeaders();
+    const contentCharId = await resolveCharacterContentId(charId);
+    const legacyCharId = contentCharId !== charId ? charId : undefined;
 
     try {
         const resp = await fetchWithRetry(
@@ -182,7 +185,7 @@ export async function pushMemories(charId: string, memories: any[]): Promise<{ s
             {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ charId, memories, clientTimestamp: Date.now() }),
+                body: JSON.stringify({ charId: contentCharId, legacyCharId, memories, clientTimestamp: Date.now() }),
             },
             { timeoutMs: 30000, maxAttempts: 2, baseDelayMs: 500 },
         );
@@ -208,9 +211,12 @@ export async function pullMemories(charId: string, options: CloudMemoryListOptio
     if (!await isBackendAlive()) return null;
 
     const headers = buildHeaders();
-    const requestUrl = buildBackendUrl(`/api/memories/${encodeURIComponent(charId)}`, {
+    const contentCharId = await resolveCharacterContentId(charId);
+    const legacyCharId = contentCharId !== charId ? charId : undefined;
+    const requestUrl = buildBackendUrl(`/api/memories/${encodeURIComponent(contentCharId)}`, {
         vectors: options.vectors ? 'true' : undefined,
         deprecated: options.includeDeprecated ? 'true' : undefined,
+        legacyCharId,
     });
 
     try {
@@ -228,7 +234,7 @@ export async function pullMemories(charId: string, options: CloudMemoryListOptio
         const data = await resp.json();
         const rawMemories = Array.isArray(data.memories) ? (data.memories as unknown[]) : [];
         const memories = rawMemories
-            .map((memory: unknown) => normalizeCloudMemory(memory, charId))
+            .map((memory: unknown) => normalizeCloudMemory(memory, contentCharId))
             .filter((memory): memory is VectorMemory => Boolean(memory))
             .map((memory: VectorMemory) => markVectorMemoryAsBackendGenerated(memory));
         console.log(`☁️ [CloudSync] Pull success: ${memories.length} memories for ${charId}`);
@@ -267,6 +273,40 @@ export async function listCloudChars(): Promise<{ charId: string; memoryCount: n
         return chars;
     } catch (err: any) {
         console.error('☁️ [CloudSync] ListChars failed:', err.message);
+        clearBackendHealthCache();
+        return null;
+    }
+}
+
+export async function migrateCloudCharacterInstance(
+    legacyCharId: string,
+    charInstanceId: string,
+): Promise<{ ok: boolean; skipped?: boolean; counts?: Record<string, number> } | null> {
+    if (!legacyCharId || !charInstanceId || legacyCharId === charInstanceId) {
+        return { ok: true, skipped: true };
+    }
+    if (!await isBackendAlive()) return null;
+
+    const requestUrl = buildBackendUrl('/api/characters/migrate-instance');
+    try {
+        const resp = await fetchWithRetry(
+            requestUrl,
+            {
+                method: 'POST',
+                headers: buildHeaders(),
+                body: JSON.stringify({ legacyCharId, charInstanceId }),
+            },
+            { timeoutMs: 20000, maxAttempts: 2, baseDelayMs: 500 },
+        );
+
+        if (!resp.ok) {
+            console.error(`☁️ [CloudSync] Character instance migration error ${resp.status}`);
+            return null;
+        }
+
+        return await resp.json();
+    } catch (err: any) {
+        console.error('☁️ [CloudSync] Character instance migration failed:', err.message);
         clearBackendHealthCache();
         return null;
     }
@@ -366,10 +406,11 @@ export async function clearCloudMemories(charId: string): Promise<CloudMemoryMut
 
     const url = getBackendUrl()!;
     const headers = buildHeaders({ contentType: false });
+    const contentCharId = await resolveCharacterContentId(charId);
 
     try {
         const resp = await fetchWithRetry(
-            `${url}/api/memories/char/${encodeURIComponent(charId)}`,
+            `${url}/api/memories/char/${encodeURIComponent(contentCharId)}`,
             { method: 'DELETE', headers },
             { timeoutMs: 15000 },
         );

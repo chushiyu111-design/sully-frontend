@@ -522,6 +522,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                 const saveResult = backendMessageId
                                     ? await DB.saveMessageOnceByBackendId({
                                         charId: msg.charId,
+                                        ...(msg.ownerUserId ? { ownerUserId: msg.ownerUserId } : {}),
                                         role: msgRole,
                                         type: 'text',
                                         content: msg.content,
@@ -530,6 +531,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                     })
                                     : { saved: true, id: await DB.saveMessage({
                                         charId: msg.charId,
+                                        ...(msg.ownerUserId ? { ownerUserId: msg.ownerUserId } : {}),
                                         role: msgRole,
                                         type: 'text',
                                         content: msg.content,

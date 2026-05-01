@@ -1,5 +1,91 @@
 import { CharacterProfile,GroupProfile,Message } from '../../types';
-import { openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_GROUPS,ScheduledMessage,STORE_SCHEDULED } from './core';
+import { openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_GROUPS,ScheduledMessage,STORE_SCHEDULED,STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS } from './core';
+import { getUserId } from '../backendConfig';
+import { ensureCharacterInstanceId, getCharacterContentId } from '../characterIdentity';
+
+function getCurrentOwnerUserId(): string {
+    return getUserId();
+}
+
+function belongsToCurrentOwner(item: { ownerUserId?: string | null }): boolean {
+    return !item.ownerUserId || item.ownerUserId === getCurrentOwnerUserId();
+}
+
+function withCurrentOwner<T extends { ownerUserId?: string }>(item: T): T {
+    return {
+        ...item,
+        ownerUserId: item.ownerUserId || getCurrentOwnerUserId(),
+    };
+}
+
+function normalizeId(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+async function getAllCharactersFromDb(db: IDBDatabase): Promise<CharacterProfile[]> {
+    if (!db.objectStoreNames.contains(STORE_CHARACTERS)) return [];
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
+        const request = transaction.objectStore(STORE_CHARACTERS).getAll();
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+export const resolveCharacterContentId = async (charId: string): Promise<string> => {
+    const requested = normalizeId(charId);
+    if (!requested) return requested;
+    if (typeof indexedDB === 'undefined') return requested;
+
+    try {
+        const db = await openDB();
+        const characters = await getAllCharactersFromDb(db);
+        const found = characters.find(character =>
+            character.id === requested || normalizeId(character.charInstanceId) === requested,
+        );
+        return found ? getCharacterContentId(found) : requested;
+    } catch {
+        return requested;
+    }
+};
+
+async function resolveCharacterReadIds(charId: string): Promise<string[]> {
+    const requested = normalizeId(charId);
+    if (!requested) return [];
+    const contentId = await resolveCharacterContentId(requested);
+    return [...new Set([contentId, requested].filter(Boolean))];
+}
+
+async function getAllByCharIds<T>(storeName: string, charIds: string[]): Promise<T[]> {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(storeName) || charIds.length === 0) return [];
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(storeName, 'readonly');
+        const store = transaction.objectStore(storeName);
+        const index = store.index('charId');
+        const results: T[] = [];
+
+        for (const charId of charIds) {
+            const request = index.getAll(IDBKeyRange.only(charId));
+            request.onsuccess = () => {
+                results.push(...(request.result || []));
+            };
+        }
+
+        transaction.oncomplete = () => resolve(results);
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
+function updateItemCharIdAndOwner<T extends { charId?: string; ownerUserId?: string }>(
+    item: T,
+    nextCharId: string,
+): T {
+    return withCurrentOwner({
+        ...item,
+        charId: nextCharId,
+    });
+}
 
 // --- Characters ---
 export const getAllCharacters = async (): Promise<CharacterProfile[]> => {
@@ -16,15 +102,27 @@ export const getAllCharacters = async (): Promise<CharacterProfile[]> => {
 export const saveCharacter = async (character: CharacterProfile): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_CHARACTERS, 'readwrite');
-    transaction.objectStore(STORE_CHARACTERS).put(character);
+    transaction.objectStore(STORE_CHARACTERS).put(ensureCharacterInstanceId(character));
 };
 
 export const getCharacterById = async (id: string): Promise<CharacterProfile | undefined> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_CHARACTERS, 'readonly');
-        const request = transaction.objectStore(STORE_CHARACTERS).get(id);
-        request.onsuccess = () => resolve(request.result || undefined);
+        const store = transaction.objectStore(STORE_CHARACTERS);
+        const request = store.get(id);
+        request.onsuccess = async () => {
+            if (request.result) {
+                resolve(request.result);
+                return;
+            }
+            try {
+                const characters = await getAllCharactersFromDb(db);
+                resolve(characters.find(character => normalizeId(character.charInstanceId) === id) || undefined);
+            } catch (error) {
+                reject(error);
+            }
+        };
         request.onerror = () => reject(request.error);
     });
 };
@@ -37,91 +135,29 @@ export const deleteCharacter = async (id: string): Promise<void> => {
 
 // --- Messages ---
 export const getMessagesByCharId = async (charId: string): Promise<Message[]> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
-        const store = transaction.objectStore(STORE_MESSAGES);
-        const index = store.index('charId');
-        const request = index.getAll(IDBKeyRange.only(charId));
-        request.onsuccess = () => {
-            const results = (request.result || []).filter((m: Message) => !m.groupId);
-            resolve(results);
-        };
-        request.onerror = () => reject(request.error);
-    });
+    const charIds = await resolveCharacterReadIds(charId);
+    const results = await getAllByCharIds<Message>(STORE_MESSAGES, charIds);
+    return results
+        .filter((m: Message) => !m.groupId && belongsToCurrentOwner(m))
+        .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
 };
 
 export const getRecentMessagesByCharId = async (charId: string, limit: number): Promise<Message[]> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
-        const store = transaction.objectStore(STORE_MESSAGES);
-        const index = store.index('charId');
-        const collected: Message[] = [];
-        const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
-        cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (cursor && collected.length < limit) {
-                const m = cursor.value as Message;
-                if (!m.groupId) collected.push(m);
-                cursor.continue();
-            } else {
-                resolve(collected.reverse());
-            }
-        };
-        cursorReq.onerror = () => reject(cursorReq.error);
-    });
+    const messages = await getMessagesByCharId(charId);
+    return messages.slice(Math.max(0, messages.length - limit));
 };
 
 export const getRecentMessagesWithCount = async (charId: string, limit: number): Promise<{ messages: Message[], totalCount: number }> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
-        const store = transaction.objectStore(STORE_MESSAGES);
-        const index = store.index('charId');
-        const countReq = index.count(IDBKeyRange.only(charId));
-        countReq.onsuccess = () => {
-            const totalCount = countReq.result;
-            const collected: Message[] = [];
-            const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
-            cursorReq.onsuccess = () => {
-                const cursor = cursorReq.result;
-                if (cursor && collected.length < limit) {
-                    const m = cursor.value as Message;
-                    if (!m.groupId) collected.push(m);
-                    cursor.continue();
-                } else {
-                    resolve({ messages: collected.reverse(), totalCount });
-                }
-            };
-            cursorReq.onerror = () => reject(cursorReq.error);
-        };
-        countReq.onerror = () => reject(countReq.error);
-    });
+    const messages = await getMessagesByCharId(charId);
+    return {
+        messages: messages.slice(Math.max(0, messages.length - limit)),
+        totalCount: messages.length,
+    };
 };
 
 export const getMessagesFromId = async (charId: string, fromId: number): Promise<{ messages: Message[], totalCount: number }> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
-        const store = transaction.objectStore(STORE_MESSAGES);
-        const index = store.index('charId');
-        const collected: Message[] = [];
-        const cursorReq = index.openCursor(IDBKeyRange.only(charId));
-        cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (cursor) {
-                const m = cursor.value as Message;
-                if (!m.groupId && m.id >= fromId) {
-                    collected.push(m);
-                }
-                cursor.continue();
-            } else {
-                resolve({ messages: collected, totalCount: collected.length });
-            }
-        };
-        cursorReq.onerror = () => reject(cursorReq.error);
-    });
+    const messages = (await getMessagesByCharId(charId)).filter(m => m.id >= fromId);
+    return { messages, totalCount: messages.length };
 };
 
 /**
@@ -130,27 +166,7 @@ export const getMessagesFromId = async (charId: string, fromId: number): Promise
  * so memory usage is O(new messages) rather than O(all messages).
  */
 export const getMessagesByCharIdAfterTimestamp = async (charId: string, afterTimestamp: number): Promise<Message[]> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
-        const store = transaction.objectStore(STORE_MESSAGES);
-        const index = store.index('charId');
-        const collected: Message[] = [];
-        const cursorReq = index.openCursor(IDBKeyRange.only(charId));
-        cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (cursor) {
-                const m = cursor.value as Message;
-                if (!m.groupId && m.timestamp > afterTimestamp) {
-                    collected.push(m);
-                }
-                cursor.continue();
-            } else {
-                resolve(collected);
-            }
-        };
-        cursorReq.onerror = () => reject(cursorReq.error);
-    });
+    return (await getMessagesByCharId(charId)).filter(m => m.timestamp > afterTimestamp);
 };
 
 /**
@@ -166,7 +182,11 @@ export const getMessagesByIds = async (ids: number[]): Promise<Message[]> => {
         const results: Message[] = [];
         for (const id of ids) {
             const req = store.get(id);
-            req.onsuccess = () => { if (req.result) results.push(req.result); };
+            req.onsuccess = () => {
+                if (req.result && belongsToCurrentOwner(req.result as Message)) {
+                    results.push(req.result);
+                }
+            };
         }
         tx.oncomplete = () => resolve(results.sort((a, b) => a.timestamp - b.timestamp));
         tx.onerror = () => reject(tx.error);
@@ -174,11 +194,12 @@ export const getMessagesByIds = async (ids: number[]): Promise<Message[]> => {
 };
 
 export const saveMessage = async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
+    const contentCharId = await resolveCharacterContentId(msg.charId);
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
-        const request = store.add({ ...msg, timestamp: msg.timestamp ?? Date.now() });
+        const request = store.add(withCurrentOwner({ ...msg, charId: contentCharId, timestamp: msg.timestamp ?? Date.now() }));
         request.onsuccess = () => resolve(request.result as number);
         request.onerror = () => reject(request.error);
     });
@@ -196,6 +217,8 @@ export const saveMessageOnceByBackendId = async (
         return { saved: true, id };
     }
 
+    const readCharIds = await resolveCharacterReadIds(msg.charId);
+    const contentCharId = readCharIds[0] || await resolveCharacterContentId(msg.charId);
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
@@ -209,28 +232,40 @@ export const saveMessageOnceByBackendId = async (
             resolve(result);
         };
 
-        const request = index.openCursor(IDBKeyRange.only(msg.charId));
-        request.onsuccess = () => {
-            const cursor = request.result;
-            if (cursor) {
-                const existing = cursor.value as Message;
-                if (existing.metadata?.backendMessageId === backendMessageId) {
-                    settle({ saved: false, id: existing.id });
-                    return;
-                }
-                cursor.continue();
+        let scanIndex = 0;
+        const scanNextCharId = () => {
+            const targetCharId = readCharIds[scanIndex];
+            if (!targetCharId) {
+                const addRequest = store.add(withCurrentOwner({ ...msg, charId: contentCharId, timestamp: msg.timestamp ?? Date.now() }));
+                addRequest.onsuccess = () => settle({ saved: true, id: addRequest.result as number });
+                addRequest.onerror = () => {
+                    if (!settled) reject(addRequest.error);
+                };
                 return;
             }
 
-            const addRequest = store.add({ ...msg, timestamp: msg.timestamp ?? Date.now() });
-            addRequest.onsuccess = () => settle({ saved: true, id: addRequest.result as number });
-            addRequest.onerror = () => {
-                if (!settled) reject(addRequest.error);
+            const request = index.openCursor(IDBKeyRange.only(targetCharId));
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (cursor) {
+                    const existing = cursor.value as Message;
+                    if (belongsToCurrentOwner(existing) && existing.metadata?.backendMessageId === backendMessageId) {
+                        settle({ saved: false, id: existing.id });
+                        return;
+                    }
+                    cursor.continue();
+                    return;
+                }
+
+                scanIndex += 1;
+                scanNextCharId();
+            };
+            request.onerror = () => {
+                if (!settled) reject(request.error);
             };
         };
-        request.onerror = () => {
-            if (!settled) reject(request.error);
-        };
+
+        scanNextCharId();
         transaction.onerror = () => {
             if (!settled) reject(transaction.error);
         };
@@ -319,19 +354,22 @@ export const deleteMessages = async (ids: number[]): Promise<void> => {
 };
 
 export const clearMessages = async (charId: string): Promise<void> => {
+    const charIds = await resolveCharacterReadIds(charId);
     const db = await openDB();
     const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
     const store = transaction.objectStore(STORE_MESSAGES);
     const index = store.index('charId');
-    const request = index.openCursor(IDBKeyRange.only(charId));
-    request.onsuccess = () => {
-        const cursor = request.result;
-        if (cursor) {
-            const m = cursor.value as Message;
-            if (!m.groupId) store.delete(cursor.primaryKey);
-            cursor.continue();
-        }
-    };
+    for (const targetCharId of charIds) {
+        const request = index.openCursor(IDBKeyRange.only(targetCharId));
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (cursor) {
+                const m = cursor.value as Message;
+                if (!m.groupId && belongsToCurrentOwner(m)) store.delete(cursor.primaryKey);
+                cursor.continue();
+            }
+        };
+    }
 };
 
 // --- Groups ---
@@ -390,25 +428,91 @@ export const getRecentGroupMessagesWithCount = async (groupId: string, limit: nu
 
 // --- Scheduled Messages ---
 export const saveScheduledMessage = async (msg: ScheduledMessage): Promise<void> => {
+    const contentCharId = await resolveCharacterContentId(msg.charId);
     const db = await openDB();
-    db.transaction(STORE_SCHEDULED, 'readwrite').objectStore(STORE_SCHEDULED).put(msg);
+    db.transaction(STORE_SCHEDULED, 'readwrite').objectStore(STORE_SCHEDULED).put(
+        withCurrentOwner({ ...msg, charId: contentCharId }),
+    );
 };
 
 export const getDueScheduledMessages = async (charId: string): Promise<ScheduledMessage[]> => {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_SCHEDULED, 'readonly');
-        const index = transaction.objectStore(STORE_SCHEDULED).index('charId');
-        const request = index.getAll(IDBKeyRange.only(charId));
-        request.onsuccess = () => {
-            const all = request.result as ScheduledMessage[];
-            resolve(all.filter(m => m.dueAt <= Date.now()));
-        };
-        request.onerror = () => reject(request.error);
-    });
+    const charIds = await resolveCharacterReadIds(charId);
+    const all = await getAllByCharIds<ScheduledMessage>(STORE_SCHEDULED, charIds);
+    return all.filter(m => m.dueAt <= Date.now() && belongsToCurrentOwner(m));
 };
 
 export const deleteScheduledMessage = async (id: string): Promise<void> => {
     const db = await openDB();
     db.transaction(STORE_SCHEDULED, 'readwrite').objectStore(STORE_SCHEDULED).delete(id);
+};
+
+export const migrateLocalCharacterContentToInstance = async (
+    legacyCharId: string,
+    charInstanceId: string,
+): Promise<{ messages: number; scheduledMessages: number; vectorMemories: number; memoryRecords: number }> => {
+    const legacy = normalizeId(legacyCharId);
+    const next = normalizeId(charInstanceId);
+    if (!legacy || !next || legacy === next) {
+        return { messages: 0, scheduledMessages: 0, vectorMemories: 0, memoryRecords: 0 };
+    }
+
+    const db = await openDB();
+    const stores = [
+        STORE_MESSAGES,
+        STORE_SCHEDULED,
+        STORE_VECTOR_MEMORIES,
+        STORE_MEMORY_RECORDS,
+    ].filter(store => db.objectStoreNames.contains(store));
+    if (stores.length === 0) {
+        return { messages: 0, scheduledMessages: 0, vectorMemories: 0, memoryRecords: 0 };
+    }
+
+    const counts = { messages: 0, scheduledMessages: 0, vectorMemories: 0, memoryRecords: 0 };
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(stores, 'readwrite');
+
+        const migrateIndexedStore = (
+            storeName: string,
+            increment: keyof typeof counts,
+            mapItem: (item: any) => any,
+        ) => {
+            if (!stores.includes(storeName)) return;
+            const store = tx.objectStore(storeName);
+            if (!store.indexNames.contains('charId')) return;
+            const request = store.index('charId').openCursor(IDBKeyRange.only(legacy));
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) return;
+                const item = cursor.value;
+                const nextItem = mapItem(item);
+                if (nextItem !== item || nextItem.charId !== item.charId) {
+                    store.put(nextItem);
+                    counts[increment]++;
+                }
+                cursor.continue();
+            };
+        };
+
+        migrateIndexedStore(STORE_MESSAGES, 'messages', (item) =>
+            belongsToCurrentOwner(item) ? updateItemCharIdAndOwner(item, next) : item,
+        );
+        migrateIndexedStore(STORE_SCHEDULED, 'scheduledMessages', (item) =>
+            belongsToCurrentOwner(item) ? updateItemCharIdAndOwner(item, next) : item,
+        );
+        migrateIndexedStore(STORE_VECTOR_MEMORIES, 'vectorMemories', (item) => ({
+            ...item,
+            charId: next,
+            syncState: item.syncState === 'backend_generated' ? 'pending_sync' : (item.syncState || 'pending_sync'),
+            cloudSynced: false,
+        }));
+        migrateIndexedStore(STORE_MEMORY_RECORDS, 'memoryRecords', (item) => ({
+            ...item,
+            charId: next,
+        }));
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+
+    return counts;
 };

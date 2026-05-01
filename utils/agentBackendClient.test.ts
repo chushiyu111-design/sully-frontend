@@ -17,6 +17,7 @@ describe('agentBackendClient', () => {
         vi.stubEnv('VITE_CSYOS_BACKEND_URL', BACKEND_URL);
         vi.stubEnv('VITE_CSYOS_BACKEND_TOKEN', 'staging-token');
         localStorage.setItem('csyos_user_id', 'csy-user-1');
+        localStorage.setItem('csyos_client_id', 'csy-client-1');
 
         if (typeof AbortSignal.timeout !== 'function') {
             (AbortSignal as typeof AbortSignal & { timeout: (ms: number) => AbortSignal }).timeout =
@@ -46,6 +47,7 @@ describe('agentBackendClient', () => {
 
         const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
         expect(headers.get('X-Agent-Protocol')).toBeNull();
+        expect(headers.get('X-Client-Id')).toBe('csy-client-1');
     });
 
     it('keeps start requests free of the protocol header for older beta backends', async () => {
@@ -81,6 +83,7 @@ describe('agentBackendClient', () => {
         expect(parsed.searchParams.get('charId')).toBe('char-1');
         expect(parsed.searchParams.get('agentProtocol')).toBe('2');
         expect(parsed.searchParams.get('userId')).toBe('csy-user-1');
+        expect(parsed.searchParams.get('_clientId')).toBe('csy-client-1');
         expect(parsed.searchParams.get('token')).toBe(getBackendToken());
     });
 });

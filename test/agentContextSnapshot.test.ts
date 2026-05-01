@@ -1,4 +1,4 @@
-import { describe,expect,it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
     buildCoreMemoryDigest,
@@ -15,7 +15,7 @@ const TEST_INTERNAL_STATE = {
     endorphin: 0.5,
     energy: 0.5,
     innerVoice: '',
-    surfaceEmotion: '平静',
+    surfaceEmotion: 'calm',
     roundCount: 1,
     updatedAt: 1,
 };
@@ -25,17 +25,17 @@ describe('agentContextSnapshot', () => {
         const digest = buildCoreMemoryDigest(
             {
                 refinedMemories: {
-                    '2026-03': '三月里他总在下班后绕远路去河边透气。',
-                    '2026-02': '二月开始习惯在楼下便利店买热咖啡再回去。',
+                    '2026-03': 'March memory stays active.',
+                    '2026-02': 'February memory is older.',
                 },
                 activeMemoryMonths: ['2026-03'],
             },
-            'TopMemory: 这是旧回退',
+            'TopMemory: old fallback',
         );
 
         expect(digest).toContain('[2026-03]');
-        expect(digest).toContain('河边透气');
-        expect(digest).not.toContain('TopMemory: 这是旧回退');
+        expect(digest).toContain('March memory');
+        expect(digest).not.toContain('TopMemory: old fallback');
     });
 
     it('falls back to topMemory when refinedMemories are unavailable', () => {
@@ -44,40 +44,37 @@ describe('agentContextSnapshot', () => {
                 refinedMemories: {},
                 activeMemoryMonths: [],
             },
-            'TopMemory: 只剩这一条高权重记忆',
+            'TopMemory: only high-weight memory',
         );
 
-        expect(digest).toBe('TopMemory: 只剩这一条高权重记忆');
+        expect(digest).toBe('TopMemory: only high-weight memory');
     });
 
-    it('compresses mounted worldbooks into a bounded digest', () => {
+    it('renders all mounted worldbooks without truncating content', () => {
+        const longContent = `${'full-lore-line '.repeat(120)}\nsecond paragraph stays visible`;
         const digest = buildMountedWorldbooksDigest([
-            {
-                id: 'wb-1',
-                title: '旧城区规则',
+            ...Array.from({ length: 6 }, (_, index) => ({
+                id: `wb-${index + 1}`,
+                title: `Worldbook ${index + 1}`,
                 category: 'world',
-                content: '他住在一座阴雨很多的旧城区，通勤和散步都绕不开河道与坡路。',
-            },
-            {
-                id: 'wb-2',
-                title: '生活习惯',
-                category: 'habits',
-                content: '比起热闹的场合，他更常在咖啡店、图书馆或便利店门口短暂停一下。',
-            },
+                content: index === 5 ? longContent : `content-${index + 1}`,
+            })),
         ]);
 
-        expect(digest).toContain('旧城区规则');
-        expect(digest).toContain('生活习惯');
-        expect(digest!.length).toBeLessThanOrEqual(1200);
+        expect(digest).toContain('Worldbook 1');
+        expect(digest).toContain('Worldbook 6');
+        expect(digest).toContain(longContent);
+        expect(digest).toContain('second paragraph stays visible');
+        expect(digest!.length).toBeGreaterThan(1200);
     });
 
     it('ignores location-only changes when deciding whether to push context immediately', () => {
         const previous = {
             name: 'Sully',
-            description: '测试角色',
+            description: 'test character',
             systemPrompt: 'stay in character',
-            worldview: '现代都市',
-            cityOverride: '上海',
+            worldview: 'modern city',
+            cityOverride: 'Shanghai',
             cityAdcode: '310000',
             isFictionalCity: false,
             mountedWorldbooks: [],
@@ -87,7 +84,7 @@ describe('agentContextSnapshot', () => {
         };
         const next = {
             ...previous,
-            cityOverride: '杭州',
+            cityOverride: 'Hangzhou',
             cityAdcode: '330100',
         };
 
@@ -97,9 +94,9 @@ describe('agentContextSnapshot', () => {
     it('detects prompt-relevant changes when deciding whether to push context immediately', () => {
         const previous = {
             name: 'Sully',
-            description: '测试角色',
+            description: 'test character',
             systemPrompt: 'stay in character',
-            worldview: '现代都市',
+            worldview: 'modern city',
             mountedWorldbooks: [],
             refinedMemories: {},
             activeMemoryMonths: [],
@@ -107,7 +104,7 @@ describe('agentContextSnapshot', () => {
         };
         const next = {
             ...previous,
-            description: '更新后的角色描述',
+            description: 'updated character description',
         };
 
         expect(didCharacterContextRelevantFieldsChange(previous, next)).toBe(true);

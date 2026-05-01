@@ -348,17 +348,21 @@ mode 可选值：
                 trailingInstructions += `\n\n[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`;
             }
 
-            trailingInstructions += `\n\n[思考链格式锁定]\n请严格遵循以下输出流程：\n1. 先在 <thinking>...</thinking> 中完成全部思考\n2. 思考完毕后，必须输出 </thinking> 闭合标签\n3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）\n4. 正文中不得包含任何 <thinking> 标签或思考过程\n\n格式：\n<thinking>\n（你的思考过程）\n</thinking>\n（角色正文回复）\n\n严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。\n\n━━━━━━━━━━━━━━━\n<!--\nif 首段不是<thinking>标签 then\n    立即回滚本轮并重写，直至首段为<thinking>…</thinking>\nend if\n-->\n━━━━━━━━━━━━━━━`;
-
-            if (lastUserIdx >= 0 && typeof fullMessages[lastUserIdx].content === 'string') {
-                fullMessages[lastUserIdx].content += trailingInstructions;
-            } else {
-                fullMessages.push({ role: 'user', content: `[系统执行指令]${trailingInstructions}` });
-            }
-
             // 3.0a Prefill injection — force CoT <thinking> start
             // Controlled via settings to support buggy proxies that block prefill (and eat tokens)
             const usePrefill = !apiConfig.disablePrefill;
+            if (usePrefill) {
+                trailingInstructions += `\n\n[思考链格式锁定]\n请严格遵循以下输出流程：\n1. 先在 <thinking>...</thinking> 中完成全部思考\n2. 思考完毕后，必须输出 </thinking> 闭合标签\n3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）\n4. 正文中不得包含任何 <thinking> 标签或思考过程\n\n格式：\n<thinking>\n（你的思考过程）\n</thinking>\n（角色正文回复）\n\n严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。\n\n━━━━━━━━━━━━━━━\n<!--\nif 首段不是<thinking>标签 then\n    立即回滚本轮并重写，直至首段为<thinking>…</thinking>\nend if\n-->\n━━━━━━━━━━━━━━━`;
+            }
+
+            if (trailingInstructions) {
+                if (lastUserIdx >= 0 && typeof fullMessages[lastUserIdx].content === 'string') {
+                    fullMessages[lastUserIdx].content += trailingInstructions;
+                } else {
+                    fullMessages.push({ role: 'user', content: `[系统执行指令]${trailingInstructions}` });
+                }
+            }
+
             if (usePrefill) {
                 fullMessages.push({ role: 'assistant', content: '<thinking>' });
                 console.log('🧩 [Prefill] Injected <thinking> prefill assistant message');

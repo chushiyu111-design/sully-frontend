@@ -51,6 +51,7 @@ export interface LLMDecision {
 }
 
 export interface AgentConfig {
+    enabled: boolean;
     minIntervalMin: number;
     maxIntervalMin: number;
     cooldownHours: number;
@@ -91,6 +92,7 @@ type ContextSnapshot = {
 };
 
 const AGENT_CONFIG_DEFAULTS: AgentConfig = {
+    enabled: true,
     minIntervalMin: 15,
     maxIntervalMin: 40,
     cooldownHours: 2,
@@ -162,6 +164,7 @@ export function normalizeAgentConfig(value?: Partial<AgentConfig> | null): Agent
         0.95,
         AGENT_CONFIG_DEFAULTS.baseProb,
     );
+    merged.enabled = merged.enabled !== false;
     merged.notificationsEnabled = merged.notificationsEnabled !== false;
     merged.debugMode = merged.debugMode === true;
     merged.debugIntervalSec = Math.round(clampAgentNumber(

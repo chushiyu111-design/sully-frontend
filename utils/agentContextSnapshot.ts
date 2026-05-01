@@ -1,7 +1,6 @@
 import type { CharacterProfile } from '../types';
 
 const DEFAULT_MAX_BLOCK_LENGTH = 1200;
-const DEFAULT_WORLDBOOK_LIMIT = 5;
 const DEFAULT_REFINED_MEMORY_LIMIT = 6;
 
 function collapseWhitespace(value: string): string {
@@ -35,25 +34,23 @@ function stableSerialize(value: unknown): string {
 
 export function buildMountedWorldbooksDigest(
     mountedWorldbooks: CharacterProfile['mountedWorldbooks'],
-    options: { maxItems?: number; maxLength?: number } = {},
+    _options: { maxItems?: number; maxLength?: number } = {},
 ): string | undefined {
     if (!mountedWorldbooks || mountedWorldbooks.length === 0) return undefined;
 
-    const maxItems = options.maxItems ?? DEFAULT_WORLDBOOK_LIMIT;
-    const maxLength = options.maxLength ?? DEFAULT_MAX_BLOCK_LENGTH;
-
     const digest = mountedWorldbooks
-        .slice(0, maxItems)
         .map((book, index) => {
-            const title = truncate(book.title || `Worldbook ${index + 1}`, 50);
-            const content = truncate(book.content || '', 220);
-            const category = book.category ? ` [${truncate(book.category, 24)}]` : '';
-            return content ? `${title}${category}: ${content}` : `${title}${category}`;
+            const title = collapseWhitespace(book.title || `Worldbook ${index + 1}`);
+            const category = collapseWhitespace(book.category || 'General');
+            const position = collapseWhitespace(book.position || 'after_worldview');
+            const content = String(book.content || '').trim();
+            const header = `### [${category}; position=${position}] ${title}`;
+            return content ? `${header}\n${content}` : header;
         })
         .filter(Boolean)
-        .join('\n');
+        .join('\n\n');
 
-    return digest ? truncate(digest, maxLength) : undefined;
+    return digest || undefined;
 }
 
 export function buildCoreMemoryDigest(

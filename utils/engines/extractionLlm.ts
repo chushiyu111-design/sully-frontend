@@ -10,6 +10,24 @@ export interface ExtractResult {
     reason?: string;
 }
 
+async function readLlmErrorDetail(response: Response): Promise<string> {
+    try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const data = await response.json();
+            const detail = data?.error?.message || data?.message || data?.error || data?.msg;
+            if (typeof detail === 'string') return detail;
+            if (detail) return JSON.stringify(detail);
+            return JSON.stringify(data);
+        }
+
+        const text = await response.text();
+        return text.trim();
+    } catch {
+        return '';
+    }
+}
+
 export function buildExtractionPrompt(
     charName: string,
     existingHeaders: { id: string; title: string; content?: string; importance: number }[],
@@ -101,7 +119,9 @@ export async function callLLM(
         });
 
         if (!response.ok) {
-            throw new Error(`LLM API error ${response.status}`);
+            const detail = await readLlmErrorDetail(response);
+            const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+            throw new Error(`LLM API error ${response.status}${suffix}`);
         }
 
         const data = await response.json();

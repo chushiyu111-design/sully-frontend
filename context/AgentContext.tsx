@@ -6,10 +6,7 @@ import {
 } from '../utils/autonomousAgent';
 import { didCharacterContextRelevantFieldsChange } from '../utils/agentContextSnapshot';
 import { disablePushSubscription,initPushSubscription } from '../utils/pushSubscription';
-import {
-    getPrimaryApiConfig as getRuntimePrimaryApiConfig,
-    getSecondaryApiConfig as getRuntimeSecondaryApiConfig,
-} from '../utils/runtimeConfig';
+import { getSecondaryApiConfig as getRuntimeSecondaryApiConfig } from '../utils/runtimeConfig';
 import { consumeCharacterUpdateOptions,useCharacter } from './CharacterContext';
 import { useConfig } from './ConfigContext';
 
@@ -35,15 +32,16 @@ const toAgentApiConfig = (
 };
 
 const getAgentStartApiConfig = (): SecondaryApiConfig | undefined => {
-    const secondaryApi = toAgentApiConfig(getRuntimeSecondaryApiConfig());
-    const primaryApi = toAgentApiConfig(getRuntimePrimaryApiConfig());
-    return secondaryApi || primaryApi;
+    return toAgentApiConfig(getRuntimeSecondaryApiConfig());
 };
 
 export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { characters, activeCharacterId, isCharacterDataLoaded } = useCharacter();
     const { isConfigLoaded } = useConfig();
     const [agentReloadCounter, setAgentReloadCounter] = useState(0);
+    const [agentEnabled, setAgentEnabled] = useState(
+        () => getAgentConfig().enabled,
+    );
     const [notificationsEnabled, setNotificationsEnabled] = useState(
         () => getAgentConfig().notificationsEnabled,
     );
@@ -57,15 +55,17 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     useEffect(() => {
         const handler = () => {
+            const nextConfig = getAgentConfig();
             setAgentReloadCounter(count => count + 1);
-            setNotificationsEnabled(getAgentConfig().notificationsEnabled);
+            setAgentEnabled(nextConfig.enabled);
+            setNotificationsEnabled(nextConfig.notificationsEnabled);
         };
         window.addEventListener('agent-config-changed', handler);
         return () => window.removeEventListener('agent-config-changed', handler);
     }, []);
 
     useEffect(() => {
-        if (!isAgentReady || !activeCharacterId) return;
+        if (!isAgentReady || !agentEnabled || !activeCharacterId) return;
 
         const char = activeCharacterRef.current;
         if (!char) return;
@@ -107,13 +107,13 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 console.warn('[Agent] Failed to stop backend agent safely during cleanup:', error);
             }
         };
-    }, [isAgentReady, activeCharacterId, agentReloadCounter]);
+    }, [isAgentReady, agentEnabled, activeCharacterId, agentReloadCounter]);
 
     useEffect(() => {
         const previousCharacter = previousActiveCharacterRef.current;
         previousActiveCharacterRef.current = activeCharacter;
 
-        if (!isAgentReady || !activeCharacter) return;
+        if (!isAgentReady || !agentEnabled || !activeCharacter) return;
         if (!previousCharacter || previousCharacter.id !== activeCharacter.id) return;
         if (previousCharacter === activeCharacter) return;
 
@@ -132,11 +132,11 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         managerRef.current?.pushContext(activeCharacter).catch((error) => {
             console.warn('[Agent] Failed to push refreshed character context:', error);
         });
-    }, [activeCharacter, isAgentReady]);
+    }, [activeCharacter, agentEnabled, isAgentReady]);
 
     useEffect(() => {
         if (!isAgentReady) return;
-        if (!notificationsEnabled) {
+        if (!agentEnabled || !notificationsEnabled) {
             disablePushSubscription().catch(err => {
                 console.warn('[Push] Disable failed:', err.message || err);
             });
@@ -150,10 +150,10 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }, 3000);
 
         return () => clearTimeout(timer);
-    }, [isAgentReady, notificationsEnabled]);
+    }, [isAgentReady, agentEnabled, notificationsEnabled]);
 
     useEffect(() => {
-        if (!isAgentReady || !notificationsEnabled) return;
+        if (!isAgentReady || !agentEnabled || !notificationsEnabled) return;
 
         const refreshPushSubscription = () => {
             if (document.visibilityState !== 'visible') return;
@@ -170,7 +170,7 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             document.removeEventListener('visibilitychange', refreshPushSubscription);
             window.removeEventListener('pageshow', refreshPushSubscription);
         };
-    }, [isAgentReady, notificationsEnabled]);
+    }, [isAgentReady, agentEnabled, notificationsEnabled]);
 
     return (
         <AgentContext.Provider value={{}}>

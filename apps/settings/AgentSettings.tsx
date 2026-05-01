@@ -90,6 +90,33 @@ const AgentSettings: React.FC = () => {
                 )}
             </section>
 
+            {/* 总开关 */}
+            <section className="bg-[#eef7f3]/60 backdrop-blur-sm p-5 rounded-3xl border border-[#d7eadf]/50">
+                <div className="flex items-center justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-bold text-[#6f9f84]">启用自律代理</span>
+                        </div>
+                        <p className="text-[10px] text-[#8da99a] leading-relaxed max-w-[250px]">
+                            关闭后角色不会主动检查、主动发消息或初始化相关推送逻辑。副 API 未配置完整时，即使开启也不会启动。
+                        </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                            type="checkbox"
+                            checked={config.enabled}
+                            onChange={e => {
+                                haptic.medium();
+                                update({ enabled: e.target.checked });
+                            }}
+                            aria-label="启用自律代理"
+                            className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7faa95]"></div>
+                    </label>
+                </div>
+            </section>
+
             {/* 检查间隔 */}
             <section className="bg-[#fef5e7]/50 backdrop-blur-sm p-5 rounded-3xl space-y-4 border border-[#f0e4d7]/40">
                 <div className="flex items-center gap-2 mb-1">

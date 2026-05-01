@@ -302,6 +302,22 @@ function pauseInternal(): void {
     syncStateFromAudio({ isPlaying: false });
 }
 
+function stopInternal(): void {
+    currentRequestId += 1;
+
+    const audio = getAudio();
+    if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+    }
+
+    updateState((state) => ({
+        ...initialState,
+        volume: state.volume,
+    }));
+}
+
 async function resumeInternal(): Promise<void> {
     const audio = getAudio();
     if (!audio?.src) return;
@@ -419,6 +435,7 @@ export function useAudioPlayer() {
         ...state,
         playSong: playSongInternal,
         pause: pauseInternal,
+        stop: stopInternal,
         resume: resumeInternal,
         togglePlay: togglePlayInternal,
         seek: seekInternal,

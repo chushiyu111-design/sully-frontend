@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DynamicIsland from './DynamicIsland';
 import { useApp } from '../../context/AppContext';
 import type { AppContextType } from '../../context/AppContext';
@@ -101,6 +101,7 @@ function buildAudioPlayer(overrides: Partial<AudioPlayerApi> = {}): AudioPlayerA
         lastActivityAt: 0,
         playSong: vi.fn(async () => undefined),
         pause: vi.fn(),
+        stop: vi.fn(),
         resume: vi.fn(async () => undefined),
         togglePlay: vi.fn(),
         seek: vi.fn(),
@@ -119,6 +120,10 @@ describe('DynamicIsland', () => {
         mockedUseDominantColor.mockReturnValue(null);
     });
 
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('uses memory record cover images in the capsule player', () => {
         const playable = buildMemoryRecord();
         mockedUseAudioPlayer.mockReturnValue(buildAudioPlayer({
@@ -135,5 +140,78 @@ describe('DynamicIsland', () => {
         expect(cover?.style.backgroundImage).toContain(playable.coverImageUrl);
         expect(screen.queryByText('♪')).toBeNull();
         expect(mockedUseDominantColor).toHaveBeenCalledWith(playable.coverImageUrl);
+    });
+
+    it('stops playback after a sustained capsule long press', () => {
+        vi.useFakeTimers();
+        const stop = vi.fn();
+        mockedUseAudioPlayer.mockReturnValue(buildAudioPlayer({
+            currentSong: buildMemoryRecord(),
+            isPlaying: true,
+            stop,
+        }));
+
+        render(<DynamicIsland />);
+
+        const capsule = document.querySelector('.di-capsule') as HTMLElement | null;
+        expect(capsule).not.toBeNull();
+
+        act(() => {
+            fireEvent.pointerDown(capsule!, { clientX: 20, clientY: 20 });
+            vi.advanceTimersByTime(649);
+        });
+        expect(stop).not.toHaveBeenCalled();
+
+        act(() => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not stop playback when the capsule press ends before the long-press threshold', () => {
+        vi.useFakeTimers();
+        const stop = vi.fn();
+        mockedUseAudioPlayer.mockReturnValue(buildAudioPlayer({
+            currentSong: buildMemoryRecord(),
+            isPlaying: true,
+            stop,
+        }));
+
+        render(<DynamicIsland />);
+
+        const capsule = document.querySelector('.di-capsule') as HTMLElement | null;
+        expect(capsule).not.toBeNull();
+
+        act(() => {
+            fireEvent.pointerDown(capsule!, { clientX: 20, clientY: 20 });
+            vi.advanceTimersByTime(300);
+            fireEvent.pointerUp(capsule!, { clientX: 20, clientY: 20 });
+            vi.advanceTimersByTime(350);
+        });
+
+        expect(stop).not.toHaveBeenCalled();
+    });
+
+    it('cancels the capsule long press when the pointer moves too far', () => {
+        vi.useFakeTimers();
+        const stop = vi.fn();
+        mockedUseAudioPlayer.mockReturnValue(buildAudioPlayer({
+            currentSong: buildMemoryRecord(),
+            isPlaying: true,
+            stop,
+        }));
+
+        render(<DynamicIsland />);
+
+        const capsule = document.querySelector('.di-capsule') as HTMLElement | null;
+        expect(capsule).not.toBeNull();
+
+        act(() => {
+            fireEvent.pointerDown(capsule!, { clientX: 20, clientY: 20 });
+            fireEvent.pointerMove(capsule!, { clientX: 33, clientY: 20 });
+            vi.advanceTimersByTime(650);
+        });
+
+        expect(stop).not.toHaveBeenCalled();
     });
 });

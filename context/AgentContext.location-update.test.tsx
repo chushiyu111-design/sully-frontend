@@ -13,7 +13,7 @@ const runtimeConfigMocks = vi.hoisted(() => ({
 }));
 const agentMocks = vi.hoisted(() => ({
     disconnectFrontend: vi.fn(),
-    getAgentConfig: vi.fn(() => ({ notificationsEnabled: false })),
+    getAgentConfig: vi.fn(() => ({ enabled: true, notificationsEnabled: false })),
     pushContext: vi.fn(() => Promise.resolve()),
     start: vi.fn(),
     stop: vi.fn(),
@@ -72,6 +72,7 @@ describe('AgentContext location updates', () => {
         mockUseCharacter.mockImplementation(() => characterState);
         mockUseConfig.mockReturnValue({ isConfigLoaded: true });
         mockConsumeCharacterUpdateOptions.mockReturnValue(null);
+        agentMocks.getAgentConfig.mockReturnValue({ enabled: true, notificationsEnabled: false });
         runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
             apiKey: '',
             baseUrl: '',
@@ -109,7 +110,20 @@ describe('AgentContext location updates', () => {
         );
     });
 
-    it('starts backend agent with the primary API when secondary API is missing', () => {
+    it('does not start backend agent when autonomous agent is disabled', () => {
+        agentMocks.getAgentConfig.mockReturnValue({ enabled: false, notificationsEnabled: false });
+
+        render(
+            <AgentProvider>
+                <div>child</div>
+            </AgentProvider>,
+        );
+
+        expect(agentMocks.start).not.toHaveBeenCalled();
+        expect(runtimeConfigMocks.getSecondaryApiConfig).not.toHaveBeenCalled();
+    });
+
+    it('does not start backend agent with the primary API when secondary API is missing', () => {
         runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
             apiKey: 'main-key',
             baseUrl: 'https://main.example.com',
@@ -123,20 +137,21 @@ describe('AgentContext location updates', () => {
             </AgentProvider>,
         );
 
-        expect(agentMocks.start).toHaveBeenCalledTimes(1);
-        expect(agentMocks.start).toHaveBeenCalledWith(
-            'char-1',
-            baseCharacter,
-            {
-                apiKey: 'main-key',
-                baseUrl: 'https://main.example.com',
-                model: 'gpt-main',
-            },
-        );
+        expect(agentMocks.start).not.toHaveBeenCalled();
+        expect(runtimeConfigMocks.getPrimaryApiConfig).not.toHaveBeenCalled();
     });
 
-    it('does not start backend agent when neither primary nor secondary API is complete', () => {
-        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue(undefined);
+    it('does not start backend agent when the secondary API is incomplete even if primary is configured', () => {
+        runtimeConfigMocks.getPrimaryApiConfig.mockReturnValue({
+            apiKey: 'main-key',
+            baseUrl: 'https://main.example.com',
+            model: 'gpt-main',
+        });
+        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue({
+            apiKey: 'sub-key',
+            baseUrl: 'https://sub.example.com',
+            model: '',
+        });
 
         render(
             <AgentProvider>
@@ -145,6 +160,7 @@ describe('AgentContext location updates', () => {
         );
 
         expect(agentMocks.start).not.toHaveBeenCalled();
+        expect(runtimeConfigMocks.getPrimaryApiConfig).not.toHaveBeenCalled();
     });
 
     it('does not push agent context immediately for location updates marked to skip', async () => {

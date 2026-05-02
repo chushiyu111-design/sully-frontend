@@ -42,6 +42,8 @@ export type AgentBackendMessage = {
     content: string;
     created_at?: number;
     createdAt?: number;
+    target_client_id?: string | null;
+    targetClientId?: string | null;
     metadata?: string | Record<string, unknown> | null;
 };
 

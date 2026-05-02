@@ -25,6 +25,11 @@ export const BACKEND_URL_KEY = 'csyos_backend_url';
 export const BACKEND_TOKEN_KEY = 'csyos_backend_token';
 export const HEALTH_CACHE_KEY = 'csyos_backend_alive';
 const USER_ID_KEY = 'csyos_user_id';
+export const CLIENT_ID_KEY = 'csyos_client_id';
+
+export type SetUserIdOptions = {
+    source: 'manual';
+};
 
 type EnvMap = Record<string, string | undefined>;
 type BackendQueryValue = string | number | boolean | null | undefined;
@@ -262,7 +267,32 @@ export function getUserId(): string {
     return id;
 }
 
-export function setUserId(id: string): void {
+export function getClientId(): string {
+    let id = safeLocalStorageGet(CLIENT_ID_KEY);
+    if (!id) {
+        let uuid: string;
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            uuid = crypto.randomUUID();
+        } else {
+            uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+                const rand = Math.random() * 16 | 0;
+                const value = char === 'x' ? rand : (rand & 0x3 | 0x8);
+                return value.toString(16);
+            });
+        }
+        id = `csy-client-${uuid}`;
+        safeLocalStorageSet(CLIENT_ID_KEY, id);
+        console.log(`[Identity] Generated new Client ID: ${id}`);
+    }
+    return id;
+}
+
+export function setUserId(id: string, options: SetUserIdOptions): void {
+    if (options?.source !== 'manual') {
+        console.warn('[Identity] Ignored non-manual Sync Code update.');
+        return;
+    }
+
     const trimmed = id.trim();
     if (trimmed) {
         safeLocalStorageSet(USER_ID_KEY, trimmed);
@@ -328,6 +358,7 @@ export function buildBackendHeaders(options: {
     }
 
     headers['X-User-Id'] = sanitizeBackendHeader(getUserId());
+    headers['X-Client-Id'] = sanitizeBackendHeader(getClientId());
 
     if (options.extra) {
         for (const [key, value] of Object.entries(options.extra)) {
@@ -341,6 +372,7 @@ export function buildBackendHeaders(options: {
 export function buildBackendAuthQuery(options: {
     tokenKey?: string;
     userIdKey?: string;
+    clientIdKey?: string;
 } = {}): string {
     const params = new URLSearchParams();
     const token = getBackendToken();
@@ -348,5 +380,6 @@ export function buildBackendAuthQuery(options: {
         params.set(options.tokenKey || 'token', token);
     }
     params.set(options.userIdKey || 'userId', getUserId());
+    params.set(options.clientIdKey || '_clientId', getClientId());
     return params.toString();
 }

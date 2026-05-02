@@ -9,6 +9,7 @@ import {
     type WeixinQrResponse,
     type WeixinQrStatus,
 } from '../../utils/backendClient';
+import { DB } from '../../utils/db';
 
 interface CharacterWeixinBindingCardProps {
     charId: string;
@@ -208,7 +209,8 @@ const CharacterWeixinBindingCard: React.FC<CharacterWeixinBindingCardProps> = me
 
         try {
             const bindings = await listWeixinBindings();
-            const nextBinding = bindings.find(item => item.charId === charId) || null;
+            const contentCharId = await DB.resolveCharacterContentId(charId);
+            const nextBinding = bindings.find(item => item.charId === contentCharId || item.charId === charId) || null;
             setBinding(nextBinding);
             setLoadState('ready');
             setLoadError('');

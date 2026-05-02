@@ -100,6 +100,10 @@ export interface MoodState {
 
 export interface CharacterProfile {
     id: string;
+    /** Stable personal instance key used for chat/memory/cloud ownership. */
+    charInstanceId?: string;
+    /** Original template/preset ID used for compatibility, e.g. preset-sully-v2. */
+    templateCharId?: string;
     name: string;
     avatar: string;
     description: string;

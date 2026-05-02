@@ -1,7 +1,7 @@
 
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 39; // Bumped for Memory Record stores
+const DB_VERSION = 41; // Bumped for per-character instance ownership
 
 export const STORE_CHARACTERS = 'characters';
 export const STORE_MESSAGES = 'messages';
@@ -37,6 +37,7 @@ export const STORE_MEMORY_RECORD_AUDIO = 'memory_record_audio';
 export interface ScheduledMessage {
     id: string;
     charId: string;
+    ownerUserId?: string;
     role?: 'user' | 'assistant';
     content: string;
     dueAt: number;
@@ -83,11 +84,17 @@ export const openDB = (): Promise<IDBDatabase> => {
                 const msgStore = db.createObjectStore(STORE_MESSAGES, { keyPath: 'id', autoIncrement: true });
                 msgStore.createIndex('charId', 'charId', { unique: false });
                 msgStore.createIndex('groupId', 'groupId', { unique: false });
+                msgStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
             } else {
                 const msgStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_MESSAGES);
                 if (msgStore && !msgStore.indexNames.contains(STORE_MESSAGES) && !msgStore.indexNames.contains('groupId')) {
                     try {
                         msgStore.createIndex('groupId', 'groupId', { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
+                if (msgStore && !msgStore.indexNames.contains('ownerUserIdCharId')) {
+                    try {
+                        msgStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
                     } catch (e) { console.log('Index already exists'); }
                 }
             }
@@ -101,6 +108,14 @@ export const openDB = (): Promise<IDBDatabase> => {
             if (!db.objectStoreNames.contains(STORE_SCHEDULED)) {
                 const schedStore = db.createObjectStore(STORE_SCHEDULED, { keyPath: 'id' });
                 schedStore.createIndex('charId', 'charId', { unique: false });
+                schedStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
+            } else {
+                const schedStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_SCHEDULED);
+                if (schedStore && !schedStore.indexNames.contains('ownerUserIdCharId')) {
+                    try {
+                        schedStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
             }
 
             if (!db.objectStoreNames.contains(STORE_GALLERY)) {
@@ -154,6 +169,13 @@ export const openDB = (): Promise<IDBDatabase> => {
             if (!db.objectStoreNames.contains(STORE_VECTOR_MEMORIES)) {
                 const vmStore = db.createObjectStore(STORE_VECTOR_MEMORIES, { keyPath: 'id' });
                 vmStore.createIndex('charId', 'charId', { unique: false });
+            } else {
+                const vmStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_VECTOR_MEMORIES);
+                if (vmStore && !vmStore.indexNames.contains('charId')) {
+                    try {
+                        vmStore.createIndex('charId', 'charId', { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
             }
 
             if (!db.objectStoreNames.contains(STORE_MEMORY_RECORDS)) {
@@ -161,6 +183,23 @@ export const openDB = (): Promise<IDBDatabase> => {
                 recordStore.createIndex('charId', 'charId', { unique: false });
                 recordStore.createIndex('status', 'status', { unique: false });
                 recordStore.createIndex('createdAt', 'createdAt', { unique: false });
+            } else {
+                const recordStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_MEMORY_RECORDS);
+                if (recordStore && !recordStore.indexNames.contains('charId')) {
+                    try {
+                        recordStore.createIndex('charId', 'charId', { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
+                if (recordStore && !recordStore.indexNames.contains('status')) {
+                    try {
+                        recordStore.createIndex('status', 'status', { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
+                if (recordStore && !recordStore.indexNames.contains('createdAt')) {
+                    try {
+                        recordStore.createIndex('createdAt', 'createdAt', { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
             }
 
             if (!db.objectStoreNames.contains(STORE_MEMORY_RECORD_AUDIO)) {

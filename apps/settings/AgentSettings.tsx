@@ -243,6 +243,19 @@ const AgentSettings: React.FC = () => {
                         <span className="text-[#8b7e74] font-bold">订阅状态</span>
                         <span className="text-[#a89b91] break-all">{pushInfo.status || '未初始化'}</span>
 
+                        <span className="text-[#8b7e74] font-bold">推送通道</span>
+                        <span className="text-[#a89b91] break-all">{pushInfo.provider || '未知'}</span>
+
+                        <span className="text-[#8b7e74] font-bold">离线能力</span>
+                        <span className={pushInfo.offlineCapable ? 'text-[#6f9f84] font-bold' : 'text-[#c4929f] font-bold'}>
+                            {pushInfo.offlineCapable ? '可进入系统通知栏' : '未确认或不可用'}
+                        </span>
+
+                        <span className="text-[#8b7e74] font-bold">修复建议</span>
+                        <span className="text-[#a89b91] break-all">
+                            {pushInfo.needsResubscribe ? '需要重新初始化或更换支持的浏览器' : '暂无'}
+                        </span>
+
                         <span className="text-[#8b7e74] font-bold">订阅端点</span>
                         <span className="text-[#a89b91] break-all">{pushInfo.endpoint || '暂无'}</span>
 

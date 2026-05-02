@@ -4,9 +4,13 @@ import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import {
   BACKEND_TOKEN_KEY,
   BACKEND_URL_KEY,
+  buildBackendAuthQuery,
+  buildBackendHeaders,
+  getClientId,
   getBackendResolutionDebug,
   getBackendToken,
   getBackendUrl,
+  setUserId,
 } from './backendConfig';
 
 describe('backendConfig', () => {
@@ -52,5 +56,31 @@ describe('backendConfig', () => {
         expect(debug.backendUrlSource).toBe('build_env');
         expect(debug.hasBackendToken).toBe(true);
         expect(debug.backendTokenSource).toBe('build_env');
+    });
+
+    it('keeps a stable local client id and sends it with backend requests', () => {
+        localStorage.setItem('csyos_user_id', 'csy-user-a');
+        const clientId = getClientId();
+
+        expect(clientId).toMatch(/^csy-client-/);
+        expect(getClientId()).toBe(clientId);
+
+        const headers = buildBackendHeaders();
+        expect(headers['X-Client-Id']).toBe(clientId);
+
+        const params = new URLSearchParams(buildBackendAuthQuery());
+        expect(params.get('_clientId')).toBe(clientId);
+        expect(params.get('userId')).toBe('csy-user-a');
+    });
+
+    it('only changes the sync code through the explicit manual path', () => {
+        localStorage.setItem('csyos_user_id', 'csy-user-original');
+
+        const unsafeSetUserId = setUserId as unknown as (id: string, options?: { source?: string }) => void;
+        unsafeSetUserId('csy-user-from-import');
+        expect(localStorage.getItem('csyos_user_id')).toBe('csy-user-original');
+
+        setUserId('csy-user-manual', { source: 'manual' });
+        expect(localStorage.getItem('csyos_user_id')).toBe('csy-user-manual');
     });
 });

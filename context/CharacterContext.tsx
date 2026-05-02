@@ -1,8 +1,10 @@
 import React,{ createContext,useContext,useEffect,useState } from 'react';
 import { CharacterProfile,GroupProfile,Worldbook,NovelBook } from '../types';
 import { DB } from '../utils/db';
+import { migrateCloudCharacterInstance } from '../utils/backendClient';
 import { preloadImages } from '../utils/preloadResources';
 import { useNotification } from './NotificationContext';
+import { ensureCharacterInstanceId, generateCharInstanceId } from '../utils/characterIdentity';
 
 export interface CharacterUpdateOptions {
     skipImmediateAgentContextPush?: boolean;
@@ -155,6 +157,23 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                 }
 
                 if (finalChars.length > 0) {
+                    const migratedChars: CharacterProfile[] = [];
+                    for (const character of finalChars) {
+                        const hadInstanceId = typeof character.charInstanceId === 'string' && character.charInstanceId.trim().length > 0;
+                        const nextCharacter = ensureCharacterInstanceId(character);
+                        migratedChars.push(nextCharacter);
+                        if (
+                            nextCharacter.charInstanceId !== character.charInstanceId
+                            || nextCharacter.templateCharId !== character.templateCharId
+                        ) {
+                            await DB.saveCharacter(nextCharacter);
+                        }
+                        if (!hadInstanceId && nextCharacter.charInstanceId && nextCharacter.charInstanceId !== character.id) {
+                            await DB.migrateLocalCharacterContentToInstance(character.id, nextCharacter.charInstanceId);
+                            void migrateCloudCharacterInstance(character.id, nextCharacter.charInstanceId);
+                        }
+                    }
+                    finalChars = migratedChars;
                     setCharacters(finalChars);
                     const lastActiveId = localStorage.getItem('os_last_active_char_id');
                     if (lastActiveId && finalChars.find(c => c.id === lastActiveId)) {
@@ -165,10 +184,15 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                         setActiveCharacterIdState(finalChars[0].id);
                     }
                 } else {
-                    await DB.saveCharacter(initialCharacter);
-                    finalChars = [initialCharacter];
+                    const initialWithInstance = ensureCharacterInstanceId(initialCharacter);
+                    await DB.saveCharacter(initialWithInstance);
+                    await DB.migrateLocalCharacterContentToInstance(initialCharacter.id, initialWithInstance.charInstanceId || initialCharacter.id);
+                    if (initialWithInstance.charInstanceId) {
+                        void migrateCloudCharacterInstance(initialCharacter.id, initialWithInstance.charInstanceId);
+                    }
+                    finalChars = [initialWithInstance];
                     setCharacters(finalChars);
-                    setActiveCharacterIdState(initialCharacter.id);
+                    setActiveCharacterIdState(initialWithInstance.id);
                 }
 
                 setGroups(dbGroups);
@@ -205,8 +229,11 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
 
     const addCharacter = async () => {
         const name = 'New Character';
+        const id = `char-${Date.now()}`;
         const newChar: CharacterProfile = {
-            id: `char-${Date.now()}`,
+            id,
+            charInstanceId: generateCharInstanceId(),
+            templateCharId: id,
             name,
             avatar: generateAvatar(name),
             description: '点击编辑设定...',

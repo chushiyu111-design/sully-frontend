@@ -97,16 +97,18 @@ describe('vectorMemoryExtractor memory context selection', () => {
         saveCharacter.mockResolvedValue(undefined);
     });
 
-    it('keeps only the newest active 100 memory headers for extraction prompts', () => {
+    it('keeps only the newest active memory headers for extraction prompts', () => {
         const headers = Array.from({ length: 150 }, (_, index) => makeHeader(index));
         const selected = selectExtractionMemoryHeaders([
             ...headers,
             makeHeader(999, { deprecated: true }),
         ]);
 
-        expect(selected).toHaveLength(VECTOR_EXTRACTION_MEMORY_CONTEXT_LIMIT);
+        expect(selected).toHaveLength(Math.min(150, VECTOR_EXTRACTION_MEMORY_CONTEXT_LIMIT));
         expect(selected[0].id).toBe('mem-149');
-        expect(selected[selected.length - 1].id).toBe('mem-50');
+        expect(selected[selected.length - 1].id).toBe(
+            `mem-${Math.max(0, 150 - VECTOR_EXTRACTION_MEMORY_CONTEXT_LIMIT)}`,
+        );
         expect(selected.some(header => header.id === 'mem-999')).toBe(false);
     });
 
@@ -140,8 +142,9 @@ describe('vectorMemoryExtractor memory context selection', () => {
 
         expect(memoryLineCount).toBe(VECTOR_EXTRACTION_MEMORY_CONTEXT_LIMIT);
         expect(prompt).toContain('[ID:mem-2999]');
-        expect(prompt).toContain('[ID:mem-2900]');
-        expect(prompt).not.toContain('[ID:mem-2899]');
+        const lastIncluded = 3000 - VECTOR_EXTRACTION_MEMORY_CONTEXT_LIMIT;
+        expect(prompt).toContain(`[ID:mem-${lastIncluded}]`);
+        expect(prompt).not.toContain(`[ID:mem-${lastIncluded - 1}]`);
         expect(processResult).not.toHaveBeenCalled();
         expect(releaseExtractionLock).toHaveBeenCalledWith('char-1');
     });

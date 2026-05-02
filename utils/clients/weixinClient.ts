@@ -1,4 +1,5 @@
 import { buildBackendUrl, buildHeaders, readBackendPayload } from './backendCore';
+import { resolveCharacterContentId } from '../db/characterStore';
 
 export type WeixinBindingStatus = 'active' | 'disconnected' | 'login_required' | 'disabled';
 export type WeixinQrStatus = 'wait' | 'scaned' | 'confirmed' | 'expired';
@@ -62,9 +63,10 @@ export async function listWeixinBindings(): Promise<WeixinBinding[]> {
 }
 
 export async function generateWeixinQr(charId: string, charName: string): Promise<WeixinQrResponse> {
+    const contentCharId = await resolveCharacterContentId(charId);
     return requestWeixin<WeixinQrResponse>('/api/weixin/qr', {
         method: 'POST',
-        body: JSON.stringify({ charId, charName }),
+        body: JSON.stringify({ charId: contentCharId, charName }),
     });
 }
 

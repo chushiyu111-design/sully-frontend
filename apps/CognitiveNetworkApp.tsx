@@ -2,29 +2,24 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
-import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars } from '../utils/backendClient';
+import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars,migrateCloudCharacterInstance } from '../utils/backendClient';
 import { DB } from '../utils/db';
 import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
+import { getCharacterContentId } from '../utils/characterIdentity';
+import { findCharacterByAnyId,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
+import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
 import { MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,shouldGenerateMemoryRecordMonologue,generateLyrics,checkLyricSingability,optimizeLyrics,generateStylePrompt,createRecordId,COVER_GRADIENTS,type MemoryRecordMemoryHeader,type SingabilityCheckResult,type StylePromptResult } from '../utils/memoryRecordService';
 import { getMemoryRecordCoverImage } from '../utils/memoryRecordCovers';
 import { hasPlayableMemoryRecordAudio,memoryRecordToPlayable } from '../utils/memoryRecordPlayable';
-import type { MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
+import type { CharacterProfile,MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
 import { MEMORY_RECORD_STATUS_LABELS } from '../types';
 
 /* Recovered comment */
 
-interface CharStats {
-    charId: string;
-    memories: number;
-    relations: number;
-    temporalEdges: number;
-    semanticEdges: number;
-    linkedCount: number;
-    unscannedCount: number;
-}
+type CharStats = CognitiveCharStats;
 
 interface PerCharStatsResponse {
     characters: CharStats[];
@@ -59,6 +54,20 @@ interface DistillResetStats {
     l1Deleted: number;
     l0Cleared: number;
     relationsCleared: number;
+}
+
+interface OrphanMemoryPreview {
+    id: string;
+    title: string;
+    content: string;
+    emotionalJourney?: string;
+    createdAt?: number;
+}
+
+interface OrphanPreviewState {
+    loading: boolean;
+    memories: OrphanMemoryPreview[];
+    error?: string;
 }
 
 interface DistillResult {
@@ -126,6 +135,35 @@ const createEmptyLyricsDraft = (): LyricsEditorDraft => ({
     revisionInstruction: '',
     lyricistReference: '',
 });
+
+const ORPHAN_PREVIEW_LIMIT = 3;
+
+function formatOrphanPreviewDate(timestamp?: number): string {
+    if (!timestamp) return '最近时间待确认';
+    const normalized = timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return '最近时间待确认';
+    const now = new Date();
+    const options: Intl.DateTimeFormatOptions = date.getFullYear() === now.getFullYear()
+        ? { month: 'numeric', day: 'numeric' }
+        : { year: 'numeric', month: 'numeric', day: 'numeric' };
+    return date.toLocaleDateString('zh-CN', options);
+}
+
+function getOrphanPreviewTitle(memory: OrphanMemoryPreview): string {
+    const title = memory.title?.trim();
+    return title || '未命名回忆';
+}
+
+function getOrphanPreviewSnippet(memory: OrphanMemoryPreview): string {
+    const text = (memory.emotionalJourney || memory.content || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '留下了一段还没归档的细节。';
+    return text.length > 46 ? `${text.slice(0, 46)}...` : text;
+}
+
+function getOrphanGroupLabel(index: number, total: number): string {
+    return total > 1 ? `第 ${index + 1} 组待归档回忆` : '一组待归档回忆';
+}
 
 function normalizeSongRequest(request: MemoryRecordSongRequest): MemoryRecordSongRequest {
     return {
@@ -227,17 +265,32 @@ const CognitiveNetworkApp: React.FC = () => {
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<{ pushed: number; pulled: number } | null>(null);
     const [syncUserId, setSyncUserId] = useState(() => getUserId());
+    const [claimingCloudCharId, setClaimingCloudCharId] = useState<string | null>(null);
+    const [claimDrawerCharId, setClaimDrawerCharId] = useState<string | null>(null);
+    const [claimTargetCharId, setClaimTargetCharId] = useState<string | null>(null);
+    const [orphanPreviews, setOrphanPreviews] = useState<Record<string, OrphanPreviewState>>({});
     const semanticAbortRef = React.useRef<AbortController | null>(null);
+    const orphanPreviewRequestsRef = React.useRef<Set<string>>(new Set());
 
     const charNameMap = useCallback((charId: string) => {
-        const found = characters.find(c => c.id === charId);
+        const found = findCharacterByAnyId(characters, charId);
         return found?.name || charId.slice(0, 12);
     }, [characters]);
 
     const charAvatarMap = useCallback((charId: string) => {
-        const found = characters.find(c => c.id === charId);
+        const found = findCharacterByAnyId(characters, charId);
         return found?.avatar || '';
     }, [characters]);
+
+    const selectedBrowserChar = useMemo(
+        () => findCharacterByAnyId(characters, selectedCharId),
+        [characters, selectedCharId]
+    );
+
+    const selectedBackendCharId = useMemo(() => {
+        if (!selectedCharId) return null;
+        return selectedBrowserChar ? getCharacterContentId(selectedBrowserChar) : selectedCharId;
+    }, [selectedBrowserChar, selectedCharId]);
 
     const authHeaders = useCallback(() => {
         const h = buildBackendHeaders();
@@ -292,28 +345,30 @@ const CognitiveNetworkApp: React.FC = () => {
     // Current selected character stats
     const currentStats = useMemo(() => {
         if (!allStats || allStats.characters.length === 0) return null;
-        if (!selectedCharId) {
-            // 姹囨€诲叏閮ㄨ鑹诧紱鍚庣鍙兘缂哄皯閮ㄥ垎瀛楁锛岄粯璁よˉ 0
-            return allStats.characters.reduce((acc, c) => ({
-                memories: acc.memories + (c.memories || 0),
-                relations: acc.relations + (c.relations || 0),
-                temporalEdges: acc.temporalEdges + (c.temporalEdges || 0),
-                semanticEdges: acc.semanticEdges + (c.semanticEdges || 0),
-                linkedCount: acc.linkedCount + (c.linkedCount || 0),
-                unscannedCount: acc.unscannedCount + (c.unscannedCount || 0),
-            }), { memories: 0, relations: 0, temporalEdges: 0, semanticEdges: 0, linkedCount: 0, unscannedCount: 0 });
-        }
-        const found = allStats.characters.find(c => c.charId === selectedCharId);
-        if (!found) return null;
-        // Fill missing fields with defaults
-        return {
-            ...found,
-            temporalEdges: found.temporalEdges || 0,
-            semanticEdges: found.semanticEdges || 0,
-            linkedCount: found.linkedCount || 0,
-            unscannedCount: found.unscannedCount || 0,
-        };
-    }, [allStats, selectedCharId]);
+        return getSelectedCharacterStats(allStats.characters, characters, selectedCharId);
+    }, [allStats, characters, selectedCharId]);
+
+    const orphanCloudStats = useMemo(
+        () => getOrphanCloudStats(allStats?.characters || [], characters),
+        [allStats, characters]
+    );
+
+    const orphanMemoryTotal = useMemo(
+        () => orphanCloudStats.reduce((sum, stat) => sum + (stat.memories || 0), 0),
+        [orphanCloudStats]
+    );
+
+    const activeClaimStat = useMemo(
+        () => orphanCloudStats.find(stat => stat.charId === claimDrawerCharId) || null,
+        [orphanCloudStats, claimDrawerCharId]
+    );
+
+    const claimTargetChar = useMemo(
+        () => findCharacterByAnyId(characters, claimTargetCharId),
+        [characters, claimTargetCharId]
+    );
+
+    const activeClaimPreview = claimDrawerCharId ? orphanPreviews[claimDrawerCharId] : undefined;
 
     // 鍒濇杩炴帴鍚庡彧鎷夊彇涓€娆＄粺璁★紝閬垮厤閲嶅璇锋眰
     const statsLoaded = React.useRef(false);
@@ -345,6 +400,52 @@ const CognitiveNetworkApp: React.FC = () => {
             setAllStats(prev => prev ?? { characters: [], graph: { nodes: 0, edges: 0 } });
         } finally { setLoading(false); }
     }, [authHeaders]);
+
+    const fetchOrphanPreview = useCallback(async (cloudCharId: string, options?: { retry?: boolean }) => {
+        const url = getBackendUrl();
+        const legacyCharId = cloudCharId.trim();
+        if (!url || !legacyCharId) return;
+
+        const existing = orphanPreviews[legacyCharId];
+        if (!options?.retry && (existing?.loading || existing?.memories.length || existing?.error)) return;
+        if (orphanPreviewRequestsRef.current.has(legacyCharId)) return;
+
+        orphanPreviewRequestsRef.current.add(legacyCharId);
+        setOrphanPreviews(prev => ({ ...prev, [legacyCharId]: { loading: true, memories: [] } }));
+        try {
+            const resp = await fetch(
+                `${url}/api/memories/${encodeURIComponent(legacyCharId)}/headers?limit=${ORPHAN_PREVIEW_LIMIT}`,
+                { headers: authHeaders(), signal: safeTimeoutSignal(15000) },
+            );
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const memories = Array.isArray(data.headers)
+                ? data.headers.slice(0, ORPHAN_PREVIEW_LIMIT).map((item: any) => {
+                    const createdAt = Number(item.createdAt);
+                    return {
+                        id: String(item.id || ''),
+                        title: String(item.title || ''),
+                        content: String(item.content || ''),
+                        emotionalJourney: item.emotionalJourney ? String(item.emotionalJourney) : undefined,
+                        createdAt: Number.isFinite(createdAt) ? createdAt : undefined,
+                    };
+                })
+                : [];
+            setOrphanPreviews(prev => ({ ...prev, [legacyCharId]: { loading: false, memories } }));
+        } catch (e: any) {
+            setOrphanPreviews(prev => ({
+                ...prev,
+                [legacyCharId]: { loading: false, memories: [], error: e?.message || 'preview failed' },
+            }));
+        } finally {
+            orphanPreviewRequestsRef.current.delete(legacyCharId);
+        }
+    }, [authHeaders, orphanPreviews]);
+
+    useEffect(() => {
+        if (!isConnected || orphanCloudStats.length === 0) return;
+        orphanCloudStats.slice(0, 4).forEach(stat => fetchOrphanPreview(stat.charId));
+    }, [fetchOrphanPreview, isConnected, orphanCloudStats]);
 
     const doBackfill = useCallback(async (dryRun: boolean) => {
         const url = getBackendUrl();
@@ -398,7 +499,7 @@ const CognitiveNetworkApp: React.FC = () => {
         for (let i = 0; i < total; i++) {
             try {
                 const processBody: any = {};
-                if (selectedCharId) processBody.charId = selectedCharId;
+                if (selectedBackendCharId) processBody.charId = selectedBackendCharId;
                 const timeoutSignal = safeTimeoutSignal(120_000);
                 // AbortSignal.any is Safari 17.4+; fall back to manual wiring
                 let combinedSignal: AbortSignal;
@@ -497,7 +598,7 @@ const CognitiveNetworkApp: React.FC = () => {
         if (semanticAbortRef.current === controller) semanticAbortRef.current = null;
 
         return { done, errors, totalRelations, aborted };
-    }, [authHeaders, addToast, selectedCharId]);
+    }, [authHeaders, addToast, selectedBackendCharId]);
 
     const doSemanticBackfill = useCallback(async (dryRun: boolean, forceRescan = false) => {
         const url = getBackendUrl();
@@ -510,7 +611,7 @@ const CognitiveNetworkApp: React.FC = () => {
         }
         try {
             const body: any = { dryRun, forceRescan };
-            if (selectedCharId) body.charId = selectedCharId;
+            if (selectedBackendCharId) body.charId = selectedBackendCharId;
             const resp = await fetch(`${url}/api/graph/backfill-semantic`, {
                 method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
             });
@@ -535,11 +636,11 @@ const CognitiveNetworkApp: React.FC = () => {
             fetchStats();
         } catch (e: any) { addToast(`寻找失败: ${e.message}`, 'error'); }
         finally { setSemanticRunning(false); setShowConfirm(prev => prev === 'semantic' ? null : prev); }
-    }, [authHeaders, addToast, selectedCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
 
     const doSemanticRebuild = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setSemanticRunning(true);
         setSemanticRebuilding(true);
         setQueueStatus(null);
@@ -548,13 +649,13 @@ const CognitiveNetworkApp: React.FC = () => {
             const resp = await fetch(`${url}/api/graph/semantic-rebuild`, {
                 method: 'POST',
                 headers: authHeaders(),
-                body: JSON.stringify({ charId: selectedCharId }),
+                body: JSON.stringify({ charId: selectedBackendCharId }),
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
             const result: SemanticRebuildResult = await resp.json();
             setSemanticRebuildResult({
-                charId: selectedCharId,
+                charId: selectedBackendCharId,
                 deleted: result.deleted,
                 reset: result.reset,
                 toProcess: result.toProcess,
@@ -586,19 +687,19 @@ const CognitiveNetworkApp: React.FC = () => {
             setSemanticRebuilding(false);
             setShowConfirm(prev => prev === 'semanticRebuild' ? null : prev);
         }
-    }, [authHeaders, addToast, selectedCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
 
     // Distillation 闇€瑕佸畬鏁?embedding 閰嶇疆锛屽洜姝や娇鐢?fullHeaders
     const doDistill = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setDistilling(true);
         setDistillResetStats(null);
         try {
-            const charName = charNameMap(selectedCharId);
+            const charName = charNameMap(selectedBackendCharId);
             const resp = await fetch(`${url}/api/distillation/run`, {
                 method: 'POST', headers: fullHeaders(),
-                body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
+                body: JSON.stringify({ charId: selectedBackendCharId, charName, userName: userProfile.name }),
             });
             if (!resp.ok) {
                 let detail = `HTTP ${resp.status}`;
@@ -619,18 +720,18 @@ const CognitiveNetworkApp: React.FC = () => {
             }
         } catch (e: any) { addToast(`凝结失败: ${e.message}`, 'error'); }
         finally { setDistilling(false); setShowConfirm(prev => prev === 'distill' ? null : prev); }
-    }, [fullHeaders, addToast, selectedCharId, charNameMap, fetchStats]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
 
     const doDistillRebuild = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setDistillRebuilding(true);
         try {
-            const charName = charNameMap(selectedCharId);
+            const charName = charNameMap(selectedBackendCharId);
             const resp = await fetch(`${url}/api/distillation/reset-and-run`, {
                 method: 'POST',
                 headers: fullHeaders(),
-                body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
+                body: JSON.stringify({ charId: selectedBackendCharId, charName, userName: userProfile.name }),
             });
             if (!resp.ok) {
                 let detail = `HTTP ${resp.status}`;
@@ -640,7 +741,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
             const result: DistillResult = await resp.json();
             setDistillResult(result);
-            setDistillResetStats(result.resetStats ? { charId: selectedCharId, ...result.resetStats } : null);
+            setDistillResetStats(result.resetStats ? { charId: selectedBackendCharId, ...result.resetStats } : null);
 
             if (result.l1Created > 0 || result.l1Merged > 0 || result.l1Deduped > 0) {
                 const parts: string[] = [];
@@ -659,19 +760,19 @@ const CognitiveNetworkApp: React.FC = () => {
             setDistillRebuilding(false);
             setShowConfirm(prev => prev === 'distillRebuild' ? null : prev);
         }
-    }, [fullHeaders, addToast, selectedCharId, charNameMap, fetchStats, userProfile.name]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
 
     // Memory browser
     const fetchBrowserMemories = useCallback(async (level?: 'all' | '0' | '1' | 'musing') => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setBrowserLoading(true);
         try {
             const lvl = level || browserLevel;
             // For 'musing', fetch all and filter client-side by source
             const apiLevel = (lvl === 'musing' || lvl === 'all') ? undefined : lvl;
             const params = apiLevel ? `?level=${apiLevel}` : '';
-            const resp = await fetch(`${url}/api/memories/browse/${selectedCharId}${params}`, { headers: authHeaders() });
+            const resp = await fetch(`${url}/api/memories/browse/${selectedBackendCharId}${params}`, { headers: authHeaders() });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             const allMemories = data.memories || [];
@@ -680,14 +781,14 @@ const CognitiveNetworkApp: React.FC = () => {
             setBrowserCounts({ total: data.count, l0: data.l0Count, l1: data.l1Count, musing: musingCount });
         } catch (e: any) { addToast(`载入失败: ${e.message}`, 'error'); }
         finally { setBrowserLoading(false); }
-    }, [authHeaders, selectedCharId, browserLevel, addToast]);
+    }, [authHeaders, selectedBackendCharId, browserLevel, addToast]);
 
     // Auto-fetch when switching to browser tab
     useEffect(() => {
-        if (activeTab === 'browser' && selectedCharId && !browserMemories) {
+        if (activeTab === 'browser' && selectedBackendCharId && !browserMemories) {
             fetchBrowserMemories();
         }
-    }, [activeTab, selectedCharId]);
+    }, [activeTab, selectedBackendCharId, browserMemories, fetchBrowserMemories]);
 
     const doSaveEdit = useCallback(async (memId: string) => {
         const url = getBackendUrl();
@@ -773,6 +874,71 @@ const CognitiveNetworkApp: React.FC = () => {
         finally { setSyncing(false); }
     }, [addToast, characters]);
 
+    const claimCloudCharacter = useCallback(async (
+        cloudCharId: string,
+        targetChar: CharacterProfile | null,
+    ): Promise<boolean> => {
+        const legacyCharId = cloudCharId.trim();
+        if (!legacyCharId) return false;
+        if (!targetChar) {
+            addToast('先选中要接收回忆的角色', 'info');
+            return false;
+        }
+
+        const targetContentId = getCharacterContentId(targetChar);
+        setClaimingCloudCharId(legacyCharId);
+        try {
+            const cloudResult = await migrateCloudCharacterInstance(legacyCharId, targetContentId);
+            if (!cloudResult?.ok) throw new Error('云端迁移没有完成');
+
+            const localResult = await DB.migrateLocalCharacterContentToInstance(legacyCharId, targetContentId);
+            const cloudMems = await pullMemories(targetContentId, { includeDeprecated: true, vectors: true });
+            let pulled = 0;
+            if (cloudMems) {
+                for (const memory of cloudMems) {
+                    await DB.saveVectorMemory({ ...memory, charId: targetContentId });
+                    pulled++;
+                }
+            }
+
+            const movedCount = Number(cloudResult.counts?.memories || localResult.vectorMemories || pulled || 0);
+            setSelectedCharId(targetChar.id);
+            setBrowserMemories(null);
+            setSyncResult({ pushed: 0, pulled: movedCount });
+            await fetchStats();
+            addToast(`已把 ${movedCount} 段云端回忆归档到 ${targetChar.name}`, 'success');
+            haptic.medium();
+            return true;
+        } catch (e: any) {
+            addToast(`绑定失败: ${e.message}`, 'error');
+            return false;
+        } finally {
+            setClaimingCloudCharId(null);
+        }
+    }, [addToast, fetchStats]);
+
+    const openClaimDrawer = useCallback((cloudCharId: string) => {
+        setClaimDrawerCharId(cloudCharId);
+        setClaimTargetCharId(selectedBrowserChar?.id || null);
+        fetchOrphanPreview(cloudCharId, { retry: true });
+        haptic.light();
+    }, [fetchOrphanPreview, selectedBrowserChar]);
+
+    const closeClaimDrawer = useCallback(() => {
+        setClaimDrawerCharId(null);
+        setClaimTargetCharId(null);
+        haptic.light();
+    }, []);
+
+    const confirmClaimDrawer = useCallback(async () => {
+        if (!activeClaimStat) return;
+        const migrated = await claimCloudCharacter(activeClaimStat.charId, claimTargetChar);
+        if (migrated) {
+            setClaimDrawerCharId(null);
+            setClaimTargetCharId(null);
+        }
+    }, [activeClaimStat, claimCloudCharacter, claimTargetChar]);
+
     const handleBindSyncCode = useCallback(() => {
         const nextId = bindInput.trim();
         const currentId = getUserId().trim();
@@ -787,7 +953,7 @@ const CognitiveNetworkApp: React.FC = () => {
             haptic.light();
             return;
         }
-        setUserId(nextId);
+        setUserId(nextId, { source: 'manual' });
         setSyncUserId(nextId);
         setBindInput('');
         setSyncCodeVisible(false);
@@ -795,11 +961,6 @@ const CognitiveNetworkApp: React.FC = () => {
         addToast('已登记这枚印记，点击「签收回忆」唤回云端回忆', 'success');
         haptic.medium();
     }, [addToast, bindInput]);
-
-    const selectedBrowserChar = useMemo(
-        () => characters.find(c => c.id === selectedCharId) || null,
-        [characters, selectedCharId]
-    );
 
     const activeDraftRecord = useMemo(
         () => activeDraftRecordId ? memoryRecords.find(record => record.id === activeDraftRecordId) || null : null,
@@ -1718,6 +1879,65 @@ const CognitiveNetworkApp: React.FC = () => {
                                         </button>
                                     ))}
                                 </div>
+                                {orphanCloudStats.length > 0 && (
+                                    <div className="space-y-2 rounded-[14px] border border-[#e5d08f]/18 bg-[#171419]/76 p-3 shadow-[0_10px_24px_rgba(0,0,0,0.22)]">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate text-[9px] font-semibold tracking-[0.22em] text-[#e5d08f]/70">待归档回忆</p>
+                                                <p className="mt-1 text-[11px] leading-relaxed text-white/46">
+                                                    发现 {orphanMemoryTotal} 段还没连到本机角色的云端回忆。
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="grid gap-2">
+                                            {orphanCloudStats.map((stat, index) => {
+                                                const isClaiming = claimingCloudCharId === stat.charId;
+                                                const preview = orphanPreviews[stat.charId];
+                                                const latestCreatedAt = preview?.memories?.[0]?.createdAt;
+                                                return (
+                                                    <div key={stat.charId} className="rounded-[10px] border border-white/[0.055] bg-white/[0.035] px-3 py-2.5">
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="min-w-0">
+                                                                <p className="text-[11px] font-semibold text-white/72">{getOrphanGroupLabel(index, orphanCloudStats.length)}</p>
+                                                                <p className="mt-0.5 text-[12px] font-semibold text-[#fff1bd]">
+                                                                    {stat.memories} 段
+                                                                    {latestCreatedAt ? ` · 最近 ${formatOrphanPreviewDate(latestCreatedAt)}` : ''}
+                                                                </p>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                disabled={isClaiming || syncing || !isConnected}
+                                                                onClick={() => openClaimDrawer(stat.charId)}
+                                                                className="shrink-0 rounded-full border border-[#e5d08f]/22 bg-[#FFFBF7] px-3 py-1.5 text-[10px] font-bold text-[#17151B] transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.08] disabled:text-white/32"
+                                                            >
+                                                                {isClaiming ? '归档中...' : '整理归属'}
+                                                            </button>
+                                                        </div>
+                                                        <div className="mt-2 space-y-1.5">
+                                                            {preview?.loading ? (
+                                                                <p className="text-[10px] text-white/36">正在拾取回忆线索...</p>
+                                                            ) : preview?.memories.length ? (
+                                                                preview.memories.map(memory => (
+                                                                    <div key={memory.id || `${stat.charId}-${memory.createdAt || getOrphanPreviewTitle(memory)}`} className="rounded-[8px] border border-white/[0.045] bg-black/12 px-2.5 py-2">
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <p className="min-w-0 truncate text-[10px] font-semibold text-white/62">{getOrphanPreviewTitle(memory)}</p>
+                                                                            <p className="shrink-0 text-[9px] text-white/28">{formatOrphanPreviewDate(memory.createdAt)}</p>
+                                                                        </div>
+                                                                        <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/40">{getOrphanPreviewSnippet(memory)}</p>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <p className="text-[10px] leading-relaxed text-white/36">
+                                                                    {preview?.error ? '这组线索暂时没有回来，点整理归属还能继续处理。' : '回忆线索正在回温。'}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </section>
 
                             <section className="grid grid-cols-2 gap-3">
@@ -2871,6 +3091,115 @@ const CognitiveNetworkApp: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {activeClaimStat && (
+                <div className="fixed inset-0 z-[60]">
+                    <button
+                        type="button"
+                        aria-label="关闭整理归属"
+                        onClick={closeClaimDrawer}
+                        className="absolute inset-0 bg-black/58 backdrop-blur-[2px]"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 z-[61] mx-auto max-h-[86vh] w-full max-w-[520px] overflow-y-auto rounded-t-[22px] border border-white/[0.08] bg-[#121015]/96 px-4 pb-[max(1.1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(0,0,0,0.62)]">
+                        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/18" />
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <p className="text-[10px] font-semibold tracking-[0.24em] text-[#e5d08f]/68">待归档回忆</p>
+                                <h3 className="mt-1 text-[22px] font-semibold leading-tight text-[#fffaf0]" style={{ fontFamily: "'Noto Serif SC', serif" }}>整理归属</h3>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeClaimDrawer}
+                                className="rounded-full border border-white/[0.08] bg-white/[0.05] px-3 py-1.5 text-[10px] font-semibold text-white/48 transition-colors hover:bg-white/[0.08]"
+                            >
+                                收起
+                            </button>
+                        </div>
+
+                        <section className="mt-4 rounded-[14px] border border-[#e5d08f]/16 bg-white/[0.035] p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-[10px] font-semibold tracking-[0.18em] text-white/34">这组回忆</p>
+                                    <p className="mt-1 text-[24px] font-semibold leading-none text-[#fff1bd]" style={{ fontFamily: "Georgia, serif" }}>{activeClaimStat.memories}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[10px] font-semibold tracking-[0.18em] text-white/34">最近时间</p>
+                                    <p className="mt-1 text-[13px] font-semibold text-white/66">
+                                        {formatOrphanPreviewDate(activeClaimPreview?.memories?.[0]?.createdAt)}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="mt-3 space-y-2">
+                                {activeClaimPreview?.loading ? (
+                                    <p className="rounded-[10px] border border-white/[0.045] bg-black/14 px-3 py-3 text-[11px] text-white/42">正在拾取回忆线索...</p>
+                                ) : activeClaimPreview?.memories.length ? (
+                                    activeClaimPreview.memories.map(memory => (
+                                        <div key={memory.id || `${memory.createdAt || 0}-${getOrphanPreviewTitle(memory)}`} className="rounded-[10px] border border-white/[0.055] bg-black/14 px-3 py-2.5">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <p className="min-w-0 truncate text-[11px] font-semibold text-white/68">{getOrphanPreviewTitle(memory)}</p>
+                                                <p className="shrink-0 text-[9px] text-white/30">{formatOrphanPreviewDate(memory.createdAt)}</p>
+                                            </div>
+                                            <p className="mt-1.5 text-[11px] leading-relaxed text-white/42">{getOrphanPreviewSnippet(memory)}</p>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <p className="rounded-[10px] border border-white/[0.045] bg-black/14 px-3 py-3 text-[11px] leading-relaxed text-white/42">
+                                        暂时没有取到预览，但这组云端回忆仍然可以归档到本机角色。
+                                    </p>
+                                )}
+                            </div>
+                        </section>
+
+                        <section className="mt-4">
+                            <div className="mb-2 flex items-center justify-between">
+                                <p className="text-[10px] font-semibold tracking-[0.22em] text-[#e5d08f]/62">选择归属角色</p>
+                                <p className="text-[9px] text-white/28">{characters.length} PROFILES</p>
+                            </div>
+                            <div className="grid gap-2">
+                                {characters.map(char => {
+                                    const selected = claimTargetCharId === char.id;
+                                    return (
+                                        <button
+                                            key={char.id}
+                                            type="button"
+                                            onClick={() => { setClaimTargetCharId(char.id); haptic.light(); }}
+                                            className={`flex items-center justify-between gap-3 rounded-[13px] border px-3 py-2.5 text-left transition-all active:scale-[0.985] ${
+                                                selected
+                                                    ? 'border-[#e5d08f]/40 bg-[#fff7dc]/10 shadow-[0_10px_24px_rgba(229,208,143,0.08)]'
+                                                    : 'border-white/[0.065] bg-white/[0.035] hover:bg-white/[0.06]'
+                                            }`}
+                                        >
+                                            <span className="flex min-w-0 items-center gap-3">
+                                                <img src={char.avatar} alt={char.name} className="h-8 w-8 rounded-full object-cover ring-1 ring-white/18" />
+                                                <span className="min-w-0 truncate text-[13px] font-semibold text-white/72">{char.name}</span>
+                                            </span>
+                                            <span className={`h-4 w-4 rounded-full border ${selected ? 'border-[#fff1bd] bg-[#fff1bd]' : 'border-white/18 bg-white/[0.03]'}`} />
+                                        </button>
+                                    );
+                                })}
+                                {characters.length === 0 && (
+                                    <div className="rounded-[13px] border border-white/[0.06] bg-white/[0.035] px-3 py-4 text-[11px] text-white/42">
+                                        还没有可归档的本机角色。
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+
+                        <button
+                            type="button"
+                            disabled={!claimTargetChar || claimingCloudCharId === activeClaimStat.charId || syncing}
+                            onClick={confirmClaimDrawer}
+                            className="mt-4 w-full rounded-[14px] border border-[#e5d08f]/22 bg-[#FFFBF7] px-4 py-3.5 text-[12px] font-bold text-[#17151B] shadow-[0_12px_30px_rgba(255,251,247,0.12)] transition-all active:scale-[0.985] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.08] disabled:text-white/30 disabled:shadow-none"
+                        >
+                            {claimingCloudCharId === activeClaimStat.charId
+                                ? '归档中...'
+                                : claimTargetChar
+                                    ? `归档到${claimTargetChar.name}`
+                                    : '先选择角色'}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* ── Confirm Overlay ── */}
             {showConfirm && (

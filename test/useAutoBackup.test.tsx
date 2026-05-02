@@ -22,11 +22,13 @@ type ExportSystemMock = (
 function AutoBackupHarness({
     exportSystem,
     isDataLoaded = true,
+    enabled = true,
 }: {
     exportSystem: ExportSystemMock;
     isDataLoaded?: boolean;
+    enabled?: boolean;
 }) {
-    useAutoBackup(exportSystem, isDataLoaded);
+    useAutoBackup(exportSystem, isDataLoaded, enabled);
     return null;
 }
 
@@ -55,6 +57,17 @@ describe('useAutoBackup', () => {
         vi.useRealTimers();
         vi.restoreAllMocks();
         localStorage.clear();
+    });
+
+    it('does not schedule automatic cloud backup when disabled', async () => {
+        const exportSystem = vi.fn<ExportSystemMock>(async () => new Blob(['zip']));
+
+        render(<AutoBackupHarness exportSystem={exportSystem} enabled={false} />);
+        await advanceStartupTimer();
+
+        expect(isCloudBackupAvailable).not.toHaveBeenCalled();
+        expect(exportSystem).not.toHaveBeenCalled();
+        expect(uploadCloudBackup).not.toHaveBeenCalled();
     });
 
     it('does not schedule another upload when OSContext rerenders with a new export function', async () => {

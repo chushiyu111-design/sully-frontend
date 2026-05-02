@@ -198,6 +198,7 @@ function recordRecentBackupConflict(conflict: RecentBackupConflict): void {
 export function useAutoBackup(
     exportSystem: (mode: SystemBackupMode, options?: SystemBackupOptions) => Promise<Blob>,
     isDataLoaded: boolean,
+    enabled = true,
 ) {
     const runningRef = useRef(false);
     const exportSystemRef = useRef(exportSystem);
@@ -307,7 +308,7 @@ export function useAutoBackup(
     }, []);
 
     useEffect(() => {
-        if (!isDataLoaded) return;
+        if (!enabled || !isDataLoaded) return;
 
         // 启动时延迟 10s 执行，避免阻塞初始化
         const timer = setTimeout(() => {
@@ -329,5 +330,5 @@ export function useAutoBackup(
             clearTimeout(timer);
             document.removeEventListener('visibilitychange', onVisible);
         };
-    }, [isDataLoaded, checkAutoBackup]);
+    }, [enabled, isDataLoaded, checkAutoBackup]);
 }

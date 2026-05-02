@@ -16,6 +16,8 @@ import { ConfigProvider,useConfig,ConfigContextType } from './ConfigContext';
 import { AgentProvider } from './AgentContext';
 
 
+const AUTO_CLOUD_BACKUP_ENABLED = false;
+
 // 默认实时配置
 
 // Combined interface — keeping full backward compatibility
@@ -778,7 +780,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
     const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
 
     // --- 每日自动云端备份 ---
-    useAutoBackup(exportSystem, isDataLoaded);
+    useAutoBackup(exportSystem, isDataLoaded, AUTO_CLOUD_BACKUP_ENABLED);
 
     // Compose the full value object, merging sub-contexts + data context
     const value: OSContextType = {

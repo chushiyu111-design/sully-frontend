@@ -17,7 +17,7 @@ import { renderMarkdown } from '../utils/markdownLite';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
-export type DateHistorySession = { date: string, msgs: Message[], rawMsgs: Message[], startMsgId: number, summaries: Message[], bridges: Message[] };
+type DateHistorySession = { date: string, msgs: Message[], rawMsgs: Message[], startMsgId: number, summaries: Message[], bridges: Message[] };
 type SummaryDraft = {
     content: string;
     summaryType: SummaryType;
@@ -81,7 +81,7 @@ const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; mode
     !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim()
 );
 
-export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
+const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     const dateMsgs = msgs
         .filter(isDateRawDialogueMessage)
         .sort((a, b) => b.timestamp - a.timestamp);
@@ -99,11 +99,10 @@ export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
 
         if (isTimeBreak || splitSincePrevWasOpening) {
             const sessionStartMsg = currentSession[currentSession.length - 1];
-            const orderedSessionMsgs = [...currentSession].reverse();
             sessions.push({
                 date: new Date(sessionStartMsg.timestamp).toLocaleString(),
-                msgs: orderedSessionMsgs,
-                rawMsgs: [...orderedSessionMsgs],
+                msgs: [...currentSession].reverse().filter(m => !m.metadata?.hiddenFromUser),
+                rawMsgs: [...currentSession].reverse(),
                 startMsgId: sessionStartMsg.id,
                 summaries: [],
                 bridges: [],
@@ -115,11 +114,10 @@ export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     }
 
     const sessionStartMsg = currentSession[currentSession.length - 1];
-    const orderedSessionMsgs = [...currentSession].reverse();
     sessions.push({
         date: new Date(sessionStartMsg.timestamp).toLocaleString(),
-        msgs: orderedSessionMsgs,
-        rawMsgs: [...orderedSessionMsgs],
+        msgs: [...currentSession].reverse().filter(m => !m.metadata?.hiddenFromUser),
+        rawMsgs: [...currentSession].reverse(),
         startMsgId: sessionStartMsg.id,
         summaries: [],
         bridges: [],

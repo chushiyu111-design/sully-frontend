@@ -2,29 +2,24 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
-import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars } from '../utils/backendClient';
+import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars,migrateCloudCharacterInstance } from '../utils/backendClient';
 import { DB } from '../utils/db';
 import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
+import { getCharacterContentId } from '../utils/characterIdentity';
+import { findCharacterByAnyId,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
+import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
 import { MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,shouldGenerateMemoryRecordMonologue,generateLyrics,checkLyricSingability,optimizeLyrics,generateStylePrompt,createRecordId,COVER_GRADIENTS,type MemoryRecordMemoryHeader,type SingabilityCheckResult,type StylePromptResult } from '../utils/memoryRecordService';
 import { getMemoryRecordCoverImage } from '../utils/memoryRecordCovers';
 import { hasPlayableMemoryRecordAudio,memoryRecordToPlayable } from '../utils/memoryRecordPlayable';
-import type { MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
+import type { CharacterProfile,MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
 import { MEMORY_RECORD_STATUS_LABELS } from '../types';
 
 /* Recovered comment */
 
-interface CharStats {
-    charId: string;
-    memories: number;
-    relations: number;
-    temporalEdges: number;
-    semanticEdges: number;
-    linkedCount: number;
-    unscannedCount: number;
-}
+type CharStats = CognitiveCharStats;
 
 interface PerCharStatsResponse {
     characters: CharStats[];
@@ -227,17 +222,33 @@ const CognitiveNetworkApp: React.FC = () => {
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<{ pushed: number; pulled: number } | null>(null);
     const [syncUserId, setSyncUserId] = useState(() => getUserId());
+    const [claimingCloudCharId, setClaimingCloudCharId] = useState<string | null>(null);
     const semanticAbortRef = React.useRef<AbortController | null>(null);
 
     const charNameMap = useCallback((charId: string) => {
-        const found = characters.find(c => c.id === charId);
+        const found = findCharacterByAnyId(characters, charId);
         return found?.name || charId.slice(0, 12);
     }, [characters]);
 
     const charAvatarMap = useCallback((charId: string) => {
-        const found = characters.find(c => c.id === charId);
+        const found = findCharacterByAnyId(characters, charId);
         return found?.avatar || '';
     }, [characters]);
+
+    const selectedBrowserChar = useMemo(
+        () => findCharacterByAnyId(characters, selectedCharId),
+        [characters, selectedCharId]
+    );
+
+    const selectedBackendCharId = useMemo(() => {
+        if (!selectedCharId) return null;
+        return selectedBrowserChar ? getCharacterContentId(selectedBrowserChar) : selectedCharId;
+    }, [selectedBrowserChar, selectedCharId]);
+
+    const xiayizhouClaimTarget = useMemo(
+        () => characters.find(char => char.name === '夏以昼' || char.name.includes('夏以昼')) || null,
+        [characters]
+    );
 
     const authHeaders = useCallback(() => {
         const h = buildBackendHeaders();
@@ -292,28 +303,13 @@ const CognitiveNetworkApp: React.FC = () => {
     // Current selected character stats
     const currentStats = useMemo(() => {
         if (!allStats || allStats.characters.length === 0) return null;
-        if (!selectedCharId) {
-            // 姹囨€诲叏閮ㄨ鑹诧紱鍚庣鍙兘缂哄皯閮ㄥ垎瀛楁锛岄粯璁よˉ 0
-            return allStats.characters.reduce((acc, c) => ({
-                memories: acc.memories + (c.memories || 0),
-                relations: acc.relations + (c.relations || 0),
-                temporalEdges: acc.temporalEdges + (c.temporalEdges || 0),
-                semanticEdges: acc.semanticEdges + (c.semanticEdges || 0),
-                linkedCount: acc.linkedCount + (c.linkedCount || 0),
-                unscannedCount: acc.unscannedCount + (c.unscannedCount || 0),
-            }), { memories: 0, relations: 0, temporalEdges: 0, semanticEdges: 0, linkedCount: 0, unscannedCount: 0 });
-        }
-        const found = allStats.characters.find(c => c.charId === selectedCharId);
-        if (!found) return null;
-        // Fill missing fields with defaults
-        return {
-            ...found,
-            temporalEdges: found.temporalEdges || 0,
-            semanticEdges: found.semanticEdges || 0,
-            linkedCount: found.linkedCount || 0,
-            unscannedCount: found.unscannedCount || 0,
-        };
-    }, [allStats, selectedCharId]);
+        return getSelectedCharacterStats(allStats.characters, characters, selectedCharId);
+    }, [allStats, characters, selectedCharId]);
+
+    const orphanCloudStats = useMemo(
+        () => getOrphanCloudStats(allStats?.characters || [], characters),
+        [allStats, characters]
+    );
 
     // 鍒濇杩炴帴鍚庡彧鎷夊彇涓€娆＄粺璁★紝閬垮厤閲嶅璇锋眰
     const statsLoaded = React.useRef(false);
@@ -398,7 +394,7 @@ const CognitiveNetworkApp: React.FC = () => {
         for (let i = 0; i < total; i++) {
             try {
                 const processBody: any = {};
-                if (selectedCharId) processBody.charId = selectedCharId;
+                if (selectedBackendCharId) processBody.charId = selectedBackendCharId;
                 const timeoutSignal = safeTimeoutSignal(120_000);
                 // AbortSignal.any is Safari 17.4+; fall back to manual wiring
                 let combinedSignal: AbortSignal;
@@ -497,7 +493,7 @@ const CognitiveNetworkApp: React.FC = () => {
         if (semanticAbortRef.current === controller) semanticAbortRef.current = null;
 
         return { done, errors, totalRelations, aborted };
-    }, [authHeaders, addToast, selectedCharId]);
+    }, [authHeaders, addToast, selectedBackendCharId]);
 
     const doSemanticBackfill = useCallback(async (dryRun: boolean, forceRescan = false) => {
         const url = getBackendUrl();
@@ -510,7 +506,7 @@ const CognitiveNetworkApp: React.FC = () => {
         }
         try {
             const body: any = { dryRun, forceRescan };
-            if (selectedCharId) body.charId = selectedCharId;
+            if (selectedBackendCharId) body.charId = selectedBackendCharId;
             const resp = await fetch(`${url}/api/graph/backfill-semantic`, {
                 method: 'POST', headers: authHeaders(), body: JSON.stringify(body),
             });
@@ -535,11 +531,11 @@ const CognitiveNetworkApp: React.FC = () => {
             fetchStats();
         } catch (e: any) { addToast(`寻找失败: ${e.message}`, 'error'); }
         finally { setSemanticRunning(false); setShowConfirm(prev => prev === 'semantic' ? null : prev); }
-    }, [authHeaders, addToast, selectedCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
 
     const doSemanticRebuild = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setSemanticRunning(true);
         setSemanticRebuilding(true);
         setQueueStatus(null);
@@ -548,13 +544,13 @@ const CognitiveNetworkApp: React.FC = () => {
             const resp = await fetch(`${url}/api/graph/semantic-rebuild`, {
                 method: 'POST',
                 headers: authHeaders(),
-                body: JSON.stringify({ charId: selectedCharId }),
+                body: JSON.stringify({ charId: selectedBackendCharId }),
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
             const result: SemanticRebuildResult = await resp.json();
             setSemanticRebuildResult({
-                charId: selectedCharId,
+                charId: selectedBackendCharId,
                 deleted: result.deleted,
                 reset: result.reset,
                 toProcess: result.toProcess,
@@ -586,19 +582,19 @@ const CognitiveNetworkApp: React.FC = () => {
             setSemanticRebuilding(false);
             setShowConfirm(prev => prev === 'semanticRebuild' ? null : prev);
         }
-    }, [authHeaders, addToast, selectedCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
 
     // Distillation 闇€瑕佸畬鏁?embedding 閰嶇疆锛屽洜姝や娇鐢?fullHeaders
     const doDistill = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setDistilling(true);
         setDistillResetStats(null);
         try {
-            const charName = charNameMap(selectedCharId);
+            const charName = charNameMap(selectedBackendCharId);
             const resp = await fetch(`${url}/api/distillation/run`, {
                 method: 'POST', headers: fullHeaders(),
-                body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
+                body: JSON.stringify({ charId: selectedBackendCharId, charName, userName: userProfile.name }),
             });
             if (!resp.ok) {
                 let detail = `HTTP ${resp.status}`;
@@ -619,18 +615,18 @@ const CognitiveNetworkApp: React.FC = () => {
             }
         } catch (e: any) { addToast(`凝结失败: ${e.message}`, 'error'); }
         finally { setDistilling(false); setShowConfirm(prev => prev === 'distill' ? null : prev); }
-    }, [fullHeaders, addToast, selectedCharId, charNameMap, fetchStats]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
 
     const doDistillRebuild = useCallback(async () => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setDistillRebuilding(true);
         try {
-            const charName = charNameMap(selectedCharId);
+            const charName = charNameMap(selectedBackendCharId);
             const resp = await fetch(`${url}/api/distillation/reset-and-run`, {
                 method: 'POST',
                 headers: fullHeaders(),
-                body: JSON.stringify({ charId: selectedCharId, charName, userName: userProfile.name }),
+                body: JSON.stringify({ charId: selectedBackendCharId, charName, userName: userProfile.name }),
             });
             if (!resp.ok) {
                 let detail = `HTTP ${resp.status}`;
@@ -640,7 +636,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
             const result: DistillResult = await resp.json();
             setDistillResult(result);
-            setDistillResetStats(result.resetStats ? { charId: selectedCharId, ...result.resetStats } : null);
+            setDistillResetStats(result.resetStats ? { charId: selectedBackendCharId, ...result.resetStats } : null);
 
             if (result.l1Created > 0 || result.l1Merged > 0 || result.l1Deduped > 0) {
                 const parts: string[] = [];
@@ -659,19 +655,19 @@ const CognitiveNetworkApp: React.FC = () => {
             setDistillRebuilding(false);
             setShowConfirm(prev => prev === 'distillRebuild' ? null : prev);
         }
-    }, [fullHeaders, addToast, selectedCharId, charNameMap, fetchStats, userProfile.name]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
 
     // Memory browser
     const fetchBrowserMemories = useCallback(async (level?: 'all' | '0' | '1' | 'musing') => {
         const url = getBackendUrl();
-        if (!url || !selectedCharId) return;
+        if (!url || !selectedBackendCharId) return;
         setBrowserLoading(true);
         try {
             const lvl = level || browserLevel;
             // For 'musing', fetch all and filter client-side by source
             const apiLevel = (lvl === 'musing' || lvl === 'all') ? undefined : lvl;
             const params = apiLevel ? `?level=${apiLevel}` : '';
-            const resp = await fetch(`${url}/api/memories/browse/${selectedCharId}${params}`, { headers: authHeaders() });
+            const resp = await fetch(`${url}/api/memories/browse/${selectedBackendCharId}${params}`, { headers: authHeaders() });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             const allMemories = data.memories || [];
@@ -680,14 +676,14 @@ const CognitiveNetworkApp: React.FC = () => {
             setBrowserCounts({ total: data.count, l0: data.l0Count, l1: data.l1Count, musing: musingCount });
         } catch (e: any) { addToast(`载入失败: ${e.message}`, 'error'); }
         finally { setBrowserLoading(false); }
-    }, [authHeaders, selectedCharId, browserLevel, addToast]);
+    }, [authHeaders, selectedBackendCharId, browserLevel, addToast]);
 
     // Auto-fetch when switching to browser tab
     useEffect(() => {
-        if (activeTab === 'browser' && selectedCharId && !browserMemories) {
+        if (activeTab === 'browser' && selectedBackendCharId && !browserMemories) {
             fetchBrowserMemories();
         }
-    }, [activeTab, selectedCharId]);
+    }, [activeTab, selectedBackendCharId, browserMemories, fetchBrowserMemories]);
 
     const doSaveEdit = useCallback(async (memId: string) => {
         const url = getBackendUrl();
@@ -773,6 +769,47 @@ const CognitiveNetworkApp: React.FC = () => {
         finally { setSyncing(false); }
     }, [addToast, characters]);
 
+    const claimCloudCharacter = useCallback(async (
+        cloudCharId: string,
+        targetChar: CharacterProfile | null,
+    ) => {
+        const legacyCharId = cloudCharId.trim();
+        if (!legacyCharId) return;
+        if (!targetChar) {
+            addToast('本机还没有找到夏以昼，暂时不能绑定', 'error');
+            return;
+        }
+
+        const targetContentId = getCharacterContentId(targetChar);
+        setClaimingCloudCharId(legacyCharId);
+        try {
+            const cloudResult = await migrateCloudCharacterInstance(legacyCharId, targetContentId);
+            if (!cloudResult?.ok) throw new Error('云端迁移没有完成');
+
+            const localResult = await DB.migrateLocalCharacterContentToInstance(legacyCharId, targetContentId);
+            const cloudMems = await pullMemories(targetContentId, { includeDeprecated: true, vectors: true });
+            let pulled = 0;
+            if (cloudMems) {
+                for (const memory of cloudMems) {
+                    await DB.saveVectorMemory({ ...memory, charId: targetContentId });
+                    pulled++;
+                }
+            }
+
+            const movedCount = Number(cloudResult.counts?.memories || localResult.vectorMemories || pulled || 0);
+            setSelectedCharId(targetChar.id);
+            setBrowserMemories(null);
+            setSyncResult({ pushed: 0, pulled: movedCount });
+            await fetchStats();
+            addToast(`已把 ${movedCount} 段云端回忆绑定到 ${targetChar.name}`, 'success');
+            haptic.medium();
+        } catch (e: any) {
+            addToast(`绑定失败: ${e.message}`, 'error');
+        } finally {
+            setClaimingCloudCharId(null);
+        }
+    }, [addToast, fetchStats]);
+
     const handleBindSyncCode = useCallback(() => {
         const nextId = bindInput.trim();
         const currentId = getUserId().trim();
@@ -795,11 +832,6 @@ const CognitiveNetworkApp: React.FC = () => {
         addToast('已登记这枚印记，点击「签收回忆」唤回云端回忆', 'success');
         haptic.medium();
     }, [addToast, bindInput]);
-
-    const selectedBrowserChar = useMemo(
-        () => characters.find(c => c.id === selectedCharId) || null,
-        [characters, selectedCharId]
-    );
 
     const activeDraftRecord = useMemo(
         () => activeDraftRecordId ? memoryRecords.find(record => record.id === activeDraftRecordId) || null : null,
@@ -1718,6 +1750,39 @@ const CognitiveNetworkApp: React.FC = () => {
                                         </button>
                                     ))}
                                 </div>
+                                {orphanCloudStats.length > 0 && (
+                                    <div className="space-y-2 rounded-[14px] border border-[#e5d08f]/18 bg-[#171419]/76 p-3 shadow-[0_10px_24px_rgba(0,0,0,0.22)]">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate text-[9px] font-semibold tracking-[0.22em] text-[#e5d08f]/70">待认领云端回忆</p>
+                                                <p className="mt-1 text-[11px] leading-relaxed text-white/46">
+                                                    发现 {orphanCloudStats.reduce((sum, stat) => sum + (stat.memories || 0), 0)} 段还没连到本机角色。
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="grid gap-2">
+                                            {orphanCloudStats.map(stat => {
+                                                const isClaiming = claimingCloudCharId === stat.charId;
+                                                return (
+                                                    <div key={stat.charId} className="flex items-center justify-between gap-3 rounded-[10px] border border-white/[0.055] bg-white/[0.035] px-3 py-2">
+                                                        <div className="min-w-0">
+                                                            <p className="truncate font-mono text-[9px] text-white/34">{stat.charId}</p>
+                                                            <p className="mt-0.5 text-[12px] font-semibold text-[#fff1bd]">{stat.memories} 段</p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            disabled={isClaiming || syncing || !isConnected || !xiayizhouClaimTarget}
+                                                            onClick={() => claimCloudCharacter(stat.charId, xiayizhouClaimTarget)}
+                                                            className="shrink-0 rounded-full border border-[#e5d08f]/22 bg-[#FFFBF7] px-3 py-1.5 text-[10px] font-bold text-[#17151B] transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.08] disabled:text-white/32"
+                                                        >
+                                                            {isClaiming ? '绑定中...' : '绑定到夏以昼'}
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </section>
 
                             <section className="grid grid-cols-2 gap-3">

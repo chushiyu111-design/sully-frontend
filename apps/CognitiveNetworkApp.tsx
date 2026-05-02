@@ -245,11 +245,6 @@ const CognitiveNetworkApp: React.FC = () => {
         return selectedBrowserChar ? getCharacterContentId(selectedBrowserChar) : selectedCharId;
     }, [selectedBrowserChar, selectedCharId]);
 
-    const xiayizhouClaimTarget = useMemo(
-        () => characters.find(char => char.name === '夏以昼' || char.name.includes('夏以昼')) || null,
-        [characters]
-    );
-
     const authHeaders = useCallback(() => {
         const h = buildBackendHeaders();
         const subApiConfig = getSecondaryApiConfig();
@@ -776,7 +771,7 @@ const CognitiveNetworkApp: React.FC = () => {
         const legacyCharId = cloudCharId.trim();
         if (!legacyCharId) return;
         if (!targetChar) {
-            addToast('本机还没有找到夏以昼，暂时不能绑定', 'error');
+            addToast('先选中要接收回忆的角色', 'info');
             return;
         }
 
@@ -1756,7 +1751,9 @@ const CognitiveNetworkApp: React.FC = () => {
                                             <div className="min-w-0">
                                                 <p className="truncate text-[9px] font-semibold tracking-[0.22em] text-[#e5d08f]/70">待认领云端回忆</p>
                                                 <p className="mt-1 text-[11px] leading-relaxed text-white/46">
-                                                    发现 {orphanCloudStats.reduce((sum, stat) => sum + (stat.memories || 0), 0)} 段还没连到本机角色。
+                                                    {selectedBrowserChar
+                                                        ? `发现 ${orphanCloudStats.reduce((sum, stat) => sum + (stat.memories || 0), 0)} 段还没连到本机角色。`
+                                                        : '先点上方目标角色，再认领这组回忆。'}
                                                 </p>
                                             </div>
                                         </div>
@@ -1771,11 +1768,11 @@ const CognitiveNetworkApp: React.FC = () => {
                                                         </div>
                                                         <button
                                                             type="button"
-                                                            disabled={isClaiming || syncing || !isConnected || !xiayizhouClaimTarget}
-                                                            onClick={() => claimCloudCharacter(stat.charId, xiayizhouClaimTarget)}
+                                                            disabled={isClaiming || syncing || !isConnected || !selectedBrowserChar}
+                                                            onClick={() => claimCloudCharacter(stat.charId, selectedBrowserChar)}
                                                             className="shrink-0 rounded-full border border-[#e5d08f]/22 bg-[#FFFBF7] px-3 py-1.5 text-[10px] font-bold text-[#17151B] transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.08] disabled:text-white/32"
                                                         >
-                                                            {isClaiming ? '绑定中...' : '绑定到夏以昼'}
+                                                            {isClaiming ? '绑定中...' : selectedBrowserChar ? `绑定到${selectedBrowserChar.name}` : '先选角色'}
                                                         </button>
                                                     </div>
                                                 );

@@ -33,7 +33,7 @@ export const WeatherSection = React.memo<WeatherProps>(({ enabled, apiKey, city,
             {enabled && (
                 <div className="space-y-2">
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">OpenWeatherMap API Key</label>
-                        <input type="password" value={apiKey} onChange={e => set('weatherApiKey', e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: openweathermap.org" {...getGuardedInputProps({ kind: 'secret', field: 'weather-api-key' })} /></div>
+                        <input type="text" value={apiKey} onChange={e => set('weatherApiKey', e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: openweathermap.org" {...getGuardedInputProps({ kind: 'secret', field: 'weather-api-key' })} /></div>
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市 (英文)</label>
                         <input type="text" value={city} onChange={e => set('weatherCity', e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="Beijing, Shanghai, etc." /></div>
                     <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
@@ -58,7 +58,7 @@ export const NewsSection = React.memo<NewsProps>(({ enabled, apiKey, set }) => (
             <div className="space-y-2">
                 <p className="text-xs text-blue-600/70">默认使用 Hacker News（英文科技新闻）。配置 Brave API 可获取中文新闻。</p>
                 <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Brave Search API Key (推荐)</label>
-                    <input type="password" value={apiKey} onChange={e => set('newsApiKey', e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: brave.com/search/api" {...getGuardedInputProps({ kind: 'secret', field: 'news-api-key' })} /></div>
+                    <input type="text" value={apiKey} onChange={e => set('newsApiKey', e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: brave.com/search/api" {...getGuardedInputProps({ kind: 'secret', field: 'news-api-key' })} /></div>
                 <p className="text-[10px] text-blue-500/70">免费2000次/月，支持中文新闻。<br />不配置则用 Hacker News（英文科技新闻）。</p>
             </div>
         )}
@@ -131,7 +131,7 @@ export const NotionSection = React.memo<NotionProps>(({ enabled, apiKey, dbId, n
             {enabled && (
                 <div className="space-y-2">
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Notion Integration Token</label>
-                        <input type="password" value={apiKey} onChange={e => set('notionApiKey', e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="secret_..." {...getGuardedInputProps({ kind: 'secret', field: 'notion-api-key' })} /></div>
+                        <input type="text" value={apiKey} onChange={e => set('notionApiKey', e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="secret_..." {...getGuardedInputProps({ kind: 'secret', field: 'notion-api-key' })} /></div>
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID</label>
                         <input type="text" value={dbId} onChange={e => set('notionDbId', e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" {...getGuardedInputProps({ kind: 'config', field: 'notion-database-id' })} /></div>
                     <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
@@ -181,7 +181,7 @@ export const FeishuSection = React.memo<FeishuProps>(({ enabled, appId, appSecre
             {enabled && (
                 <div className="space-y-2">
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App ID</label><input type="text" value={appId} onChange={e => set('feishuAppId', e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="cli_xxxxxxxx" {...getGuardedInputProps({ kind: 'config', field: 'feishu-app-id' })} /></div>
-                    <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App Secret</label><input type="password" value={appSecret} onChange={e => set('feishuAppSecret', e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="xxxxxxxxxxxxxxxx" {...getGuardedInputProps({ kind: 'secret', field: 'feishu-app-secret' })} /></div>
+                    <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">飞书 App Secret</label><input type="text" value={appSecret} onChange={e => set('feishuAppSecret', e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="xxxxxxxxxxxxxxxx" {...getGuardedInputProps({ kind: 'secret', field: 'feishu-app-secret' })} /></div>
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">多维表格 App Token</label><input type="text" value={baseId} onChange={e => set('feishuBaseId', e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从多维表格URL中获取" {...getGuardedInputProps({ kind: 'config', field: 'feishu-base-id' })} /></div>
                     <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">数据表 Table ID</label><input type="text" value={tableId} onChange={e => set('feishuTableId', e.target.value)} className="w-full bg-white/80 border border-indigo-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="tblxxxxxxxx" {...getGuardedInputProps({ kind: 'config', field: 'feishu-table-id' })} /></div>
                     <button onClick={testFeishuApi} className="w-full py-2 bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试飞书连接</button>

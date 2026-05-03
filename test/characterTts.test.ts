@@ -1,7 +1,11 @@
 import { describe,expect,it } from 'vitest';
 import { DEFAULT_TTS_CONFIG,type CharacterProfile,type TtsConfig } from '../types';
 import { resolveCharacterVoiceId,withCharacterTtsVoice } from '../utils/characterTts';
-import { buildVoiceCallTtsConfig } from '../apps/voicecall/useVoiceCallEngine';
+import {
+    buildVoiceCallQueuedSentence,
+    buildVoiceCallTtsConfig,
+    getVoiceCallPlaybackSentence,
+} from '../apps/voicecall/useVoiceCallEngine';
 
 function buildTtsConfig(voiceId = 'global-voice'): TtsConfig {
     return {
@@ -57,5 +61,28 @@ describe('character TTS voice binding', () => {
         expect(voiceCallConfig.voiceSetting.voice_id).toBe('character-voice');
         expect(voiceCallConfig.audioSetting.format).toBe('pcm');
         expect(voiceCallConfig.audioSetting.audio_sample_rate).toBe(24000);
+    });
+
+    it('temporarily overrides voice-call language boost for foreign mode only', () => {
+        const base = {
+            ...buildTtsConfig('global-voice'),
+            languageBoost: 'Chinese',
+        };
+
+        expect(buildVoiceCallTtsConfig(base).languageBoost).toBe('Chinese');
+        expect(buildVoiceCallTtsConfig(base, { sourceLang: '日本語', targetLang: '中文' }).languageBoost).toBe('Japanese');
+        expect(buildVoiceCallTtsConfig(base, { sourceLang: '中文', targetLang: 'English' }).languageBoost).toBe('Chinese');
+    });
+
+    it('keeps translation paired with the sentence that is currently playing', () => {
+        const first = buildVoiceCallQueuedSentence('こんにちは。[[翻译:你好。]]');
+        const second = buildVoiceCallQueuedSentence('今日は何してたの？[[翻译:今天在做什么呀？]]');
+
+        expect(first).toEqual({ spokenText: 'こんにちは。', translationText: '你好。' });
+        expect(second).toEqual({ spokenText: '今日は何してたの？', translationText: '今天在做什么呀？' });
+
+        const queue = [first!, second!];
+        expect(getVoiceCallPlaybackSentence(queue, 0)?.translationText).toBe('你好。');
+        expect(getVoiceCallPlaybackSentence(queue, 1)?.translationText).toBe('今天在做什么呀？');
     });
 });

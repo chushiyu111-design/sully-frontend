@@ -357,6 +357,73 @@
     color: rgba(210, 200, 188, 0.5);
 }
 
+.vc-subtitle-history {
+    width: min(88%, 360px);
+    max-height: 150px;
+    margin: 0 auto 12px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 14px;
+    background: rgba(12, 10, 8, 0.20);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(14px);
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.vc-subtitle-history::-webkit-scrollbar {
+    display: none;
+}
+
+.vc-subtitle-history-entry {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    max-width: 86%;
+    padding: 6px 9px;
+    border-radius: 12px;
+    animation: vc-subtitle-in 0.28s ease-out forwards;
+}
+
+.vc-subtitle-history-entry--user {
+    align-self: flex-end;
+    background: rgba(160, 210, 190, 0.12);
+    color: rgba(236, 255, 246, 0.82);
+}
+
+.vc-subtitle-history-entry--assistant {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.07);
+    color: rgba(240, 235, 225, 0.88);
+}
+
+.vc-subtitle-history-label {
+    font-size: 9px;
+    line-height: 1.2;
+    color: rgba(240, 235, 225, 0.42);
+    letter-spacing: 0.08em;
+}
+
+.vc-subtitle-history-text {
+    font-size: 12px;
+    line-height: 1.55;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.vc-subtitle-history-translation {
+    font-size: 11px;
+    line-height: 1.45;
+    color: rgba(240, 235, 225, 0.54);
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
 /* ─── 药丸 Dock 控制栏 ─── */
 .vc-dock {
     display: flex;

@@ -8,10 +8,12 @@ describe('getGuardedInputProps', () => {
             field: 'Primary API URL',
         });
 
-        expect(props.autoComplete).toBe('off');
+        expect(props.autoComplete).toBe('new-password');
         expect(props.inputMode).toBe('url');
         expect(props.enterKeyHint).toBe('go');
-        expect(props.name).toBe('endpoint-primary-api-url');
+        expect(props.name).toMatch(/^sully-field-[a-z0-9]+-[a-z0-9]+$/);
+        expect(props.name).not.toContain('api');
+        expect(props.name).not.toContain('url');
         expect(props.autoCorrect).toBe('off');
         expect(props.autoCapitalize).toBe('none');
         expect(props.spellCheck).toBe(false);
@@ -31,7 +33,9 @@ describe('getGuardedInputProps', () => {
         expect(props.autoComplete).toBe('new-password');
         expect(props.inputMode).toBe('text');
         expect(props.enterKeyHint).toBe('done');
-        expect(props.name).toBe('credential-primary-api-key');
+        expect(props.name).toMatch(/^sully-field-[a-z0-9]+-[a-z0-9]+$/);
+        expect(props.name).not.toContain('api');
+        expect(props.name).not.toContain('key');
         expect(props.autoCorrect).toBe('off');
         expect(props.autoCapitalize).toBe('none');
         expect(props.spellCheck).toBe(false);

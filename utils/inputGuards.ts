@@ -1,4 +1,9 @@
 import type { InputHTMLAttributes } from 'react';
+import {
+    AUTOFILL_SUPPRESSION_AUTOCOMPLETE,
+    AUTOFILL_SUPPRESSION_REACT_PROPS,
+    createAutofillSafeFieldName,
+} from './autofillSuppression';
 
 export type GuardedInputKind = 'url' | 'secret' | 'config';
 
@@ -13,18 +18,6 @@ interface GuardedInputOptions {
     enterKeyHint?: InputHTMLAttributes<HTMLInputElement>['enterKeyHint'];
 }
 
-const PASSWORD_MANAGER_IGNORE_ATTRS = {
-    'data-1p-ignore': 'true',
-    'data-bwignore': 'true',
-    'data-form-type': 'other',
-    'data-lpignore': 'true',
-} as const;
-
-function sanitizeFieldName(field: string): string {
-    const normalized = field.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    return normalized.replace(/^-+|-+$/g, '') || 'field';
-}
-
 export function getGuardedInputProps({
     kind,
     field,
@@ -32,40 +25,36 @@ export function getGuardedInputProps({
     autoComplete,
     enterKeyHint,
 }: GuardedInputOptions): GuardedInputProps {
-    const safeField = sanitizeFieldName(field);
+    const safeField = createAutofillSafeFieldName(`${kind}:${field}`);
     const commonProps: GuardedInputProps = {
-        ...PASSWORD_MANAGER_IGNORE_ATTRS,
-        'aria-autocomplete': 'none',
-        autoCapitalize: 'none',
-        autoCorrect: 'off',
-        spellCheck: false,
+        ...AUTOFILL_SUPPRESSION_REACT_PROPS,
     };
 
     if (kind === 'secret') {
         return {
             ...commonProps,
-            autoComplete: autoComplete ?? 'new-password',
+            autoComplete: autoComplete ?? AUTOFILL_SUPPRESSION_AUTOCOMPLETE,
             enterKeyHint: enterKeyHint ?? 'done',
             inputMode: inputMode ?? 'text',
-            name: `credential-${safeField}`,
+            name: safeField,
         };
     }
 
     if (kind === 'config') {
         return {
             ...commonProps,
-            autoComplete: autoComplete ?? 'off',
+            autoComplete: autoComplete ?? AUTOFILL_SUPPRESSION_AUTOCOMPLETE,
             enterKeyHint: enterKeyHint ?? 'done',
             inputMode: inputMode ?? 'text',
-            name: `config-${safeField}`,
+            name: safeField,
         };
     }
 
     return {
         ...commonProps,
-        autoComplete: autoComplete ?? 'off',
+        autoComplete: autoComplete ?? AUTOFILL_SUPPRESSION_AUTOCOMPLETE,
         enterKeyHint: enterKeyHint ?? 'go',
         inputMode: inputMode ?? 'url',
-        name: `endpoint-${safeField}`,
+        name: safeField,
     };
 }

@@ -51,16 +51,16 @@ describe('ApiSettings', () => {
         const urlInput = screen.getByPlaceholderText('https://...');
         const keyInput = screen.getByPlaceholderText('sk-...');
 
-        expect(urlInput).toHaveAttribute('autocomplete', 'off');
+        expect(urlInput).toHaveAttribute('autocomplete', 'new-password');
         expect(urlInput).toHaveAttribute('inputmode', 'url');
-        expect(urlInput).toHaveAttribute('name', 'endpoint-primary-api-url');
+        expect(urlInput.getAttribute('name')).toMatch(/^sully-field-[a-z0-9]+-[a-z0-9]+$/);
         expect(urlInput).toHaveAttribute('data-lpignore', 'true');
         expect(urlInput).toHaveAttribute('data-1p-ignore', 'true');
 
-        expect(keyInput).toHaveAttribute('type', 'password');
+        expect(keyInput).toHaveAttribute('type', 'text');
         expect(keyInput).toHaveAttribute('autocomplete', 'new-password');
         expect(keyInput).toHaveAttribute('inputmode', 'text');
-        expect(keyInput).toHaveAttribute('name', 'credential-primary-api-key');
+        expect(keyInput.getAttribute('name')).toMatch(/^sully-field-[a-z0-9]+-[a-z0-9]+$/);
         expect(keyInput).toHaveAttribute('data-lpignore', 'true');
         expect(keyInput).toHaveAttribute('data-1p-ignore', 'true');
     });

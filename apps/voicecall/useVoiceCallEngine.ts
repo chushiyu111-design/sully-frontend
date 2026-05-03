@@ -27,7 +27,10 @@ import { CloudStt } from '../../utils/cloudStt';
 import { MinimaxTtsWs } from '../../utils/minimaxTtsWs';
 import { VoiceCallLlm,VoiceCallLlmConfig } from './voiceCallLlm';
 import { VoiceCallAudioPlayer } from './voiceCallAudioPlayer';
-import { sanitizeVoiceCallAssistantText } from './voiceCallTextSanitizer';
+import {
+    sanitizeVoiceCallAssistantText,
+    splitVoiceCallForeignSentence,
+} from './voiceCallTextSanitizer';
 import type { VoiceCallMode } from './voiceCallTypes';
 import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
 import { DB } from '../../utils/db';
@@ -42,6 +45,21 @@ import {
 // ─── 类型 ──────────────────────────────────────────────────────────────
 
 export type EngineState = 'idle' | 'listening' | 'processing' | 'speaking';
+type VoiceCallTranscriptSource = 'voice' | 'text';
+type VoiceCallForeignLangConfig = { sourceLang: string; targetLang: string };
+
+export interface VoiceCallSubtitleEntry {
+    id: number;
+    role: 'user' | 'assistant';
+    text: string;
+    translation?: string;
+    source?: VoiceCallTranscriptSource;
+}
+
+export interface VoiceCallQueuedSentence {
+    spokenText: string;
+    translationText: string;
+}
 
 export interface UseVoiceCallEngineOptions {
     /** 完整角色档案 */
@@ -69,7 +87,7 @@ export interface UseVoiceCallEngineOptions {
     // ─── 来电理由 (Call Reason) ───
     callReason?: string;
     // ─── 外语模式 (Foreign Language) ───
-    foreignLang?: { sourceLang: string; targetLang: string };
+    foreignLang?: VoiceCallForeignLangConfig;
     // ─── 向量记忆 (Vector Memory) ───
     embeddingApiKey?: string;
 }
@@ -89,13 +107,15 @@ export interface UseVoiceCallEngineReturn {
     /** TTS 合成失败，已降级为纯文字展示 */
     ttsDegraded: boolean;
     /** 当前 transcript 来源 */
-    transcriptSource: 'voice' | 'text';
+    transcriptSource: VoiceCallTranscriptSource;
     // ─── 通话质量反馈 ───
     /** STT 返回空结果，提示用户"没听清" */
     sttEmptyHint: boolean;
     // ─── 外语模式 (Foreign Language) ───
     /** 当前 AI 回复的翻译文本（外语模式下从 [[翻译:...]] 提取） */
     aiTranslation: string;
+    /** 当前通话内最近字幕记录，用于页面内回溯 */
+    subtitleHistory: VoiceCallSubtitleEntry[];
     // ─── 音量控制 ───
     volume: number;
     setVolume: (v: number) => void;
@@ -151,15 +171,65 @@ function writeString(view: DataView, offset: number, str: string): void {
  * 构建通话专用 TTS 配置：覆盖格式为 PCM，采样率 24kHz。
  * 不修改全局 TtsConfig，保持聊天 TTS 的 mp3 设置不变。
  */
-export function buildVoiceCallTtsConfig(base: TtsConfig): TtsConfig {
+const VOICE_CALL_TTS_LANGUAGE_BOOST_MAP: Record<string, string> = {
+    '中文': 'Chinese',
+    'Chinese': 'Chinese',
+    '普通话': 'Chinese',
+    'English': 'English',
+    '英语': 'English',
+    '日本語': 'Japanese',
+    '日本语': 'Japanese',
+    '日语': 'Japanese',
+    '日文': 'Japanese',
+    'Japanese': 'Japanese',
+    '한국어': 'Korean',
+    '韩语': 'Korean',
+    'Korean': 'Korean',
+    'Français': 'French',
+    '法语': 'French',
+    'French': 'French',
+    'Español': 'Spanish',
+    '西班牙语': 'Spanish',
+    'Spanish': 'Spanish',
+};
+
+function resolveVoiceCallLanguageBoost(foreignLang?: VoiceCallForeignLangConfig): string | undefined {
+    const sourceLang = foreignLang?.sourceLang?.trim();
+    return sourceLang ? VOICE_CALL_TTS_LANGUAGE_BOOST_MAP[sourceLang] : undefined;
+}
+
+export function buildVoiceCallTtsConfig(base: TtsConfig, foreignLang?: VoiceCallForeignLangConfig): TtsConfig {
+    const languageBoost = resolveVoiceCallLanguageBoost(foreignLang);
     return {
         ...base,
+        ...(languageBoost ? { languageBoost } : {}),
         audioSetting: {
             ...base.audioSetting,
             format: 'pcm' as const,
             audio_sample_rate: VOICE_CALL_SAMPLE_RATE,
         },
     };
+}
+
+export function buildVoiceCallQueuedSentence(sentence: string): VoiceCallQueuedSentence | null {
+    const parsed = splitVoiceCallForeignSentence(sentence);
+    const spokenText = sanitizeVoiceCallAssistantText(parsed.spokenText);
+
+    if (!spokenText) {
+        return null;
+    }
+
+    return {
+        spokenText,
+        translationText: parsed.translationText,
+    };
+}
+
+export function getVoiceCallPlaybackSentence(
+    queue: VoiceCallQueuedSentence[],
+    index: number,
+): VoiceCallQueuedSentence | null {
+    return index >= 0 && index < queue.length ? queue[index] : null;
 }
 
 function buildVoiceCallRetrievalMessages(
@@ -208,9 +278,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
     const [transcript, setTranscript] = useState('');
     const [aiResponse, setAiResponse] = useState('');
     const [ttsDegraded, setTtsDegraded] = useState(false);
-    const [transcriptSource, setTranscriptSource] = useState<'voice' | 'text'>('voice');
+    const [transcriptSource, setTranscriptSource] = useState<VoiceCallTranscriptSource>('voice');
     // ─── 外语模式 (Foreign Language) ───
     const [aiTranslation, setAiTranslation] = useState('');
+    const [subtitleHistory, setSubtitleHistory] = useState<VoiceCallSubtitleEntry[]>([]);
     // ─── 通话质量反馈 ───
     const [sttEmptyHint, setSttEmptyHint] = useState(false);
     const sttEmptyHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -265,6 +336,23 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
     const turnAudioChunksRef = useRef<Uint8Array[]>([]);
     const turnAudioBlobsRef = useRef<Map<number, Blob>>(new Map());
     const recentContextMessagesRef = useRef<VoiceCallRecentContextMessage[]>([]);
+    const subtitleIdRef = useRef(0);
+
+    const pushSubtitle = useCallback((entry: Omit<VoiceCallSubtitleEntry, 'id'>) => {
+        const text = entry.text.trim();
+        const translation = entry.translation?.trim();
+        if (!text) return;
+
+        setSubtitleHistory(prev => [
+            ...prev,
+            {
+                ...entry,
+                id: ++subtitleIdRef.current,
+                text,
+                ...(translation ? { translation } : {}),
+            },
+        ].slice(-40));
+    }, []);
 
     // ── 语音拼接模式：缓冲用户连续语音段 + 去抖定时器 ──
     const pendingAudioSegmentsRef = useRef<Float32Array[]>([]);
@@ -274,7 +362,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
     // ─── 核心处理：用户消息（文字）→ LLM → TTS 管线 ─────────────────────
 
-    const processUserMessage = useCallback(async (text: string) => {
+    const processUserMessage = useCallback(async (
+        text: string,
+        source: VoiceCallTranscriptSource | 'system' = 'voice',
+    ) => {
         const opts = optionsRef.current;
 
         if (!engineActiveRef.current) return;
@@ -286,7 +377,12 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             setEngineState('processing');
             engineStateRef.current = 'processing';
             // 系统内部触发词（如 AI 来电开场白）不显示在界面上
-            setTranscript(text.startsWith('[系统：') ? '' : text);
+            const isSystemMessage = source === 'system' || text.startsWith('[系统：');
+            setTranscript(isSystemMessage ? '' : text);
+            if (!isSystemMessage) {
+                setTranscriptSource(source);
+                pushSubtitle({ role: 'user', text, source });
+            }
             setAiResponse('');
             // 仅 TTS 可用时才重置 ttsDegraded，避免纯文字模式下每轮闪烁
             if (ttsAvailableRef.current) {
@@ -366,13 +462,13 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }
             };
 
-            const vcTtsConfig = buildVoiceCallTtsConfig(opts.ttsConfig);
+            const vcTtsConfig = buildVoiceCallTtsConfig(opts.ttsConfig, opts.foreignLang);
 
             let ttsReady = false;
             let ttsConnectFailed = false;
             let reconnectAttempted = false;  // 防止无限重连
             // ── 降级句子队列：一句一句显示 ──
-            const degradedSentenceQueue: string[] = [];
+            const degradedSentenceQueue: VoiceCallQueuedSentence[] = [];
             let degradedDisplaying = false;  // 是否正在显示某句
 
             /** 显示下一句降级文字 */
@@ -389,24 +485,30 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }
                 degradedDisplaying = true;
                 const sentence = degradedSentenceQueue.shift()!;
-                setAiResponse(sanitizeVoiceCallAssistantText(sentence));
+                setAiResponse(sentence.spokenText);
+                setAiTranslation(sentence.translationText);
+                pushSubtitle({
+                    role: 'assistant',
+                    text: sentence.spokenText,
+                    translation: sentence.translationText,
+                });
                 // 显示时长：按字数计算，模拟阅读节奏
-                const displayMs = Math.max(2000, Math.min(6000, sentence.length * 120));
+                const displayMs = Math.max(2000, Math.min(6000, sentence.spokenText.length * 120));
                 setTimeout(() => {
                     showNextDegradedSentence();
                 }, displayMs);
             };
 
             /** 入队一句降级文字 */
-            const enqueueDegradedSentence = (sentence: string) => {
+            const enqueueDegradedSentence = (sentence: VoiceCallQueuedSentence) => {
                 degradedSentenceQueue.push(sentence);
                 if (!degradedDisplaying) {
                     showNextDegradedSentence();
                 }
             };
             let sentSentCount = 0;           // 已成功发送给 TTS 的句子数
-            const pendingSentences: string[] = [];
-            const sentenceQueue: string[] = [];
+            const pendingSentences: VoiceCallQueuedSentence[] = [];
+            const sentenceQueue: VoiceCallQueuedSentence[] = [];
 
             let ttsTaskFinished = false;
             let llmComplete = false;
@@ -421,8 +523,15 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
             player.onSentenceStart = (idx) => {
                 if (gen !== generationRef.current) return;
-                if (idx < sentenceQueue.length) {
-                    setAiResponse(sanitizeVoiceCallAssistantText(sentenceQueue[idx]));
+                const sentence = getVoiceCallPlaybackSentence(sentenceQueue, idx);
+                if (sentence) {
+                    setAiResponse(sentence.spokenText);
+                    setAiTranslation(sentence.translationText);
+                    pushSubtitle({
+                        role: 'assistant',
+                        text: sentence.spokenText,
+                        translation: sentence.translationText,
+                    });
                 }
             };
 
@@ -449,8 +558,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 opts.onAISpeakingChange(false);
                 setEngineState('processing');
                 engineStateRef.current = 'processing';
-                // 把 sentenceQueue 中已有的句子逐句入队显示
-                for (const s of sentenceQueue) {
+                // 把尚未完成播放的句子逐句入队显示
+                for (const s of sentenceQueue.slice(isFinalCount)) {
                     enqueueDegradedSentence(s);
                 }
             };
@@ -478,12 +587,12 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
                     // 重发未完成的句子（从 isFinalCount 位置开始）
                     for (let i = isFinalCount; i < sentenceQueue.length; i++) {
-                        newWs.sendText(sentenceQueue[i]);
+                        newWs.sendText(sentenceQueue[i].spokenText);
                         sentSentCount++;
                     }
                     // 刷空重连期间到达的新句子
                     for (const s of pendingSentences) {
-                        newWs.sendText(s);
+                        newWs.sendText(s.spokenText);
                         sentSentCount++;
                     }
                     pendingSentences.length = 0;
@@ -526,23 +635,13 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 await llm.chat(text, {
                     onSentence: (sentence) => {
                         if (gen !== generationRef.current || !engineActiveRef.current) return;
-                        // 外语模式翻译标记处理
-                        let ttsText = sentence;
-                        let translationText = '';
-                        const foreignLangMatch = sentence.match(/\[\[翻译\s*[：:]\s*(.*?)\]\]/);
-                        if (foreignLangMatch) {
-                            translationText = foreignLangMatch[1].trim();
-                            ttsText = sentence.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim();
-                        }
-                        const visibleText = sanitizeVoiceCallAssistantText(ttsText);
-                        if (!visibleText) {
-                            setAiTranslation('');
+                        const queuedSentence = buildVoiceCallQueuedSentence(sentence);
+                        if (!queuedSentence) {
                             return;
                         }
-                        setAiTranslation(translationText);
-                        console.log(`[Engine] LLM sentence (text-only): "${visibleText}"`);
-                        sentenceQueue.push(visibleText);
-                        enqueueDegradedSentence(visibleText);
+                        console.log(`[Engine] LLM sentence (text-only): "${queuedSentence.spokenText}"${queuedSentence.translationText ? ` (翻译: ${queuedSentence.translationText})` : ''}`);
+                        sentenceQueue.push(queuedSentence);
+                        enqueueDegradedSentence(queuedSentence);
                     },
                     onComplete: (full) => {
                         if (gen !== generationRef.current) return;
@@ -589,7 +688,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
                     // 连接期间 LLM 可能已产出句子 → 刷空 pendingSentences
                     for (const s of pendingSentences) {
-                        ttsWs.sendText(s);
+                        ttsWs.sendText(s.spokenText);
                         sentSentCount++;
                     }
                     pendingSentences.length = 0;
@@ -612,42 +711,29 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 onSentence: async (sentence) => {
                     if (gen !== generationRef.current || !engineActiveRef.current) return;
 
-                    // ─── 外语模式 (Foreign Language): 分离原文与翻译标记 ───
-                    let ttsText = sentence;       // 送 TTS 朗读的文本
-                    let translationText = '';      // 提取的翻译（送 UI 字幕）
-                    const foreignLangMatch = sentence.match(/\[\[翻译\s*[：:]\s*(.*?)\]\]/);
-                    if (foreignLangMatch) {
-                        translationText = foreignLangMatch[1].trim();
-                        ttsText = sentence.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim();
-                    }
-                    const visibleTtsText = sanitizeVoiceCallAssistantText(ttsText);
-                    if (!visibleTtsText) {
-                        setAiTranslation('');
-                        console.warn(`[Engine] Dropped voice-call meta narration: "${ttsText}"`);
+                    const queuedSentence = buildVoiceCallQueuedSentence(sentence);
+                    if (!queuedSentence) {
+                        console.warn(`[Engine] Dropped voice-call meta narration: "${sentence}"`);
                         return;
                     }
 
-                    // 始终同步翻译状态（无标记时清空，防止残留上一句的翻译）
-                    setAiTranslation(translationText);
-                    // ─── /外语模式 ───
-
-                    console.log(`[Engine] LLM sentence: "${visibleTtsText}"${translationText ? ` (翻译: ${translationText})` : ''}`);
-                    sentenceQueue.push(visibleTtsText);
+                    console.log(`[Engine] LLM sentence: "${queuedSentence.spokenText}"${queuedSentence.translationText ? ` (翻译: ${queuedSentence.translationText})` : ''}`);
+                    sentenceQueue.push(queuedSentence);
 
                     // TTS 已失败 → 降级为逐句文字展示
                     if (ttsConnectFailed) {
-                        enqueueDegradedSentence(visibleTtsText);
+                        enqueueDegradedSentence(queuedSentence);
                         return;
                     }
 
                     // TTS 预连接已完成 → 直接发送
                     if (ttsReady) {
-                        try { ttsWs.sendText(visibleTtsText); sentSentCount++; } catch (err) {
+                        try { ttsWs.sendText(queuedSentence.spokenText); sentSentCount++; } catch (err) {
                             console.error('[Engine] TTS sendText error:', err);
                         }
                     } else {
                         // 预连接尚未完成 → 缓冲，连接成功后自动 flush
-                        pendingSentences.push(visibleTtsText);
+                        pendingSentences.push(queuedSentence);
                     }
                 },
                 onComplete: (full) => {
@@ -698,7 +784,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             engineStateRef.current = 'listening';
             optionsRef.current.onAISpeakingChange(false);
         }
-    }, []);
+    }, [pushSubtitle]);
 
     // ─── STT 入口：VAD 音频 → STT → processUserMessage ───────────────────
 
@@ -740,8 +826,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             }
 
             console.log(`[Engine] STT result: "${text}"`);
-            setTranscriptSource('voice');  // Fix I
-            await processUserMessage(text);
+            await processUserMessage(text, 'voice');
         } catch (err: any) {
             if (gen !== generationRef.current) return;
             console.error('[Engine] STT error:', err);
@@ -813,8 +898,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             stopCurrentTurn();
         }
         // Fix C: gen 由 processUserMessage 内部递增，此处不再手动递增
-        setTranscriptSource('text');  // Fix I
-        processUserMessage(trimmed);
+        processUserMessage(trimmed, 'text');
     }, [stopCurrentTurn, processUserMessage]);
 
 
@@ -839,6 +923,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         console.log('[Engine] Starting voice call engine...');
         engineActiveRef.current = true;
         generationRef.current = 0;
+        subtitleIdRef.current = 0;
+        setSubtitleHistory([]);
+        setAiTranslation('');
 
         try {
             const recentContextPromise = DB.getRecentMessagesByCharId(opts.char.id, RECENT_CHAT_CONTEXT_LIMIT)
@@ -1023,7 +1110,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }
 
                 if (engineActiveRef.current) {
-                    processUserMessage('[系统：电话接通，请说开场白]');
+                    processUserMessage('[系统：电话接通，请说开场白]', 'system');
                 }
             }, 300);
         } catch (err: any) {
@@ -1033,7 +1120,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             setEngineState('idle');
             engineStateRef.current = 'idle';
         }
-    }, [processConcatenatedAudio, handleBargeIn, stopCurrentTurn]);
+    }, [processConcatenatedAudio, handleBargeIn, processUserMessage]);
 
     // ─── 停止引擎 ──────────────────────────────────────────────────
 
@@ -1160,6 +1247,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         sttEmptyHint,
         // ─── 外语模式 (Foreign Language) ───
         aiTranslation,
+        subtitleHistory,
         // ─── 音量控制 ───
         volume,
         setVolume,

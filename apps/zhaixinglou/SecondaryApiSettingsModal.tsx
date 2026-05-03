@@ -127,7 +127,7 @@ const SecondaryApiSettingsModal: React.FC<Props> = ({
                     <div>
                         <label className="text-[10px] text-white/40 tracking-widest uppercase block mb-1.5">API 密钥 (Key)</label>
                         <input
-                            type="password"
+                            type="text"
                             value={localApiKey}
                             onChange={e => setLocalApiKey(e.target.value)}
                             placeholder="sk-..."

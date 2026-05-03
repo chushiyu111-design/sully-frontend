@@ -1,6 +1,6 @@
 
 import React,{ memo,useCallback,useState,useRef,useEffect } from 'react';
-import { AppID,CharacterProfile,CharacterExportData,UserImpression,MemoryFragment } from '../types';
+import { AppID,CharacterProfile,CharacterExportData,UserImpression,MemoryFragment,Worldbook } from '../types';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
@@ -20,9 +20,15 @@ import { useCharacterScreenDeps } from '../hooks/useCharacterScreenDeps';
 import type { CharacterUpdateOptions } from '../context/CharacterContext';
 
 const CHARACTER_AUTO_SAVE_DEBOUNCE_MS = 350;
+const DEFAULT_WORLDBOOK_CATEGORY = '未分类设定 (General)';
 type MountedWorldbook = NonNullable<CharacterProfile['mountedWorldbooks']>[number];
 type CharacterPatchCommitOptions = CharacterUpdateOptions & {
     persistImmediately?: boolean;
+};
+type ImportedWorldbookSyncResult = {
+    mountedWorldbooks: MountedWorldbook[];
+    savedWorldbookCount: number;
+    conflictCount: number;
 };
 
 function getWorldbookPositionBadgeClass(position?: MountedWorldbook['position']): string {
@@ -42,11 +48,59 @@ function getWorldbookPositionLabel(position?: MountedWorldbook['position']): str
         return '人设之前';
     }
 
+    if (position === 'after_worldview') {
+        return '世界观之后';
+    }
+
     if (position === 'bottom') {
         return '记忆之后';
     }
 
     return '印象之后';
+}
+
+function getWorldbookPositionDescription(position?: MountedWorldbook['position']): string {
+    return getWorldbookPositionLabel(position || 'after_worldview');
+}
+
+function areWorldbookContentsEqual(existingContent: string, importedContent?: string): boolean {
+    return (existingContent || '').trim() === (importedContent || '').trim();
+}
+
+function buildImportedWorldbookId(usedIds: Set<string>, index: number): string {
+    let suffix = 0;
+    let candidate = `wb-imported-${Date.now()}-${index}`;
+    while (usedIds.has(candidate)) {
+        suffix += 1;
+        candidate = `wb-imported-${Date.now()}-${index}-${suffix}`;
+    }
+    usedIds.add(candidate);
+    return candidate;
+}
+
+function buildWorldbookFromMounted(mounted: MountedWorldbook, id: string, timestamp: number): Worldbook {
+    const title = mounted.title?.trim() || '未命名世界书';
+    const category = mounted.category?.trim() || DEFAULT_WORLDBOOK_CATEGORY;
+
+    return {
+        id,
+        title,
+        content: mounted.content || '',
+        category,
+        position: mounted.position || 'after_worldview',
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    };
+}
+
+function buildMountedWorldbookFromWorldbook(book: Worldbook): MountedWorldbook {
+    return {
+        id: book.id,
+        title: book.title,
+        content: book.content,
+        category: book.category,
+        position: book.position,
+    };
 }
 
 const CharacterCard: React.FC<{
@@ -95,6 +149,7 @@ const CharacterIdentitySupportPanels: React.FC<{
     mountedWorldbooks?: CharacterProfile['mountedWorldbooks'];
     onEditLocation: () => void;
     onOpenWorldbookModal: () => void;
+    onPreviewWorldbook: (book: MountedWorldbook) => void;
     onMoveWorldbook: (index: number, direction: 'up' | 'down') => void;
     onUnmountWorldbook: (bookId: string) => void;
 }> = memo(({
@@ -105,6 +160,7 @@ const CharacterIdentitySupportPanels: React.FC<{
     mountedWorldbooks,
     onEditLocation,
     onOpenWorldbookModal,
+    onPreviewWorldbook,
     onMoveWorldbook,
     onUnmountWorldbook,
 }) => (
@@ -126,7 +182,12 @@ const CharacterIdentitySupportPanels: React.FC<{
                 {mountedWorldbooks && mountedWorldbooks.length > 0 ? (
                     mountedWorldbooks.map((wb, index) => (
                         <div key={wb.id} className="flex items-center justify-between bg-white px-3 py-2.5 rounded-2xl border border-indigo-50 shadow-sm group">
-                            <div className="flex items-center gap-2 min-w-0">
+                            <button
+                                type="button"
+                                onClick={() => onPreviewWorldbook(wb)}
+                                className="flex items-center gap-2 min-w-0 text-left flex-1 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                aria-label={`查看世界书 ${wb.title}`}
+                            >
                                 <span className="text-[10px] font-mono text-slate-300 w-4 text-center shrink-0">{index + 1}</span>
                                 <span className="text-lg shrink-0">📖</span>
                                 <div className="flex flex-col min-w-0">
@@ -140,15 +201,15 @@ const CharacterIdentitySupportPanels: React.FC<{
                                         )}
                                     </div>
                                 </div>
-                            </div>
+                            </button>
                             <div className="flex items-center gap-0.5 shrink-0 ml-2">
-                                <button onClick={() => onMoveWorldbook(index, 'up')} disabled={index === 0} className="text-slate-300 hover:text-indigo-500 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors" title="上移">
+                                <button type="button" onClick={() => onMoveWorldbook(index, 'up')} disabled={index === 0} className="text-slate-300 hover:text-indigo-500 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors" title="上移">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" /></svg>
                                 </button>
-                                <button onClick={() => onMoveWorldbook(index, 'down')} disabled={index === mountedWorldbooks.length - 1} className="text-slate-300 hover:text-indigo-500 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors" title="下移">
+                                <button type="button" onClick={() => onMoveWorldbook(index, 'down')} disabled={index === mountedWorldbooks.length - 1} className="text-slate-300 hover:text-indigo-500 disabled:opacity-20 disabled:cursor-not-allowed p-1 transition-colors" title="下移">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
                                 </button>
-                                <button onClick={() => onUnmountWorldbook(wb.id)} className="text-slate-300 hover:text-red-400 p-1 transition-colors" title="卸载">×</button>
+                                <button type="button" onClick={() => onUnmountWorldbook(wb.id)} className="text-slate-300 hover:text-red-400 p-1 transition-colors" title="卸载">×</button>
                             </div>
                         </div>
                     ))
@@ -164,7 +225,7 @@ const CharacterIdentitySupportPanels: React.FC<{
 CharacterIdentitySupportPanels.displayName = 'CharacterIdentitySupportPanels';
 
 const CharacterComponent: React.FC = () => {
-    const { closeApp, openApp, characters, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useCharacterScreenDeps();
+    const { closeApp, openApp, characters, setActiveCharacterId, setCharacters, setWorldbooks, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useCharacterScreenDeps();
     const [view, setView] = useState<'list' | 'detail'>('list');
     const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
     const [identitySubView, setIdentitySubView] = useState<'main' | 'location'>('main');
@@ -188,6 +249,7 @@ const CharacterComponent: React.FC = () => {
     const [showBatchModal, setShowBatchModal] = useState(false);
     const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<string | null>(null);
     const [showWorldbookModal, setShowWorldbookModal] = useState(false); // New Modal
+    const [previewWorldbook, setPreviewWorldbook] = useState<MountedWorldbook | null>(null);
 
     const [importText, setImportText] = useState('');
     const [exportText, setExportText] = useState('');
@@ -391,6 +453,10 @@ const CharacterComponent: React.FC = () => {
         setShowWorldbookModal(true);
     }, []);
 
+    const handlePreviewWorldbook = useCallback((book: MountedWorldbook) => {
+        setPreviewWorldbook(book);
+    }, []);
+
     const handleShowIdentityTab = useCallback(() => {
         flushPendingCharacterEditsBeforeLeave();
         setDetailTab('identity');
@@ -517,6 +583,68 @@ const CharacterComponent: React.FC = () => {
             return nextBooks;
         });
     }, [updateMountedWorldbooks]);
+
+    const syncImportedMountedWorldbooks = useCallback(async (importedMountedWorldbooks?: CharacterProfile['mountedWorldbooks']): Promise<ImportedWorldbookSyncResult> => {
+        if (!Array.isArray(importedMountedWorldbooks) || importedMountedWorldbooks.length === 0) {
+            return {
+                mountedWorldbooks: [],
+                savedWorldbookCount: 0,
+                conflictCount: 0,
+            };
+        }
+
+        const existingById = new Map(worldbooks.map(book => [book.id, book]));
+        const usedIds = new Set(worldbooks.map(book => book.id));
+        const booksToSave: Worldbook[] = [];
+        const normalizedMountedWorldbooks: MountedWorldbook[] = [];
+        let conflictCount = 0;
+
+        importedMountedWorldbooks.forEach((mounted, index) => {
+            const importedId = typeof mounted.id === 'string' && mounted.id.trim()
+                ? mounted.id.trim()
+                : buildImportedWorldbookId(usedIds, index);
+            const existingBook = existingById.get(importedId);
+            let finalBook: Worldbook;
+
+            if (existingBook && areWorldbookContentsEqual(existingBook.content, mounted.content)) {
+                finalBook = existingBook;
+            } else {
+                const finalId = existingBook
+                    ? buildImportedWorldbookId(usedIds, index)
+                    : importedId;
+                const timestamp = Date.now();
+                finalBook = buildWorldbookFromMounted(mounted, finalId, timestamp);
+                booksToSave.push(finalBook);
+                existingById.set(finalBook.id, finalBook);
+                usedIds.add(finalBook.id);
+
+                if (existingBook) {
+                    conflictCount += 1;
+                }
+            }
+
+            normalizedMountedWorldbooks.push(buildMountedWorldbookFromWorldbook(finalBook));
+        });
+
+        if (booksToSave.length > 0) {
+            await Promise.all(booksToSave.map(book => DB.saveWorldbook(book)));
+            setWorldbooks(prev => {
+                const nextById = new Map(prev.map(book => [book.id, book]));
+                booksToSave.forEach(book => {
+                    if (!nextById.has(book.id)) {
+                        nextById.set(book.id, book);
+                    }
+                });
+                return Array.from(nextById.values());
+            });
+        }
+
+        return {
+            mountedWorldbooks: normalizedMountedWorldbooks,
+            savedWorldbookCount: booksToSave.length,
+            conflictCount,
+        };
+    }, [setWorldbooks, worldbooks]);
 
     // ... (Other handlers unchanged)
     const handleToggleActiveMonth = (year: string, month: string) => {
@@ -1060,9 +1188,12 @@ ${isInitialGeneration ? `
                     }
                 }
 
+                const syncedWorldbooks = await syncImportedMountedWorldbooks(data.mountedWorldbooks);
+
                 const newChar: CharacterProfile = {
                     ...data,
                     id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    mountedWorldbooks: syncedWorldbooks.mountedWorldbooks,
                     memories: [],
                     refinedMemories: {},
                     activeMemoryMonths: [],
@@ -1070,10 +1201,22 @@ ${isInitialGeneration ? `
                 } as CharacterProfile;
 
                 await DB.saveCharacter(newChar);
-                addCharacter(); // Force refresh (naive)
-                setTimeout(() => window.location.reload(), 500);
+                setCharacters(prev => [...prev, newChar]);
+                setActiveCharacterId(newChar.id);
+                skipNextAutoSaveRef.current = true;
+                setDetailTab('identity');
+                setIdentitySubView('main');
+                setEditingId(newChar.id);
+                setFormData(newChar);
+                setView('detail');
 
-                addToast(`角色 ${newChar.name} 导入成功`, 'success');
+                const worldbookHint = syncedWorldbooks.savedWorldbookCount > 0
+                    ? `，已同步 ${syncedWorldbooks.savedWorldbookCount} 本世界书`
+                    : '';
+                const conflictHint = syncedWorldbooks.conflictCount > 0
+                    ? `，其中 ${syncedWorldbooks.conflictCount} 本因同 ID 内容不同已另存`
+                    : '';
+                addToast(`角色 ${newChar.name} 导入成功${worldbookHint}${conflictHint}`, 'success');
 
             } catch (err: any) {
                 console.error(err);
@@ -1169,6 +1312,7 @@ ${isInitialGeneration ? `
                                     mountedWorldbooks={formData.mountedWorldbooks}
                                     onEditLocation={handleOpenLocationView}
                                     onOpenWorldbookModal={handleOpenWorldbookModal}
+                                    onPreviewWorldbook={handlePreviewWorldbook}
                                     onMoveWorldbook={moveWorldbook}
                                     onUnmountWorldbook={unmountWorldbook}
                                 />
@@ -1357,6 +1501,36 @@ ${isInitialGeneration ? `
             {showExportModal && (
                 <Modal isOpen={showExportModal} title="导出文本" onClose={() => setShowExportModal(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => { navigator.clipboard.writeText(exportText); addToast('已复制', 'success'); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">复制全文</button>{Capacitor.isNativePlatform() ? (<button onClick={handleNativeShare} className="flex-1 py-3 bg-slate-800 text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>文件分享</button>) : (<button onClick={handleWebFileDownload} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>下载文本</button>)}</div>}>
                     <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-2"><div className="text-[10px] text-slate-400">已自动复制到剪贴板。如果分享失败，请直接使用下方复制按钮。</div><textarea value={exportText} readOnly className="w-full h-40 bg-transparent border-none text-[10px] font-mono text-slate-600 resize-none focus:ring-0 leading-relaxed" /></div>
+                </Modal>
+            )}
+
+            {previewWorldbook && (
+                <Modal
+                    isOpen={!!previewWorldbook}
+                    title="世界书预览"
+                    onClose={() => setPreviewWorldbook(null)}
+                >
+                    <div className="space-y-3">
+                        <div className="rounded-2xl bg-indigo-50 border border-indigo-100 px-4 py-3">
+                            <h3 className="text-sm font-bold text-slate-800 break-words">{previewWorldbook.title || '未命名世界书'}</h3>
+                            <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold">
+                                <span className="px-2 py-1 rounded-full bg-white text-slate-500 border border-indigo-100">{previewWorldbook.category || DEFAULT_WORLDBOOK_CATEGORY}</span>
+                                <span className={`px-2 py-1 rounded-full ${getWorldbookPositionBadgeClass(previewWorldbook.position)}`}>{getWorldbookPositionDescription(previewWorldbook.position)}</span>
+                            </div>
+                        </div>
+                        <div className="text-[11px] leading-relaxed text-indigo-600 bg-white border border-indigo-100 rounded-2xl px-4 py-3">
+                            将随该角色注入聊天上下文
+                        </div>
+                        {previewWorldbook.content && previewWorldbook.content.trim() ? (
+                            <pre className="max-h-[45vh] overflow-y-auto whitespace-pre-wrap break-words rounded-2xl bg-slate-50 border border-slate-100 p-4 text-xs leading-relaxed text-slate-700 font-mono">
+                                {previewWorldbook.content}
+                            </pre>
+                        ) : (
+                            <div className="rounded-2xl bg-amber-50 border border-amber-100 px-4 py-3 text-xs leading-relaxed text-amber-700">
+                                内容为空，当前不会读取到可用设定。
+                            </div>
+                        )}
+                    </div>
                 </Modal>
             )}
 

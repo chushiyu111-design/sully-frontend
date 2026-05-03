@@ -94,7 +94,7 @@ const SttSettings: React.FC = () => {
                 <div>
                     <label className="text-[10px] font-bold text-[#8b9bb1] uppercase tracking-widest mb-1.5 block pl-1">Groq API Key</label>
                     <input
-                        type="password"
+                        type="text"
                         value={sttGroqKey}
                         onChange={e => setSttGroqKey(e.target.value)}
                         placeholder="gsk_..."
@@ -110,7 +110,7 @@ const SttSettings: React.FC = () => {
                 <div>
                     <label className="text-[10px] font-bold text-[#8b9bb1] uppercase tracking-widest mb-1.5 block pl-1">硅基流动 API Key</label>
                     <input
-                        type="password"
+                        type="text"
                         value={sttSiliconKey}
                         onChange={e => setSttSiliconKey(e.target.value)}
                         placeholder="sk-..."

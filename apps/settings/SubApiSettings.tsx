@@ -181,7 +181,7 @@ const SubApiSettings: React.FC = () => {
 
                     <div>
                         <label className="text-[10px] font-bold text-[#b0a48a] uppercase tracking-widest mb-1.5 block pl-1">Key</label>
-                        <input type="password" value={subKey} onChange={e => setSubKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'secret', field: 'secondary-api-key' })} />
+                        <input type="text" value={subKey} onChange={e => setSubKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'secret', field: 'secondary-api-key' })} />
                     </div>
 
                     <div>

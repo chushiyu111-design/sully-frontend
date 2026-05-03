@@ -504,7 +504,7 @@ const EmbeddingSettings: React.FC = () => {
                 <div>
                     <label className="text-[10px] font-bold text-[#8da3b7] uppercase tracking-widest mb-1.5 block pl-1">API Key</label>
                     <input
-                        type="password"
+                        type="text"
                         value={embeddingKey}
                         onChange={(event) => setEmbeddingKey(event.target.value)}
                         placeholder="sk-..."

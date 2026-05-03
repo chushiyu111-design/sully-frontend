@@ -430,9 +430,17 @@ export const getRecentGroupMessagesWithCount = async (groupId: string, limit: nu
 export const saveScheduledMessage = async (msg: ScheduledMessage): Promise<void> => {
     const contentCharId = await resolveCharacterContentId(msg.charId);
     const db = await openDB();
-    db.transaction(STORE_SCHEDULED, 'readwrite').objectStore(STORE_SCHEDULED).put(
-        withCurrentOwner({ ...msg, charId: contentCharId }),
-    );
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_SCHEDULED, 'readwrite');
+        const store = tx.objectStore(STORE_SCHEDULED);
+        const request = store.put(withCurrentOwner({ ...msg, charId: contentCharId }));
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => {
+            if (tx.error) reject(tx.error);
+        };
+    });
 };
 
 export const getDueScheduledMessages = async (charId: string): Promise<ScheduledMessage[]> => {

@@ -77,4 +77,26 @@ describe('HalfSugar health data injection', () => {
             content: '[2026-04-21 10:30] [生活感知] TA早餐吃了酸奶，约120千卡',
         });
     });
+
+    it('injects mounted worldbook content into the core context', () => {
+        const context = ContextBuilder.buildCoreContext(
+            {
+                ...baseCharacter,
+                mountedWorldbooks: [{
+                    id: 'wb-1',
+                    title: '跟随角色卡的世界书',
+                    content: '这段设定来自角色卡导入，并且应该进入聊天上下文。',
+                    category: '导入设定',
+                    position: 'after_worldview',
+                }],
+            },
+            baseUser,
+            false,
+            'vector',
+        );
+
+        expect(context).toContain('跟随角色卡的世界书');
+        expect(context).toContain('这段设定来自角色卡导入，并且应该进入聊天上下文。');
+        expect(context).toContain('扩展设定集 (Worldbooks)');
+    });
 });

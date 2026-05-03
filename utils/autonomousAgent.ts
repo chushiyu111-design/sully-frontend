@@ -610,23 +610,26 @@ export class BackendAgentManager {
             }
         }
 
-        await DB.saveScheduledMessage({
-            id: `backend-${message.id}`,
+        const backendMessageId = String(message.id);
+        const msgMeta = {
+            source,
+            reason: metadata.reason,
+            backendMessageId,
+            fromBackend: true,
+            ...(targetClientId ? { targetClientId } : {}),
+            ...(metadata.originalTimestamp ? { originalTimestamp: metadata.originalTimestamp } : {}),
+            ...(metadata.fromWeixinId ? { fromWeixinId: metadata.fromWeixinId } : {}),
+            ...(metadata.bubbleIndex !== undefined ? { bubbleIndex: metadata.bubbleIndex } : {}),
+        };
+
+        // Save directly to messages store (bypass scheduled queue to avoid lost messages)
+        await DB.saveMessageOnceByBackendId({
             charId: this.charId,
             role,
+            type: 'text',
             content: message.content,
-            dueAt: now + (options.delayMs || 0),
-            createdAt: message.createdAt || message.created_at || now,
-            metadata: {
-                source,
-                reason: metadata.reason,
-                backendMessageId: String(message.id),
-                fromBackend: true,
-                ...(targetClientId ? { targetClientId } : {}),
-                ...(metadata.originalTimestamp ? { originalTimestamp: metadata.originalTimestamp } : {}),
-                ...(metadata.fromWeixinId ? { fromWeixinId: metadata.fromWeixinId } : {}),
-                ...(metadata.bubbleIndex !== undefined ? { bubbleIndex: metadata.bubbleIndex } : {}),
-            },
+            timestamp: message.createdAt || message.created_at || now,
+            metadata: msgMeta,
         });
     }
 
@@ -787,7 +790,7 @@ export class BackendAgentManager {
         const isDebug = getAutonomousDebugEnabled();
 
         try {
-            const messages = await fetchPendingAgentMessages(this.charId);
+            const messages = await fetchPendingAgentMessages(this.charId, { includeDelivered: true });
             if (messages.length === 0) return;
 
             if (isDebug) {

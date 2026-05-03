@@ -527,7 +527,7 @@ Generate realistic results linking to hypothetical URLs.`;
                     <div>
                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Brave Search API Key</label>
                         <input 
-                            type="password"
+                            type="text"
                             value={braveKey} 
                             onChange={e => setBraveKey(e.target.value)} 
                             placeholder="BSA-..." 

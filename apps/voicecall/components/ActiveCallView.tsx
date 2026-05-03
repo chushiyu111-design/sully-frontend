@@ -4,7 +4,7 @@ import AudioVisualizer from './AudioVisualizer';
 import AvatarPulse from './AvatarPulse';
 import { formatDuration } from '../utils';
 import { sanitizeVoiceCallAssistantText } from '../voiceCallTextSanitizer';
-import type { EngineState } from '../useVoiceCallEngine';
+import type { EngineState,VoiceCallSubtitleEntry } from '../useVoiceCallEngine';
 import type { VoiceCallMode } from '../voiceCallTypes';
 
 // ─── 打字机效果组件 ────────────────────────────────────────────
@@ -87,6 +87,8 @@ interface ActiveCallViewProps {
     // ─── 外语模式 (Foreign Language) ───
     /** AI 回复的翻译文本（外语模式下显示） */
     aiTranslation?: string;
+    /** 当前通话内字幕记录，用于页面内回溯 */
+    subtitleHistory?: VoiceCallSubtitleEntry[];
     // ─── 音量控制 ───
     volume?: number;
     onVolumeChange?: (v: number) => void;
@@ -113,6 +115,7 @@ const ActiveCallView: React.FC<ActiveCallViewProps> = ({
     transcriptSource = 'voice',
     // ─── 外语模式 (Foreign Language) ───
     aiTranslation = '',
+    subtitleHistory = [],
     // ─── 音量控制 ───
     volume = 1,
     onVolumeChange,
@@ -152,12 +155,19 @@ const ActiveCallView: React.FC<ActiveCallViewProps> = ({
 
     // 降级文字区自动滚动到底部
     const degradedScrollRef = useRef<HTMLDivElement>(null);
+    const subtitleHistoryRef = useRef<HTMLDivElement>(null);
     const visibleAiResponse = sanitizeVoiceCallAssistantText(displayedAiResponse);
     useEffect(() => {
         if (ttsDegraded && degradedScrollRef.current) {
             degradedScrollRef.current.scrollTop = degradedScrollRef.current.scrollHeight;
         }
     }, [visibleAiResponse, ttsDegraded]);
+
+    useEffect(() => {
+        if (subtitleHistoryRef.current) {
+            subtitleHistoryRef.current.scrollTop = subtitleHistoryRef.current.scrollHeight;
+        }
+    }, [subtitleHistory]);
 
     // ─── 响应延迟预警（processing 状态超时提示）───────────────
     const [delayHint, setDelayHint] = useState<'' | 'thinking' | 'slow'>('');
@@ -313,6 +323,27 @@ const ActiveCallView: React.FC<ActiveCallViewProps> = ({
                             <p className={`vc-quality-hint vc-animate-fade ${delayHint === 'slow' ? 'vc-quality-hint--warn' : ''}`}>
                                 {delayHint === 'thinking' ? '思考中，请稍等…' : '网络可能不稳定'}
                             </p>
+                        )}
+
+                        {subtitleHistory.length > 0 && (
+                            <div className="vc-subtitle-history" ref={subtitleHistoryRef}>
+                                {subtitleHistory.map((entry) => (
+                                    <div
+                                        key={entry.id}
+                                        className={`vc-subtitle-history-entry vc-subtitle-history-entry--${entry.role}`}
+                                    >
+                                        <span className="vc-subtitle-history-label">
+                                            {entry.role === 'user'
+                                                ? (entry.source === 'text' ? '你发送' : '你')
+                                                : name}
+                                        </span>
+                                        <span className="vc-subtitle-history-text">{entry.text}</span>
+                                        {entry.translation && (
+                                            <span className="vc-subtitle-history-translation">{entry.translation}</span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         )}
 
                         {/* 用户说的话 — 悬浮字幕 */}

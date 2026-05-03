@@ -14,10 +14,12 @@ import {
     hasLayeredStatusTemplate,
     splitStatusTemplateHtml,
 } from '../utils/statusTemplateComposer';
+import { AUTOFILL_SUPPRESSION_REACT_PROPS } from '../utils/autofillSuppression';
 
 type TabId = 'system' | 'protocol' | 'interaction' | 'html' | 'css' | 'js';
 type GenerationStep = 'system' | 'protocol' | 'html' | 'css' | 'js';
 type GenerationMode = 'iterate' | 'replace';
+type PreviewMode = 'visual' | 'extract';
 type ReviewFlag = keyof StatusWorkshopReviewFlags;
 
 export type GeneratorField = {
@@ -30,6 +32,17 @@ type DebouncedPreviewUpdate = ((html: string, allowScripts?: boolean) => void) &
     cancel: () => void;
 };
 
+export type StatusTemplateExtractionValidation = {
+    status: 'missing_regex' | 'invalid_regex' | 'no_match' | 'missing_groups' | 'ok';
+    severity: 'neutral' | 'error' | 'warning' | 'success';
+    sampleStatusText: string;
+    placeholders: number[];
+    missingPlaceholders: number[];
+    captureCount: number;
+    messages: string[];
+    matchResult: RegExpMatchArray | null;
+};
+
 const DEFAULT_GENERATOR_FIELDS: GeneratorField[] = [
     { id: 'default-time', name: '时间', desc: '当前时间 HH:MM' },
     { id: 'default-location', name: '地点', desc: '角色所在位置' },
@@ -37,10 +50,7 @@ const DEFAULT_GENERATOR_FIELDS: GeneratorField[] = [
 ];
 
 const WORKSHOP_TEXT_ENTRY_PROPS = {
-    autoComplete: 'off',
-    autoCorrect: 'off',
-    autoCapitalize: 'none',
-    spellCheck: false,
+    ...AUTOFILL_SUPPRESSION_REACT_PROPS,
 } as const;
 
 const WORKSHOP_TEXT_INPUT_PROPS = {
@@ -169,6 +179,138 @@ function formatFieldList(fields: GeneratorField[] | TemplateField[]): string {
             return `- ${name}: ${description || `字段 ${index + 1} 的状态值`}（占位符 $${index + 1}）`;
         })
         .join('\n');
+}
+
+function getFieldName(field: GeneratorField | TemplateField, index: number): string {
+    return (field.name || '').trim() || `字段${index + 1}`;
+}
+
+export function buildStatusContract(fields: GeneratorField[] | TemplateField[]): string {
+    const lines = fields.length
+        ? fields.map((field, index) => `${getFieldName(field, index)}: 值`)
+        : ['字段1: 值'];
+
+    return ['<status>', ...lines, '</status>'].join('\n');
+}
+
+export function buildStatusSample(fields: GeneratorField[] | TemplateField[]): string {
+    const lines = fields.length
+        ? fields.map((field, index) => {
+            const name = getFieldName(field, index);
+            return `${name}: ${name}示例值`;
+        })
+        : ['字段1: 字段1示例值'];
+
+    return ['<status>', ...lines, '</status>'].join('\n');
+}
+
+export function extractTemplatePlaceholders(source: string): number[] {
+    const placeholders = new Set<number>();
+    for (const match of source.matchAll(/\$(\d+)/g)) {
+        const index = Number(match[1]);
+        if (Number.isInteger(index) && index > 0) {
+            placeholders.add(index);
+        }
+    }
+
+    return Array.from(placeholders).sort((a, b) => a - b);
+}
+
+function getTemplatePlaceholderSource(template: CustomStatusTemplate): string {
+    if (hasLayeredStatusTemplate(template)) {
+        return [
+            template.htmlBody || '',
+            template.cssTemplate || '',
+            template.jsTemplate || '',
+        ].join('\n');
+    }
+
+    return template.htmlTemplate || '';
+}
+
+export function validateStatusTemplateExtraction(
+    template: CustomStatusTemplate,
+    sampleStatusText: string,
+): StatusTemplateExtractionValidation {
+    const placeholders = extractTemplatePlaceholders(getTemplatePlaceholderSource(template));
+    const regexSource = (template.extractRegex || '').trim();
+
+    if (!regexSource) {
+        return {
+            status: 'missing_regex',
+            severity: 'neutral',
+            sampleStatusText,
+            placeholders,
+            missingPlaceholders: placeholders,
+            captureCount: 0,
+            messages: ['生成或填写提取正则后，这里会用样例状态记录检查 $1、$2 是否真的抓得到。'],
+            matchResult: null,
+        };
+    }
+
+    let matchResult: RegExpMatchArray | null = null;
+    try {
+        matchResult = sampleStatusText.match(new RegExp(regexSource, 's'));
+    } catch (error: any) {
+        return {
+            status: 'invalid_regex',
+            severity: 'error',
+            sampleStatusText,
+            placeholders,
+            missingPlaceholders: placeholders,
+            captureCount: 0,
+            messages: [`正则无效：${error?.message || '无法解析这个表达式'}`],
+            matchResult: null,
+        };
+    }
+
+    if (!matchResult) {
+        return {
+            status: 'no_match',
+            severity: 'error',
+            sampleStatusText,
+            placeholders,
+            missingPlaceholders: placeholders,
+            captureCount: 0,
+            messages: ['提取正则没有匹配样例状态记录，状态写法和提取正则不一致。'],
+            matchResult: null,
+        };
+    }
+
+    const captureCount = Math.max(matchResult.length - 1, 0);
+    const missingPlaceholders = placeholders.filter(index => index > captureCount);
+
+    if (missingPlaceholders.length > 0) {
+        return {
+            status: 'missing_groups',
+            severity: 'warning',
+            sampleStatusText,
+            placeholders,
+            missingPlaceholders,
+            captureCount,
+            messages: [
+                `正则只捕获 ${captureCount} 个值，但模板用了 ${missingPlaceholders.map(index => `$${index}`).join('、')}。这些位置在正式聊天里会留空。`,
+            ],
+            matchResult,
+        };
+    }
+
+    return {
+        status: 'ok',
+        severity: 'success',
+        sampleStatusText,
+        placeholders,
+        missingPlaceholders: [],
+        captureCount,
+        messages: placeholders.length > 0
+            ? [`正则能匹配样例状态记录，并提供 ${captureCount} 个捕获值。`]
+            : ['正则能匹配样例状态记录；当前模板还没有使用 $1、$2 占位符。'],
+        matchResult,
+    };
+}
+
+function buildPreviewMessageHtml(title: string, body: string, detail = ''): string {
+    return `<div style="width:330px;max-width:100%;min-height:200px;border-radius:24px;border:1px solid rgba(251,191,36,0.24);background:rgba(13,13,26,0.92);box-sizing:border-box;padding:22px;color:rgba(255,255,255,0.78);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','PingFang SC',sans-serif;box-shadow:0 18px 40px rgba(0,0,0,0.28);"><div style="font-size:13px;font-weight:700;color:rgba(253,230,138,0.9);">${escapeHtml(title)}</div><div style="margin-top:10px;font-size:12px;line-height:1.8;color:rgba(255,255,255,0.58);">${escapeHtml(body)}</div>${detail ? `<pre style="margin:14px 0 0;white-space:pre-wrap;font:500 11px/1.7 'SF Mono','Fira Code',monospace;color:rgba(236,253,245,0.72);background:rgba(255,255,255,0.04);border-radius:14px;padding:12px;overflow:auto;">${escapeHtml(detail)}</pre>` : ''}</div>`;
 }
 
 function normalizeInteractionMode(mode: StatusWorkshopInteractionMode | undefined): StatusWorkshopInteractionMode {
@@ -373,6 +515,7 @@ export function buildSystemPromptPrompt(
     fields: GeneratorField[] | TemplateField[],
     currentSystemPrompt = '',
 ): string {
+    const statusContract = buildStatusContract(fields);
     const currentBlock = currentSystemPrompt.trim()
         ? `\n\n当前状态文本规则（请在这个基础上改进，不要退回空泛模板）：\n${currentSystemPrompt.trim()}`
         : '';
@@ -385,18 +528,22 @@ export function buildSystemPromptPrompt(
 字段协议：
 ${formatFieldList(fields)}
 
+精确状态记录格式（必须逐字照抄字段名、顺序和英文冒号）：
+${statusContract}
+
 ${currentBlock}
 
 请只生成“TA 的状态写法”规则。它负责说明 TA 如何在正常回应末尾写出状态记录，不负责重新设计字段、提取正则、HTML、CSS 或 JS。
 
 写法要求：
 - 正常回应照常写，不要因为状态记录破坏 TA 的语气
-- 每次回应末尾追加唯一的 <status>...</status> 块
+- 每次回应末尾追加唯一的 <status>...</status> 块，并严格使用上面的精确状态记录格式
+- 字段标签必须逐字照抄，字段顺序不能变化，分隔符必须使用英文半角冒号 :
 - 必须逐一覆盖字段协议中的每个字段，说明该字段应该从哪里取材、写多短、写到什么具体程度
 - 字段值必须贴近刚才的回应和当前对话，优先使用最新动作、地点、身体状态、情绪变化和关系动态
 - 字段值要短、具体、可渲染，避免“正常”“很好”“无变化”“未知”这类空泛占位
 - 缺失信息时给每个字段安排稳定兜底写法，不要留空，不要长篇解释
-- 不要解释状态记录，不要输出 markdown，不要增加未定义字段
+- 不要解释状态记录，不要输出 markdown，不要增加、删除或改名任何字段
 - 只输出 JSON，不要 markdown
 
 输出：
@@ -407,6 +554,8 @@ ${currentBlock}
 }
 
 export function buildProtocolPrompt(userIdea: string, fields: GeneratorField[]): string {
+    const statusContract = buildStatusContract(fields);
+
     return `你是状态栏字段协议与正则设计师。
 
 用户想做的状态栏：
@@ -415,12 +564,14 @@ export function buildProtocolPrompt(userIdea: string, fields: GeneratorField[]):
 用户需要展示的字段：
 ${formatFieldList(fields)}
 
+状态记录契约：
+${statusContract}
+
 请只设计字段协议和 extractRegex 正则。不要写状态文本规则，不要写视觉，不要写 HTML、CSS、JS。
 
 要求：
-- TA 必须在每次回应末尾输出 <status>...</status>
-- 每个字段独占一行
-- 字段顺序必须严格等于用户字段顺序
+- TA 必须在每次回应末尾输出唯一的 <status>...</status>
+- 每个字段独占一行，字段名、字段顺序和英文半角冒号必须严格遵守上面的状态记录契约
 - 字段格式必须是：字段名: 值
 - extractRegex 必须捕获每个字段值
 - 使用 [\\s\\S]*? 或 \\s* 兼容换行和空白
@@ -687,6 +838,7 @@ const StatusWorkshopApp: React.FC = () => {
     const [previewHeight, setPreviewHeight] = useState(240);
     const [previewReady, setPreviewReady] = useState(false);
     const [showMobilePreview, setShowMobilePreview] = useState(false);
+    const [previewMode, setPreviewMode] = useState<PreviewMode>('visual');
 
     const previewRef = useRef<HTMLIFrameElement>(null);
     const templateNameInputRef = useRef<HTMLInputElement>(null);
@@ -708,6 +860,18 @@ const StatusWorkshopApp: React.FC = () => {
     const activeTemplate = useMemo(
         () => templates.find(t => t.id === activeTemplateId) || null,
         [templates, activeTemplateId],
+    );
+
+    const activePreviewFields = useMemo(
+        () => activeTemplate ? getTemplateFieldList(activeTemplate, genFields) : [],
+        [activeTemplate, genFields],
+    );
+
+    const activeExtractionValidation = useMemo(
+        () => activeTemplate
+            ? validateStatusTemplateExtraction(activeTemplate, buildStatusSample(activePreviewFields))
+            : null,
+        [activeTemplate, activePreviewFields],
     );
 
     const updateActiveTemplate = useCallback((patch: Partial<CustomStatusTemplate>, reviewFlags: ReviewFlag[] = []) => {
@@ -845,7 +1009,7 @@ const StatusWorkshopApp: React.FC = () => {
         }, 0);
     }, [activeTemplate, addToast]);
 
-    const buildPreviewHtml = useCallback((template: CustomStatusTemplate | null) => {
+    const buildPreviewHtml = useCallback((template: CustomStatusTemplate | null, mode: PreviewMode) => {
         if (!template) {
             return `<div style="width:330px;max-width:100%;min-height:200px;border-radius:24px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);box-sizing:border-box;padding:24px;color:rgba(255,255,255,0.72);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','PingFang SC',sans-serif;"><div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.38;">Status Workshop</div><div style="margin-top:16px;font-size:18px;font-weight:600;">新建一个方案开始编辑</div><div style="margin-top:10px;font-size:13px;line-height:1.7;opacity:0.58;">分层编辑 HTML、CSS 和可选 JS，预览会实时更新。</div></div>`;
         }
@@ -868,6 +1032,28 @@ const StatusWorkshopApp: React.FC = () => {
         const previewValues = previewFields.length > 0
             ? previewFields.map((field, index) => `[${field.name || `字段${index + 1}`}]`)
             : ['[字段1]', '[字段2]', '[字段3]'];
+
+        if (mode === 'extract') {
+            const sampleStatusText = buildStatusSample(previewFields);
+            const validation = validateStatusTemplateExtraction(template, sampleStatusText);
+
+            if (validation.status === 'missing_regex') {
+                return buildPreviewMessageHtml('提取预览待校验', validation.messages[0], sampleStatusText);
+            }
+
+            if (validation.status === 'invalid_regex' || validation.status === 'no_match') {
+                return buildPreviewMessageHtml('提取预览未通过', validation.messages[0], sampleStatusText);
+            }
+
+            const extracted = validation.matchResult?.[1] || validation.matchResult?.[0] || '';
+            const composedHtml = composeCustomStatusTemplateHtml(template, {
+                matchResult: validation.matchResult,
+                extracted,
+                includeScripts: template.allowScripts === true,
+            });
+
+            return composedHtml || buildPreviewMessageHtml('提取预览无内容', 'HTML 骨架还是空的。', sampleStatusText);
+        }
 
         const composedHtml = composeCustomStatusTemplateHtml(template, {
             previewValues,
@@ -921,10 +1107,10 @@ const StatusWorkshopApp: React.FC = () => {
     useEffect(() => {
         if (!previewReady) return;
         debouncedUpdate(
-            buildPreviewHtml(activeTemplate),
+            buildPreviewHtml(activeTemplate, previewMode),
             activeTemplate?.renderMode === 'html' && activeTemplate.allowScripts === true,
         );
-    }, [activeTemplate, buildPreviewHtml, debouncedUpdate, previewReady]);
+    }, [activeTemplate, buildPreviewHtml, debouncedUpdate, previewMode, previewReady]);
 
     useEffect(() => () => debouncedUpdate.cancel(), [debouncedUpdate]);
 
@@ -1266,6 +1452,36 @@ const StatusWorkshopApp: React.FC = () => {
         );
     };
 
+    const renderExtractionNotice = (validation: StatusTemplateExtractionValidation | null, compact = false) => {
+        if (!validation) return null;
+
+        const toneClass = validation.severity === 'success'
+            ? 'border-emerald-300/15 bg-emerald-300/[0.06] text-emerald-100/70'
+            : validation.severity === 'warning'
+                ? 'border-amber-300/15 bg-amber-300/[0.07] text-amber-100/72'
+                : validation.severity === 'error'
+                    ? 'border-rose-300/15 bg-rose-300/[0.07] text-rose-100/72'
+                    : 'border-white/[0.05] bg-white/[0.03] text-white/34';
+
+        return (
+            <div className={`rounded-2xl border px-4 py-3 text-[11px] leading-5 ${toneClass}`}>
+                <div className="font-semibold">
+                    {validation.severity === 'success' ? '提取校验通过' : validation.severity === 'neutral' ? '提取校验' : '提取校验需处理'}
+                </div>
+                <div className="mt-1 space-y-1">
+                    {validation.messages.map((message, index) => (
+                        <p key={`${message}-${index}`}>{message}</p>
+                    ))}
+                </div>
+                {!compact && validation.sampleStatusText && (
+                    <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-white/[0.05] bg-black/15 px-3 py-2 font-mono text-[10px] leading-5 text-white/45">
+                        {validation.sampleStatusText}
+                    </pre>
+                )}
+            </div>
+        );
+    };
+
     const renderSystemStep = () => {
         if (!activeTemplate) {
             return renderEmptyState('先新建一个方案，再写 TA 的状态写法。');
@@ -1345,6 +1561,7 @@ const StatusWorkshopApp: React.FC = () => {
         return (
             <div className="space-y-4 animate-fade-in">
                 {renderReviewNotice('protocol', '当前字段协议需复核，建议检查字段顺序、占位符和提取正则是否一致。')}
+                {renderExtractionNotice(activeExtractionValidation)}
                 <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.04] p-5 backdrop-blur-sm">
                     <div className="mb-3">
                         <div className="text-[13px] font-semibold text-white/80">字段协议</div>
@@ -1801,7 +2018,7 @@ const StatusWorkshopApp: React.FC = () => {
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-[13px] font-semibold text-white/80">实时预览</div>
-                                <p className="mt-1 text-[11px] text-white/28">预览和聊天渲染共用同一套 HTML 组装逻辑。</p>
+                                <p className="mt-1 text-[11px] text-white/28">视觉看版式，提取看真实正则链路。</p>
                             </div>
                             <button
                                 onClick={() => setShowMobilePreview(prev => !prev)}
@@ -1814,6 +2031,32 @@ const StatusWorkshopApp: React.FC = () => {
                                 preview
                             </div>
                         </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-white/[0.05] bg-white/[0.03] p-1">
+                            {([
+                                { id: 'visual' as const, label: '视觉预览' },
+                                { id: 'extract' as const, label: '提取预览' },
+                            ]).map(option => (
+                                <button
+                                    key={option.id}
+                                    type="button"
+                                    onClick={() => setPreviewMode(option.id)}
+                                    className={`min-h-[36px] rounded-xl px-3 py-2 text-[11px] font-semibold transition-all ${
+                                        previewMode === option.id
+                                            ? 'bg-white/10 text-white/78'
+                                            : 'text-white/34 hover:bg-white/[0.05]'
+                                    }`}
+                                >
+                                    {option.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {previewMode === 'extract' && (
+                            <div className="mt-3">
+                                {renderExtractionNotice(activeExtractionValidation, true)}
+                            </div>
+                        )}
 
                         <div
                             className={`transition-all duration-300 ${

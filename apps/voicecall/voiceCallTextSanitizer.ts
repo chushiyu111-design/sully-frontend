@@ -1,4 +1,5 @@
-const VOICE_CALL_TRANSLATION_TAG_RE = /\[\[翻译\s*[：:]\s*.*?\]\]/g;
+const VOICE_CALL_TRANSLATION_TAG_RE = /\[\[翻译\s*[：:]\s*[\s\S]*?\]\]/g;
+const VOICE_CALL_TRANSLATION_TAG_SINGLE_RE = /\[\[翻译\s*[：:]\s*([\s\S]*?)\]\]/;
 const BRACKETED_STAGE_DIRECTION_RE = /([（(【\[])([^（）()【】\[\]]{1,24})([）)】\]])/g;
 const VOICE_CALL_SENTENCE_FRAGMENT_RE = /[^。！？.!?\n]+[。！？.!?\n]*/g;
 
@@ -138,6 +139,25 @@ function looksLikeVoiceCallMetaNarration(text: string): boolean {
 
 export function stripVoiceCallTranslationTags(text: string): string {
     return text.replace(VOICE_CALL_TRANSLATION_TAG_RE, '').trim();
+}
+
+export interface VoiceCallForeignSentenceParts {
+    spokenText: string;
+    translationText: string;
+    hasTranslation: boolean;
+}
+
+export function hasCompleteVoiceCallTranslationTag(text: string): boolean {
+    return VOICE_CALL_TRANSLATION_TAG_SINGLE_RE.test(text);
+}
+
+export function splitVoiceCallForeignSentence(text: string): VoiceCallForeignSentenceParts {
+    const match = text.match(VOICE_CALL_TRANSLATION_TAG_SINGLE_RE);
+    return {
+        spokenText: stripVoiceCallTranslationTags(text),
+        translationText: match?.[1]?.trim() || '',
+        hasTranslation: !!match,
+    };
 }
 
 export function stripVoiceCallStageDirections(text: string): string {

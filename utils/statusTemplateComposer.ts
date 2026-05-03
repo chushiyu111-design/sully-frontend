@@ -62,7 +62,7 @@ function substituteWithValues(source: string, values: readonly string[], fallbac
     return source.replace(/\$(\d+)/g, (token, indexText: string) => {
         const index = Number(indexText);
         if (!Number.isInteger(index) || index <= 0) return token;
-        return values[index - 1] ?? (index === 1 ? fallback : token);
+        return values[index - 1] ?? (index === 1 ? fallback : '');
     });
 }
 
@@ -74,7 +74,11 @@ export function substituteStatusTemplateVariables(
     if (matchResult && matchResult.length > 1) {
         return source.replace(/\$(\d+)/g, (token, indexText: string) => {
             const index = Number(indexText);
-            if (!Number.isInteger(index) || index <= 0 || index >= matchResult.length) {
+            if (!Number.isInteger(index) || index <= 0) {
+                return token;
+            }
+
+            if (index >= matchResult.length) {
                 return token;
             }
 
@@ -83,7 +87,7 @@ export function substituteStatusTemplateVariables(
     }
 
     return source.replace(/\$(\d+)/g, (token, indexText: string) => (
-        indexText === '1' ? extracted : token
+        indexText === '1' ? extracted : ''
     ));
 }
 

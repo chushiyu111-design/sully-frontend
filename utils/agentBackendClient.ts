@@ -239,11 +239,15 @@ export async function pushAgentContextSnapshot(
     });
 }
 
-export async function fetchPendingAgentMessages(charId: string): Promise<AgentBackendMessage[]> {
+export async function fetchPendingAgentMessages(charId: string, options?: { includeDelivered?: boolean }): Promise<AgentBackendMessage[]> {
+    const query: Record<string, string> = { charId };
+    if (options?.includeDelivered) {
+        query.include_delivered = '1';
+    }
     const data = await agentFetch<{ messages?: AgentBackendMessage[] }>(
         '/api/agent/messages',
         {},
-        withAgentProtocolQuery({ charId }),
+        withAgentProtocolQuery(query),
     );
     return data.messages || [];
 }

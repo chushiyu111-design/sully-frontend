@@ -11,7 +11,10 @@
 import type { CharacterProfile,UserProfile } from '../../types';
 import type { VoiceCallMode } from './voiceCallTypes';
 import { RealtimeContextManager } from '../../utils/realtimeContext';
-import { sanitizeVoiceCallAssistantText } from './voiceCallTextSanitizer';
+import {
+    hasCompleteVoiceCallTranslationTag,
+    sanitizeVoiceCallAssistantText,
+} from './voiceCallTextSanitizer';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────
 
@@ -303,6 +306,7 @@ function buildTruthModeContext(
     isIncoming?: boolean,
     callReason?: string,
     recentChatContext?: string,
+    foreignLang?: { sourceLang: string; targetLang: string },
 ): string {
     let ctx = '';
 
@@ -388,6 +392,12 @@ function buildTruthModeContext(
         ctx += `\n### 这通电话\n对方给你打了电话，你接了。你先开口——像一个刚接起电话的人。\n不需要正式的“你好”。根据你们的关系和你的性格，随口一句就好。\n可以是“喂？”、“怎么了”、“嗯？在呢”、什么都行。\n说完等对方回应。语气跟你的人设走。\n\n`;
     }
 
+    if (foreignLang) {
+        ctx += buildForeignLangInstruction(foreignLang.sourceLang, foreignLang.targetLang);
+    } else {
+        ctx += getVoiceCallDefaultLanguageInstruction();
+    }
+
     return ctx;
 }
 
@@ -433,6 +443,23 @@ function getVoiceCallDefaultLanguageInstruction(): string {
 `;
 }
 
+export function shouldEmitVoiceCallSentence(
+    sentence: string,
+    emittedChar: string,
+    foreignLangEnabled: boolean,
+    insideBrackets: number = 0,
+): boolean {
+    if (insideBrackets !== 0 || !sentence.trim()) {
+        return false;
+    }
+
+    if (foreignLangEnabled) {
+        return hasCompleteVoiceCallTranslationTag(sentence);
+    }
+
+    return SENTENCE_BREAK_RE.test(emittedChar);
+}
+
 /**
  * 从 char 配置解析记忆注入模式（复用 chatPrompts.ts 的逻辑）
  */
@@ -462,7 +489,7 @@ function buildVoiceContext(
     console.log(`[buildVoiceContext] callMode=${callMode ?? 'undefined'} | entering context build`);
     if (callMode === 'truth') {
         console.log(`[buildVoiceContext] → TRUTH mode detected, routing to buildTruthModeContext`);
-        return buildTruthModeContext(char, userProfile, isIncoming, callReason, recentChatContext);
+        return buildTruthModeContext(char, userProfile, isIncoming, callReason, recentChatContext, foreignLang);
     }
 
     let ctx = '';
@@ -1205,6 +1232,7 @@ export class VoiceCallLlm {
             let sentence = '';    // 当前正在拼接的句子
             let fullText = '';    // 完整回复（不含 thinking 内容）
             const thinkFilter = new ThinkingTagFilter();
+            const foreignLangEnabled = !!this.config.foreignLang;
             // ─── 外语模式：跟踪 [[翻译:...]] 标签内部，禁止在标签内截断 ───
             let insideBrackets = 0;   // 嵌套 [[ 深度（0 = 正常文本）
             let bracketBuf = '';      // 用于匹配 [[ 的 lookahead 缓冲
@@ -1245,8 +1273,12 @@ export class VoiceCallLlm {
                                 if (bracketBuf === ']]' && insideBrackets > 0) { insideBrackets--; bracketBuf = ''; }
 
                                 // 只在翻译标记外部才按标点截断
-                                const shouldBreak =
-                                    insideBrackets === 0 && SENTENCE_BREAK_RE.test(c);
+                                const shouldBreak = shouldEmitVoiceCallSentence(
+                                    sentence,
+                                    c,
+                                    foreignLangEnabled,
+                                    insideBrackets,
+                                );
 
                                 if (shouldBreak && sentence.trim()) {
                                     callbacks.onSentence(sentence.trim());

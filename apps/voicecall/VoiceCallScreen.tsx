@@ -147,6 +147,7 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
         sttEmptyHint,
         // ─── 外语模式 (Foreign Language) ───
         aiTranslation,
+        subtitleHistory,
         // ─── 音量控制 ───
         volume,
         setVolume,
@@ -539,6 +540,7 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
                         transcriptSource={transcriptSource}
                         callMode={selectedMode ?? undefined}
                         aiTranslation={aiTranslation}
+                        subtitleHistory={subtitleHistory}
                         volume={volume}
                         onVolumeChange={setVolume}
                         sttEmptyHint={sttEmptyHint}

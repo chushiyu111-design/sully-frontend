@@ -4,6 +4,7 @@ import { VirtualTimeProvider } from './context/VirtualTimeContext';
 import { OSProvider } from './context/OSContext';
 import PhoneShell from './components/PhoneShell';
 import { startKeepAlive,startBackendHeartbeat } from './utils/keepAlive';
+import { installGlobalAutofillSuppression } from './utils/autofillSuppression';
 import { isFullscreenEnabled,requestSystemFullscreen } from './utils/systemFullscreen';
 
 const EDITABLE_SELECTION_SELECTOR = 'input:not([readonly]), textarea:not([readonly]), select, [contenteditable="true"], [data-allow-text-selection="true"]';
@@ -34,6 +35,7 @@ const App: React.FC = () => {
   useEffect(() => {
     startKeepAlive();
     startBackendHeartbeat();
+    const uninstallAutofillSuppression = installGlobalAutofillSuppression();
 
     const preventNonEditableSelection = (event: Event) => {
       if (!canSelectText(event.target)) {
@@ -54,6 +56,7 @@ const App: React.FC = () => {
       document.addEventListener('touchstart', ensureFullscreen, { capture: true, passive: true });
 
       return () => {
+        uninstallAutofillSuppression();
         document.removeEventListener('selectstart', preventNonEditableSelection);
         document.removeEventListener('click', ensureFullscreen, { capture: true } as any);
         document.removeEventListener('touchstart', ensureFullscreen, { capture: true } as any);
@@ -61,6 +64,7 @@ const App: React.FC = () => {
     }
 
     return () => {
+      uninstallAutofillSuppression();
       document.removeEventListener('selectstart', preventNonEditableSelection);
     };
   }, []);

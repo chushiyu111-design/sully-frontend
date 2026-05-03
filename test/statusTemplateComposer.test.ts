@@ -70,6 +70,11 @@ describe('statusTemplateComposer', () => {
             .toBe('G1|G9|G10|G11|$12');
     });
 
+    it('does not leak unresolved placeholders when regex matching fails', () => {
+        expect(substituteStatusTemplateVariables('$1|$2|$10', null, 'fallback'))
+            .toBe('fallback||');
+    });
+
     it('splits legacy full HTML into layered parts', () => {
         const split = splitStatusTemplateHtml(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>.card{color:red}</style></head><body><div class="card">$1</div><script>document.body.dataset.ready='yes'</script></body></html>`);
 

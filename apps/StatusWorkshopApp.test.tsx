@@ -10,10 +10,14 @@ import StatusWorkshopApp,{
     buildHtmlPrompt,
     buildJsPrompt,
     buildProtocolPrompt,
+    buildStatusContract,
+    buildStatusSample,
     buildStatusWorkshopExportPayload,
     buildSystemPromptPrompt,
+    extractTemplatePlaceholders,
     parseStatusWorkshopImportPayload,
     StatusWorkshopGeneratorFieldList,
+    validateStatusTemplateExtraction,
 } from './StatusWorkshopApp';
 
 vi.mock('../context/OSContext', () => ({
@@ -36,8 +40,10 @@ describe('StatusWorkshopGeneratorFieldList', () => {
 
         const fieldNameInput = screen.getByPlaceholderText('字段名') as HTMLInputElement;
         expect(fieldNameInput).toHaveAttribute('type', 'text');
-        expect(fieldNameInput).toHaveAttribute('autocomplete', 'off');
+        expect(fieldNameInput).toHaveAttribute('autocomplete', 'new-password');
         expect(fieldNameInput).toHaveAttribute('inputmode', 'text');
+        expect(fieldNameInput).toHaveAttribute('data-lpignore', 'true');
+        expect(fieldNameInput).toHaveAttribute('aria-autocomplete', 'none');
         expect(fieldNameInput).not.toHaveAttribute('type', 'password');
 
         fireEvent.change(fieldNameInput, { target: { value: '心情' } });
@@ -58,15 +64,19 @@ describe('StatusWorkshop prompt helpers', () => {
     it('keeps field protocol separate from status writing rules', () => {
         const protocolPrompt = buildProtocolPrompt('做一个心情状态栏', fields);
         const statusWritingPrompt = buildSystemPromptPrompt('做一个心情状态栏', templateFields);
+        const contract = buildStatusContract(fields);
 
         expect(protocolPrompt).toContain('"extractRegex"');
         expect(protocolPrompt).toContain('"fields"');
         expect(protocolPrompt).toContain('不要写状态文本规则');
+        expect(protocolPrompt).toContain(contract);
         expect(protocolPrompt).not.toContain('"systemPrompt"');
 
         expect(statusWritingPrompt).toContain('"systemPrompt"');
         expect(statusWritingPrompt).toContain('字段协议');
         expect(statusWritingPrompt).toContain('时间');
+        expect(statusWritingPrompt).toContain(contract);
+        expect(statusWritingPrompt).toContain('字段标签必须逐字照抄');
         expect(statusWritingPrompt).toContain('必须逐一覆盖字段协议中的每个字段');
         expect(statusWritingPrompt).not.toContain('"extractRegex"');
         expect(statusWritingPrompt).not.toMatch(/角色 AI|char AI|System Prompt/);
@@ -93,6 +103,41 @@ describe('StatusWorkshop prompt helpers', () => {
         expect(cssPrompt).toContain('.is-flipped');
         expect(jsPrompt).toContain('只能绑定已有 HTML 结构');
         expect(jsPrompt).toContain('不要重写整段 HTML');
+    });
+
+    it('validates template placeholders against real regex capture groups', () => {
+        const twoFields = [
+            { id: 'field_1', name: '时间', description: '当前时间', required: true },
+            { id: 'field_2', name: '心情', description: '当前心情', required: true },
+        ];
+        const template = createTemplate({
+            fields: twoFields,
+            extractRegex: '<status>[\\s\\S]*?时间:\\s*(.*?)\\s*心情:\\s*(.*?)\\s*<\\/status>',
+            htmlBody: '<section>$1 $2</section>',
+        });
+        const sample = buildStatusSample(twoFields);
+        const validation = validateStatusTemplateExtraction(template, sample);
+
+        expect(extractTemplatePlaceholders(template.htmlBody || '')).toEqual([1, 2]);
+        expect(validation.status).toBe('ok');
+        expect(validation.captureCount).toBe(2);
+    });
+
+    it('reports placeholders that regex cannot capture', () => {
+        const twoFields = [
+            { id: 'field_1', name: '时间', description: '当前时间', required: true },
+            { id: 'field_2', name: '心情', description: '当前心情', required: true },
+        ];
+        const template = createTemplate({
+            fields: twoFields,
+            extractRegex: '<status>[\\s\\S]*?时间:\\s*(.*?)\\s*<\\/status>',
+            htmlBody: '<section>$1 $2</section>',
+        });
+        const validation = validateStatusTemplateExtraction(template, buildStatusSample(twoFields));
+
+        expect(validation.status).toBe('missing_groups');
+        expect(validation.missingPlaceholders).toEqual([2]);
+        expect(validation.messages[0]).toContain('$2');
     });
 });
 
@@ -230,6 +275,21 @@ describe('StatusWorkshopApp workflow', () => {
         fireEvent.click(screen.getByText('2 TA 的状态写法'));
         expect(screen.getByDisplayValue('每个字段都要短而具体。')).toBeInTheDocument();
         expect(screen.getByText(/字段协议刚刚改过/)).toBeInTheDocument();
+    });
+
+    it('shows extraction diagnostics when regex capture groups do not cover placeholders', () => {
+        renderWorkshop(createTemplate({
+            fields: [
+                { id: 'field_1', name: '时间', description: '当前时间', required: true },
+                { id: 'field_2', name: '心情', description: '当前心情', required: true },
+            ],
+            extractRegex: '<status>[\\s\\S]*?时间:\\s*(.*?)\\s*<\\/status>',
+            htmlBody: '<section class="status-card">$1 $2</section>',
+        }));
+
+        expect(screen.getByText('提取校验需处理')).toBeInTheDocument();
+        expect(screen.getByText(/模板用了 \$2/)).toBeInTheDocument();
+        expect(screen.getByText('提取预览')).toBeInTheDocument();
     });
 
     it('marks downstream steps for review after interaction changes without clearing content', () => {

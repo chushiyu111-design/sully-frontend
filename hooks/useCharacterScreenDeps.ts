@@ -11,6 +11,8 @@ export function useCharacterScreenDeps() {
         characters,
         deleteCharacter,
         setActiveCharacterId,
+        setCharacters,
+        setWorldbooks,
         updateCharacter,
         worldbooks,
     } = useCharacter();
@@ -29,6 +31,8 @@ export function useCharacterScreenDeps() {
         deleteCharacter,
         openApp,
         setActiveCharacterId,
+        setCharacters,
+        setWorldbooks,
         updateCharacter,
         userProfile,
         worldbooks,

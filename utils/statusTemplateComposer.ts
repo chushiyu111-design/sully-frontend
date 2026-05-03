@@ -79,7 +79,7 @@ export function substituteStatusTemplateVariables(
             }
 
             if (index >= matchResult.length) {
-                return token;
+                return '';
             }
 
             return matchResult[index] || '';

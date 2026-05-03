@@ -20,7 +20,7 @@ describe('statusTemplateComposer', () => {
         const match = ['all', 'A', 'B'] as unknown as RegExpMatchArray;
 
         expect(composeCustomStatusTemplateHtml(template, { matchResult: match, extracted: 'fallback' }))
-            .toBe('<div>A|B|$3</div>');
+            .toBe('<div>A|B|</div>');
     });
 
     it('composes layered HTML, CSS, and opted-in JS into one document', () => {
@@ -67,7 +67,7 @@ describe('statusTemplateComposer', () => {
         const match = Array.from({ length: 12 }, (_, index) => (index === 0 ? 'all' : `G${index}`)) as unknown as RegExpMatchArray;
 
         expect(substituteStatusTemplateVariables('$1|$9|$10|$11|$12', match, 'fallback'))
-            .toBe('G1|G9|G10|G11|$12');
+            .toBe('G1|G9|G10|G11|');
     });
 
     it('does not leak unresolved placeholders when regex matching fails', () => {

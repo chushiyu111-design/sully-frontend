@@ -100,7 +100,10 @@ export interface MoodState {
 
 export interface CharacterProfile {
     id: string;
-    /** Stable personal instance key used for chat/memory/cloud ownership. */
+    /**
+     * @deprecated charInstanceId is being removed. Content ownership now uses `id` directly.
+     * This field is retained only for reading legacy data that was stored under chinst_ IDs.
+     */
     charInstanceId?: string;
     /** Original template/preset ID used for compatibility, e.g. preset-sully-v2. */
     templateCharId?: string;

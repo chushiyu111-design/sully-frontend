@@ -8,7 +8,6 @@ import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
-import { getCharacterContentId } from '../utils/characterIdentity';
 import { findCharacterByAnyId,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
 import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
 import { MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,shouldGenerateMemoryRecordMonologue,generateLyrics,checkLyricSingability,optimizeLyrics,generateStylePrompt,createRecordId,COVER_GRADIENTS,type MemoryRecordMemoryHeader,type SingabilityCheckResult,type StylePromptResult } from '../utils/memoryRecordService';
@@ -289,7 +288,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
     const selectedBackendCharId = useMemo(() => {
         if (!selectedCharId) return null;
-        return selectedBrowserChar ? getCharacterContentId(selectedBrowserChar) : selectedCharId;
+        return selectedBrowserChar ? selectedBrowserChar.id : selectedCharId;
     }, [selectedBrowserChar, selectedCharId]);
 
     const authHeaders = useCallback(() => {
@@ -845,31 +844,37 @@ const CognitiveNetworkApp: React.FC = () => {
         setSyncing(true);
         setSyncResult(null);
         try {
+            const localIdentityIds = new Set(
+                characters.flatMap(c =>
+                    [c.id, c.charInstanceId].filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+                )
+            );
             const cloudChars = await listCloudChars();
-            const localCharIds = new Set(characters.map(c => c.id));
-            const allCharIds = new Set(localCharIds);
-            if (cloudChars) {
-                for (const cc of cloudChars) allCharIds.add(cc.charId);
-            }
-            if (allCharIds.size === 0) {
+            if (!cloudChars || cloudChars.length === 0) {
                 addToast('云端还没有回忆', 'info');
                 setSyncing(false);
                 return;
             }
             let totalPulled = 0;
-            for (const charId of allCharIds) {
-                const cloudMems = await pullMemories(charId);
+            for (const cc of cloudChars) {
+                const cloudCharId = cc.charId;
+                const contentCharId = await DB.resolveCharacterContentId(cloudCharId);
+                const isLocal = localIdentityIds.has(cloudCharId) || contentCharId !== cloudCharId;
+                if (!isLocal) continue;
+
+                const cloudMems = await pullMemories(cloudCharId);
                 if (!cloudMems || cloudMems.length === 0) continue;
                 for (const mem of cloudMems) {
                     const existing = await DB.getVectorMemoryById(mem.id);
                     if (!existing) {
-                        await DB.saveVectorMemory({ ...mem, charId: mem.charId || charId });
+                        await DB.saveVectorMemory(mem);
                         totalPulled++;
                     }
                 }
             }
             setSyncResult({ pushed: 0, pulled: totalPulled });
-            addToast(`已唤回 ${totalPulled} 段云端回忆`, 'success');
+            if (totalPulled === 0) addToast('云端回忆均已同步', 'info');
+            else addToast(`已唤回 ${totalPulled} 段云端回忆`, 'success');
         } catch (e: any) { addToast(`唤回失败: ${e.message}`, 'error'); }
         finally { setSyncing(false); }
     }, [addToast, characters]);
@@ -885,7 +890,7 @@ const CognitiveNetworkApp: React.FC = () => {
             return false;
         }
 
-        const targetContentId = getCharacterContentId(targetChar);
+        const targetContentId = targetChar.id;
         setClaimingCloudCharId(legacyCharId);
         try {
             const cloudResult = await migrateCloudCharacterInstance(legacyCharId, targetContentId);

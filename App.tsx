@@ -1,8 +1,9 @@
 
-import React,{ useEffect } from 'react';
+import React,{ useCallback,useEffect,useState } from 'react';
 import { VirtualTimeProvider } from './context/VirtualTimeContext';
 import { OSProvider } from './context/OSContext';
 import PhoneShell from './components/PhoneShell';
+import FeaturePreviewPage from './components/FeaturePreviewPage';
 import { startKeepAlive,startBackendHeartbeat } from './utils/keepAlive';
 import { installGlobalAutofillSuppression } from './utils/autofillSuppression';
 import { isFullscreenEnabled,requestSystemFullscreen } from './utils/systemFullscreen';
@@ -31,7 +32,12 @@ function isPwaMode(): boolean {
   );
 }
 
-const App: React.FC = () => {
+function isFeaturePreviewRoute(): boolean {
+  const hash = window.location.hash.toLowerCase();
+  return hash === '#/preview' || hash === '#preview' || new URLSearchParams(window.location.search).has('preview');
+}
+
+const SullyOSApp: React.FC = () => {
   useEffect(() => {
     startKeepAlive();
     startBackendHeartbeat();
@@ -83,6 +89,36 @@ const App: React.FC = () => {
       </div>
     </div>
   );
+};
+
+const App: React.FC = () => {
+  const [isPreviewRoute, setIsPreviewRoute] = useState(isFeaturePreviewRoute);
+
+  useEffect(() => {
+    const syncPreviewRoute = () => setIsPreviewRoute(isFeaturePreviewRoute());
+
+    window.addEventListener('hashchange', syncPreviewRoute);
+    window.addEventListener('popstate', syncPreviewRoute);
+
+    return () => {
+      window.removeEventListener('hashchange', syncPreviewRoute);
+      window.removeEventListener('popstate', syncPreviewRoute);
+    };
+  }, []);
+
+  const enterMainApp = useCallback(() => {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.hash = '';
+    nextUrl.searchParams.delete('preview');
+    window.history.pushState({}, '', `${nextUrl.pathname}${nextUrl.search}`);
+    setIsPreviewRoute(false);
+  }, []);
+
+  if (isPreviewRoute) {
+    return <FeaturePreviewPage onEnterApp={enterMainApp} />;
+  }
+
+  return <SullyOSApp />;
 };
 
 export default App;

@@ -4,11 +4,176 @@ import { DB } from '../utils/db';
 import { migrateCloudCharacterInstance } from '../utils/backendClient';
 import { preloadImages } from '../utils/preloadResources';
 import { useNotification } from './NotificationContext';
-import { ensureCharacterInstanceId, generateCharInstanceId } from '../utils/characterIdentity';
 
 export interface CharacterUpdateOptions {
     skipImmediateAgentContextPush?: boolean;
     reason?: 'location' | 'default';
+}
+
+const CHINST_REVERT_FLAG = 'chinst_revert_migration_done';
+
+interface MigrationProgress {
+    current: number;
+    total: number;
+    charName: string;
+    phase: 'local' | 'cloud';
+}
+
+/**
+ * One-time migration: revert all chinst_ data back to character.id.
+ * Runs on boot if the flag is not set. Migrates both local IDB and cloud D1.
+ */
+async function runChinstRevertMigration(
+    characters: CharacterProfile[],
+    onProgress?: (progress: MigrationProgress | null) => void,
+): Promise<void> {
+    if (localStorage.getItem(CHINST_REVERT_FLAG) === 'true') return;
+
+    const charsWithInstance = characters.filter(
+        c => typeof c.charInstanceId === 'string'
+            && c.charInstanceId.trim().length > 0
+            && c.charInstanceId !== c.id,
+    );
+
+    if (charsWithInstance.length === 0) {
+        localStorage.setItem(CHINST_REVERT_FLAG, 'true');
+        return;
+    }
+
+    const total = charsWithInstance.length;
+    console.log(`[Migration] Reverting ${total} character(s) from chinst_ → char.id`);
+    onProgress?.({ current: 0, total, charName: charsWithInstance[0].name, phase: 'local' });
+
+    for (let i = 0; i < charsWithInstance.length; i++) {
+        const char = charsWithInstance[i];
+        const chinst = char.charInstanceId!;
+        const primaryId = char.id;
+
+        // 1. Local IDB: migrate chinst_ → char.id
+        onProgress?.({ current: i, total, charName: char.name, phase: 'local' });
+        try {
+            const localCounts = await DB.migrateLocalCharacterContentToInstance(chinst, primaryId);
+            if (localCounts.messages || localCounts.vectorMemories || localCounts.memoryRecords || localCounts.scheduledMessages) {
+                console.log(`[Migration] Local revert for ${char.name}: `, localCounts);
+            }
+        } catch (e: any) {
+            console.warn(`[Migration] Local revert failed for ${char.name}:`, e.message);
+        }
+
+        // 2. Cloud D1: migrate chinst_ → char.id (reuse the existing endpoint, reversed)
+        onProgress?.({ current: i, total, charName: char.name, phase: 'cloud' });
+        try {
+            const cloudResult = await migrateCloudCharacterInstance(chinst, primaryId);
+            if (cloudResult && cloudResult.ok && !cloudResult.skipped) {
+                console.log(`[Migration] Cloud revert for ${char.name}:`, cloudResult.counts);
+            }
+        } catch (e: any) {
+            console.warn(`[Migration] Cloud revert failed for ${char.name}:`, e.message);
+            // Non-fatal: the backend resolveCharId() still acts as a safety net
+        }
+    }
+
+    localStorage.setItem(CHINST_REVERT_FLAG, 'true');
+    console.log('[Migration] chinst_ revert migration complete');
+    onProgress?.(null);
+}
+
+/* ── Migration Overlay ──────────────────────────────────────── */
+const migrationOverlayStyles: Record<string, React.CSSProperties> = {
+    backdrop: {
+        position: 'fixed',
+        inset: 0,
+        zIndex: 99999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+    },
+    card: {
+        width: 340,
+        padding: '32px 28px',
+        borderRadius: 20,
+        background: 'rgba(255,255,255,0.12)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        border: '1px solid rgba(255,255,255,0.18)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+        color: '#fff',
+        textAlign: 'center' as const,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    },
+    emoji: {
+        fontSize: 36,
+        marginBottom: 12,
+    },
+    title: {
+        fontSize: 16,
+        fontWeight: 600,
+        marginBottom: 6,
+    },
+    sub: {
+        fontSize: 13,
+        opacity: 0.7,
+        marginBottom: 20,
+        lineHeight: 1.5,
+    },
+    charName: {
+        fontSize: 14,
+        fontWeight: 500,
+        marginBottom: 4,
+        opacity: 0.9,
+    },
+    phase: {
+        fontSize: 12,
+        opacity: 0.55,
+        marginBottom: 14,
+    },
+    trackOuter: {
+        width: '100%',
+        height: 6,
+        borderRadius: 3,
+        background: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+    },
+    trackFill: {
+        height: '100%',
+        borderRadius: 3,
+        background: 'linear-gradient(90deg, #a78bfa, #818cf8, #6366f1)',
+        transition: 'width 0.4s ease',
+        minWidth: 12,
+    },
+    stepLabel: {
+        fontSize: 11,
+        opacity: 0.45,
+        marginTop: 10,
+    },
+};
+
+function MigrationOverlay({ progress }: { progress: MigrationProgress }) {
+    const pct = Math.min(100, Math.round(((progress.current + (progress.phase === 'cloud' ? 0.5 : 0)) / progress.total) * 100));
+    const phaseLabel = progress.phase === 'local' ? '迁移本地数据…' : '同步云端数据…';
+
+    return (
+        <div style={migrationOverlayStyles.backdrop}>
+            <div style={migrationOverlayStyles.card}>
+                <div style={migrationOverlayStyles.emoji}>🔄</div>
+                <div style={migrationOverlayStyles.title}>记忆数据升级中</div>
+                <div style={migrationOverlayStyles.sub}>
+                    正在优化数据结构，请勿关闭页面
+                </div>
+                <div style={migrationOverlayStyles.charName}>{progress.charName}</div>
+                <div style={migrationOverlayStyles.phase}>{phaseLabel}</div>
+                <div style={migrationOverlayStyles.trackOuter}>
+                    <div style={{ ...migrationOverlayStyles.trackFill, width: `${pct}%` }} />
+                </div>
+                <div style={migrationOverlayStyles.stepLabel}>
+                    {progress.current + 1} / {progress.total}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 const pendingCharacterUpdateOptions = new Map<string, CharacterUpdateOptions>();
@@ -73,6 +238,7 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
     const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]);
     const [novels, setNovels] = useState<NovelBook[]>([]);
     const [isCharacterDataLoaded, setIsCharacterDataLoaded] = useState(false);
+    const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
 
     useEffect(() => {
         const initCharacters = async () => {
@@ -157,23 +323,9 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                 }
 
                 if (finalChars.length > 0) {
-                    const migratedChars: CharacterProfile[] = [];
-                    for (const character of finalChars) {
-                        const hadInstanceId = typeof character.charInstanceId === 'string' && character.charInstanceId.trim().length > 0;
-                        const nextCharacter = ensureCharacterInstanceId(character);
-                        migratedChars.push(nextCharacter);
-                        if (
-                            nextCharacter.charInstanceId !== character.charInstanceId
-                            || nextCharacter.templateCharId !== character.templateCharId
-                        ) {
-                            await DB.saveCharacter(nextCharacter);
-                        }
-                        if (!hadInstanceId && nextCharacter.charInstanceId && nextCharacter.charInstanceId !== character.id) {
-                            await DB.migrateLocalCharacterContentToInstance(character.id, nextCharacter.charInstanceId);
-                            void migrateCloudCharacterInstance(character.id, nextCharacter.charInstanceId);
-                        }
-                    }
-                    finalChars = migratedChars;
+                    // One-time migration: revert chinst_ data back to char.id
+                    await runChinstRevertMigration(finalChars, setMigrationProgress);
+
                     setCharacters(finalChars);
                     const lastActiveId = localStorage.getItem('os_last_active_char_id');
                     if (lastActiveId && finalChars.find(c => c.id === lastActiveId)) {
@@ -184,15 +336,10 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                         setActiveCharacterIdState(finalChars[0].id);
                     }
                 } else {
-                    const initialWithInstance = ensureCharacterInstanceId(initialCharacter);
-                    await DB.saveCharacter(initialWithInstance);
-                    await DB.migrateLocalCharacterContentToInstance(initialCharacter.id, initialWithInstance.charInstanceId || initialCharacter.id);
-                    if (initialWithInstance.charInstanceId) {
-                        void migrateCloudCharacterInstance(initialCharacter.id, initialWithInstance.charInstanceId);
-                    }
-                    finalChars = [initialWithInstance];
+                    await DB.saveCharacter(initialCharacter);
+                    finalChars = [initialCharacter];
                     setCharacters(finalChars);
-                    setActiveCharacterIdState(initialWithInstance.id);
+                    setActiveCharacterIdState(initialCharacter.id);
                 }
 
                 setGroups(dbGroups);
@@ -232,8 +379,6 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
         const id = `char-${Date.now()}`;
         const newChar: CharacterProfile = {
             id,
-            charInstanceId: generateCharInstanceId(),
-            templateCharId: id,
             name,
             avatar: generateAvatar(name),
             description: '点击编辑设定...',
@@ -411,6 +556,7 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
     return (
         <CharacterContext.Provider value={value}>
             {children}
+            {migrationProgress && <MigrationOverlay progress={migrationProgress} />}
         </CharacterContext.Provider>
     );
 };

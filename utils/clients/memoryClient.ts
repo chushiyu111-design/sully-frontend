@@ -1,6 +1,5 @@
 import type { HormoneSnapshot,VectorMemory } from '../../types';
 import { markVectorMemoryAsBackendGenerated } from '../vectorMemorySyncState';
-import { resolveCharacterContentId } from '../db/characterStore';
 import {
     buildBackendUrl,
     buildHeaders,
@@ -119,7 +118,8 @@ function normalizeCloudMemory(memory: unknown, fallbackCharId: string): VectorMe
 
     const record = memory as RawCloudMemory;
     const id = normalizeString(record.id);
-    const charId = normalizeString(record.charId) || normalizeString(record.char_id) || fallbackCharId;
+    const rawCharId = normalizeString(record.charId) || normalizeString(record.char_id) || '';
+    const charId = rawCharId && rawCharId !== fallbackCharId ? fallbackCharId : (rawCharId || fallbackCharId);
     const title = normalizeString(record.title);
     const content = normalizeString(record.content);
 
@@ -176,8 +176,6 @@ export async function pushMemories(charId: string, memories: any[]): Promise<{ s
 
     const url = getBackendUrl()!;
     const headers = buildHeaders();
-    const contentCharId = await resolveCharacterContentId(charId);
-    const legacyCharId = contentCharId !== charId ? charId : undefined;
 
     try {
         const resp = await fetchWithRetry(
@@ -185,7 +183,7 @@ export async function pushMemories(charId: string, memories: any[]): Promise<{ s
             {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({ charId: contentCharId, legacyCharId, memories, clientTimestamp: Date.now() }),
+                body: JSON.stringify({ charId, memories, clientTimestamp: Date.now() }),
             },
             { timeoutMs: 30000, maxAttempts: 2, baseDelayMs: 500 },
         );
@@ -211,12 +209,9 @@ export async function pullMemories(charId: string, options: CloudMemoryListOptio
     if (!await isBackendAlive()) return null;
 
     const headers = buildHeaders();
-    const contentCharId = await resolveCharacterContentId(charId);
-    const legacyCharId = contentCharId !== charId ? charId : undefined;
-    const requestUrl = buildBackendUrl(`/api/memories/${encodeURIComponent(contentCharId)}`, {
+    const requestUrl = buildBackendUrl(`/api/memories/${encodeURIComponent(charId)}`, {
         vectors: options.vectors ? 'true' : undefined,
         deprecated: options.includeDeprecated ? 'true' : undefined,
-        legacyCharId,
     });
 
     try {
@@ -234,7 +229,7 @@ export async function pullMemories(charId: string, options: CloudMemoryListOptio
         const data = await resp.json();
         const rawMemories = Array.isArray(data.memories) ? (data.memories as unknown[]) : [];
         const memories = rawMemories
-            .map((memory: unknown) => normalizeCloudMemory(memory, contentCharId))
+            .map((memory: unknown) => normalizeCloudMemory(memory, charId))
             .filter((memory): memory is VectorMemory => Boolean(memory))
             .map((memory: VectorMemory) => markVectorMemoryAsBackendGenerated(memory));
         console.log(`☁️ [CloudSync] Pull success: ${memories.length} memories for ${charId}`);
@@ -406,11 +401,10 @@ export async function clearCloudMemories(charId: string): Promise<CloudMemoryMut
 
     const url = getBackendUrl()!;
     const headers = buildHeaders({ contentType: false });
-    const contentCharId = await resolveCharacterContentId(charId);
 
     try {
         const resp = await fetchWithRetry(
-            `${url}/api/memories/char/${encodeURIComponent(contentCharId)}`,
+            `${url}/api/memories/char/${encodeURIComponent(charId)}`,
             { method: 'DELETE', headers },
             { timeoutMs: 15000 },
         );

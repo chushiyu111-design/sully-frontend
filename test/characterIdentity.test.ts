@@ -30,34 +30,51 @@ describe('character identity', () => {
         localStorage.setItem('csyos_user_id', 'csy-user-test');
     });
 
-    it('adds a stable personal instance id while preserving the template id', () => {
+    it('getCharacterContentId always returns char.id regardless of charInstanceId', () => {
+        const charWithInstance = makeCharacter({ charInstanceId: 'chinst_old-123' });
+        expect(getCharacterContentId(charWithInstance)).toBe('preset-sully-v2');
+
+        const charWithout = makeCharacter();
+        expect(getCharacterContentId(charWithout)).toBe('preset-sully-v2');
+    });
+
+    it('ensureCharacterInstanceId backfills templateCharId but does not generate charInstanceId', () => {
         const character = ensureCharacterInstanceId(makeCharacter());
 
         expect(character.id).toBe('preset-sully-v2');
         expect(character.templateCharId).toBe('preset-sully-v2');
-        expect(character.charInstanceId).toMatch(/^chinst_/);
-        expect(getCharacterContentId(character)).toBe(character.charInstanceId);
+        // Should NOT generate a new charInstanceId
+        expect(character.charInstanceId).toBeUndefined();
     });
 
-    it('migrates legacy local chat content onto the character instance id without duplicating backend messages', async () => {
+    it('ensureCharacterInstanceId preserves existing charInstanceId', () => {
+        const character = ensureCharacterInstanceId(
+            makeCharacter({ charInstanceId: 'chinst_existing' }),
+        );
+
+        expect(character.charInstanceId).toBe('chinst_existing');
+        expect(character.templateCharId).toBe('preset-sully-v2');
+    });
+
+    it('reads legacy chinst_ data via resolveCharacterReadIds (backward compat)', async () => {
+        const charInstanceId = 'chinst_test-sully-instance';
+        await DB.saveCharacter(makeCharacter({ charInstanceId, templateCharId: 'preset-sully-v2' }));
+
+        // Simulate legacy data stored under the chinst_ ID
         await DB.saveMessage({
-            charId: 'preset-sully-v2',
+            charId: charInstanceId,
             role: 'assistant',
             type: 'text',
-            content: 'old Sully reply',
+            content: 'legacy chinst message',
             metadata: { backendMessageId: 'backend-msg-1' },
         });
 
-        const charInstanceId = 'chinst_test-sully-instance';
-        await DB.saveCharacter(makeCharacter({ charInstanceId, templateCharId: 'preset-sully-v2' }));
-        const counts = await DB.migrateLocalCharacterContentToInstance('preset-sully-v2', charInstanceId);
-
-        expect(counts.messages).toBe(1);
+        // Reading by primary id should still find the message stored under chinst_
         const messages = await DB.getMessagesByCharId('preset-sully-v2');
         expect(messages).toHaveLength(1);
-        expect(messages[0].charId).toBe(charInstanceId);
-        expect(messages[0].ownerUserId).toBe('csy-user-test');
+        expect(messages[0].content).toBe('legacy chinst message');
 
+        // Dedup should work across both IDs
         const deduped = await DB.saveMessageOnceByBackendId({
             charId: 'preset-sully-v2',
             role: 'assistant',
@@ -65,8 +82,6 @@ describe('character identity', () => {
             content: 'duplicate from backend',
             metadata: { backendMessageId: 'backend-msg-1' },
         });
-
         expect(deduped.saved).toBe(false);
-        expect(await DB.getMessagesByCharId(charInstanceId)).toHaveLength(1);
     });
 });

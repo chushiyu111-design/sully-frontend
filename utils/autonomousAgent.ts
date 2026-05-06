@@ -22,7 +22,6 @@ import {
     safeLocalStorageSet,
     writeJsonStorage,
 } from './storage';
-import { getCharacterContentId } from './characterIdentity';
 import {
   ackAgentMessages,
   AgentBackendMessage,
@@ -449,7 +448,7 @@ export class BackendAgentManager {
 
         this.stopped = false;
         this.uiCharId = charId;
-        this.charId = getCharacterContentId(char);
+        this.charId = char.id;
         this.charRef = char;
         this.sseFailCount = 0;
         this.useFallbackPolling = false;
@@ -584,7 +583,7 @@ export class BackendAgentManager {
 
     private async enqueueBackendMessage(
         message: AgentBackendMessage,
-        options: { delayMs?: number } = {},
+        _options: { delayMs?: number } = {},
     ): Promise<void> {
         const now = Date.now();
         const metadata = parseBackendMetadata(message.metadata);
@@ -814,19 +813,19 @@ export class BackendAgentManager {
     }
 
     async pushContext(nextChar?: CharacterProfile): Promise<void> {
-        if (nextChar && (nextChar.id === this.uiCharId || getCharacterContentId(nextChar) === this.charId)) {
+        if (nextChar && (nextChar.id === this.uiCharId || nextChar.id === this.charId)) {
             this.charRef = nextChar;
         }
         if (!this.charId || !this.charRef) return;
 
         try {
-            let freshChar = nextChar && (nextChar.id === this.uiCharId || getCharacterContentId(nextChar) === this.charId)
+            let freshChar = nextChar && (nextChar.id === this.uiCharId || nextChar.id === this.charId)
                 ? nextChar
                 : this.charRef;
             try {
                 const allChars = await DB.getAllCharacters();
                 const found = allChars.find(char =>
-                    char.id === this.uiCharId || getCharacterContentId(char) === this.charId,
+                    char.id === this.uiCharId || char.id === this.charId,
                 );
                 if (found) {
                     freshChar = found;
@@ -879,12 +878,12 @@ export class BackendAgentManager {
                 return;
             }
 
-            let freshChar = char && (char.id === charId || getCharacterContentId(char) === charId) ? char : undefined;
+            let freshChar = char && (char.id === charId) ? char : undefined;
             if (!freshChar) {
                 try {
                     const allChars = await DB.getAllCharacters();
                     freshChar = allChars.find(candidate =>
-                        candidate.id === charId || getCharacterContentId(candidate) === charId,
+                        candidate.id === charId,
                     );
                 } catch {
                     // Keep the refresh best-effort; local chat must remain uninterrupted.
@@ -892,7 +891,7 @@ export class BackendAgentManager {
             }
             if (!freshChar) return;
 
-            const contentCharId = getCharacterContentId(freshChar);
+            const contentCharId = freshChar.id;
             const contextSnapshot = await buildContextSnapshot(contentCharId, freshChar);
             await pushAgentContextSnapshot(contextSnapshot);
 

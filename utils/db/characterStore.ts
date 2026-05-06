@@ -1,7 +1,6 @@
 import { CharacterProfile,GroupProfile,Message } from '../../types';
 import { openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_GROUPS,ScheduledMessage,STORE_SCHEDULED,STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS } from './core';
 import { getUserId } from '../backendConfig';
-import { ensureCharacterInstanceId, getCharacterContentId } from '../characterIdentity';
 
 function getCurrentOwnerUserId(): string {
     return getUserId();
@@ -32,28 +31,53 @@ async function getAllCharactersFromDb(db: IDBDatabase): Promise<CharacterProfile
     });
 }
 
+/**
+ * Resolve a charId to the canonical content ID (always character.id).
+ * If a chinst_ ID is passed, looks up the owning character and returns its id.
+ */
 export const resolveCharacterContentId = async (charId: string): Promise<string> => {
     const requested = normalizeId(charId);
     if (!requested) return requested;
-    if (typeof indexedDB === 'undefined') return requested;
+    // chinst_ IDs need resolution to the character's primary id
+    if (!requested.startsWith('chinst_') || typeof indexedDB === 'undefined') return requested;
 
     try {
         const db = await openDB();
         const characters = await getAllCharactersFromDb(db);
         const found = characters.find(character =>
-            character.id === requested || normalizeId(character.charInstanceId) === requested,
+            normalizeId(character.charInstanceId) === requested,
         );
-        return found ? getCharacterContentId(found) : requested;
+        return found ? normalizeId(found.id) : requested;
     } catch {
         return requested;
     }
 };
 
+/**
+ * Returns all charId variants needed to read data that may have been stored
+ * under either the character's primary id or its legacy charInstanceId.
+ */
 async function resolveCharacterReadIds(charId: string): Promise<string[]> {
     const requested = normalizeId(charId);
     if (!requested) return [];
-    const contentId = await resolveCharacterContentId(requested);
-    return [...new Set([contentId, requested].filter(Boolean))];
+    if (typeof indexedDB === 'undefined') return [requested];
+
+    try {
+        const db = await openDB();
+        const characters = await getAllCharactersFromDb(db);
+        // Find the character by either id or charInstanceId
+        const found = characters.find(character =>
+            character.id === requested || normalizeId(character.charInstanceId) === requested,
+        );
+        if (!found) return [requested];
+        // Return both the primary id and the legacy charInstanceId (if different)
+        const ids = [normalizeId(found.id)];
+        const instanceId = normalizeId(found.charInstanceId);
+        if (instanceId && instanceId !== ids[0]) ids.push(instanceId);
+        return ids;
+    } catch {
+        return [requested];
+    }
 }
 
 async function getAllByCharIds<T>(storeName: string, charIds: string[]): Promise<T[]> {
@@ -102,7 +126,7 @@ export const getAllCharacters = async (): Promise<CharacterProfile[]> => {
 export const saveCharacter = async (character: CharacterProfile): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_CHARACTERS, 'readwrite');
-    transaction.objectStore(STORE_CHARACTERS).put(ensureCharacterInstanceId(character));
+    transaction.objectStore(STORE_CHARACTERS).put(character);
 };
 
 export const getCharacterById = async (id: string): Promise<CharacterProfile | undefined> => {

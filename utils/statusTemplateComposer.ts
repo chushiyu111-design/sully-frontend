@@ -79,14 +79,14 @@ export function substituteStatusTemplateVariables(
             }
 
             if (index >= matchResult.length) {
-                return '';
+                return token;
             }
 
             return matchResult[index] || '';
         });
     }
 
-    return source.replace(/\$(\d+)/g, (token, indexText: string) => (
+    return source.replace(/\$(\d+)/g, (_token, indexText: string) => (
         indexText === '1' ? extracted : ''
     ));
 }

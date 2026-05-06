@@ -279,8 +279,20 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
     if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
     if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);
-    if (data.vectorMemories) clearAndAdd(STORE_VECTOR_MEMORIES, data.vectorMemories);
-    if (data.memoryRecords) clearAndAdd(STORE_MEMORY_RECORDS, data.memoryRecords);
+    if (data.vectorMemories) {
+        clearAndAdd(STORE_VECTOR_MEMORIES, data.vectorMemories);
+    } else if (data.characters) {
+        if (availableStores.includes(STORE_VECTOR_MEMORIES)) {
+            tx.objectStore(STORE_VECTOR_MEMORIES).clear();
+        }
+    }
+    if (data.memoryRecords) {
+        clearAndAdd(STORE_MEMORY_RECORDS, data.memoryRecords);
+    } else if (data.characters) {
+        if (availableStores.includes(STORE_MEMORY_RECORDS)) {
+            tx.objectStore(STORE_MEMORY_RECORDS).clear();
+        }
+    }
     if (importedMemoryRecordAudio.length > 0) clearAndAdd(STORE_MEMORY_RECORD_AUDIO, importedMemoryRecordAudio);
     if (Array.isArray(data.voiceAudio)) replaceStore(STORE_VOICE_AUDIO, importedVoiceAudio);
     if (data.scheduledMessages) clearAndAdd(STORE_SCHEDULED, data.scheduledMessages);

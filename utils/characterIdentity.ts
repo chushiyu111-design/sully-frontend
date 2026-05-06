@@ -10,6 +10,7 @@ function fallbackUuid(): string {
     });
 }
 
+/** @deprecated charInstanceId is being removed. Do not generate new instance IDs. */
 export function generateCharInstanceId(): string {
     const uuid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
@@ -21,25 +22,21 @@ export function getCharacterTemplateId(char: Pick<CharacterProfile, 'id' | 'temp
     return (char.templateCharId || char.id).trim();
 }
 
+/**
+ * Returns the canonical ID used for content ownership (messages, memories, etc.).
+ * Always returns `char.id` — the IDB primary key.
+ */
 export function getCharacterContentId(char: Pick<CharacterProfile, 'id' | 'charInstanceId'>): string {
-    return (char.charInstanceId || char.id).trim();
+    return char.id.trim();
 }
 
+/**
+ * @deprecated charInstanceId is being removed. This function now only backfills
+ * templateCharId for existing characters. It no longer generates new charInstanceId values.
+ */
 export function ensureCharacterInstanceId(character: CharacterProfile): CharacterProfile {
-    const existing = typeof character.charInstanceId === 'string'
-        ? character.charInstanceId.trim()
-        : '';
-    if (existing) {
-        return {
-            ...character,
-            charInstanceId: existing,
-            templateCharId: character.templateCharId || character.id,
-        };
-    }
-
     return {
         ...character,
         templateCharId: character.templateCharId || character.id,
-        charInstanceId: generateCharInstanceId(),
     };
 }

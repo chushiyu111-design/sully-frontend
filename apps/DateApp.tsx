@@ -10,7 +10,7 @@ import Modal from '../components/os/Modal';
 import DateSession,{ DateExitSyncMode } from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { buildDatePreamble,buildTheaterScene,buildDateTail } from '../utils/datePrompts';
-import { extractThinking } from '../utils/thinkingExtractor';
+import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../utils/thinkingExtractor';
 import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge } from '../utils/dateSummaryPrompts';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
@@ -788,7 +788,7 @@ const DateApp: React.FC = () => {
     };
 
     // --- Session API Logic ---
-    const handleSendMessage = async (text: string): Promise<string> => {
+    const handleSendMessage = async (text: string, directorHint?: string): Promise<{ content: string; whispers: InnerWhisper[] }> => {
         if (!char) throw new Error("No char");
 
         // 1. Save User Msg
@@ -834,7 +834,7 @@ const DateApp: React.FC = () => {
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。)` }
+                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''})` }
                 ],
                 temperature: 0.85
             })
@@ -844,7 +844,9 @@ const DateApp: React.FC = () => {
         const data = await safeResponseJson(response);
         const rawContent = data.choices[0].message.content;
         const extracted = extractThinking(rawContent);
-        const content = extracted.content;
+        // Extract inner whispers from the cleaned content
+        const whisperResult = extractInnerWhispers(extracted.content);
+        const content = whisperResult.content;
 
         // 3. Save AI Response (thinking chain saved to metadata for dev debugging, hidden from UI)
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', thinking: extracted.thinking } });
@@ -854,7 +856,7 @@ const DateApp: React.FC = () => {
         setDateMessages(freshMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp));
         void maybeTriggerAutoSummary(freshMsgs);
 
-        return content;
+        return { content, whispers: whisperResult.whispers };
     };
 
     const handleReroll = async (): Promise<string> => {

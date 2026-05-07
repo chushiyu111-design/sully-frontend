@@ -1,5 +1,6 @@
 import React,{ useState,useEffect,useRef } from 'react';
 import { CharacterProfile,Message,DateState,DialogueItem,UserProfile } from '../../types';
+import { type InnerWhisper } from '../../utils/thinkingExtractor';
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
 import DateSettings from './DateSettings';
@@ -56,7 +57,7 @@ interface DateSessionProps {
     messages: Message[]; // The DB messages for history/novel mode
     peekStatus: string;  // Initial text from the Peek phase
     initialState?: DateState; // Resume state
-    onSendMessage: (text: string) => Promise<string>; // Returns AI content
+    onSendMessage: (text: string, directorHint?: string) => Promise<{ content: string; whispers: InnerWhisper[] }>; // Returns AI content + optional whispers
     onReroll: () => Promise<string>;
     onExit: (currentState: DateState, syncMode: DateExitSyncMode) => void;
     onEditMessage: (msg: Message) => void;
@@ -120,6 +121,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [showInputBox, setShowInputBox] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [showExitModal, setShowExitModal] = useState(false);
+    
+    // Inner Whispers State (内心低语)
+    const [activeWhispers, setActiveWhispers] = useState<InnerWhisper[]>([]);
+    const [whispersVisible, setWhispersVisible] = useState(false);
+    const whisperRevealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     
     // Settings Overlay State (Internal)
     const [showSettings, setShowSettings] = useState(false);
@@ -296,21 +302,76 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
-    const handleSend = async () => {
-        if (!input.trim() || isTyping) return;
+    // Clear whispers and cancel any pending reveal timer
+    const clearWhispers = () => {
+        setActiveWhispers([]);
+        setWhispersVisible(false);
+        if (whisperRevealTimer.current) {
+            clearTimeout(whisperRevealTimer.current);
+            whisperRevealTimer.current = null;
+        }
+    };
+
+    const handleSend = async (directorHint?: string) => {
+        if (!input.trim() && !directorHint || isTyping) return;
         const text = input.trim();
         setInput('');
         setShowInputBox(false);
         setIsTyping(true);
+        clearWhispers();
 
         try {
-            const aiContent = await onSendMessage(text);
+            const result = await onSendMessage(text, directorHint);
             // Parse new content
-            const items = parseDialogue(aiContent, 'normal');
+            const items = parseDialogue(result.content, 'normal');
             setDialogueBatch(items);
             setDialogueQueue(items);
             if (items.length > 0) {
                 processNextDialogue(items[0], items.slice(1));
+            }
+            // Schedule whisper reveal after dialogue plays out
+            if (result.whispers.length > 0) {
+                // Estimate dialogue play time: ~20ms/char * total chars + 500ms buffer per item
+                const totalChars = items.reduce((sum, item) => sum + item.text.length, 0);
+                const estimatedPlayMs = totalChars * 20 + items.length * 500;
+                whisperRevealTimer.current = setTimeout(() => {
+                    setActiveWhispers(result.whispers);
+                    setWhispersVisible(true);
+                }, Math.min(estimatedPlayMs, 8000)); // Cap at 8s
+            }
+        } catch (e: any) {
+            setCurrentText("(连接中断)");
+            setShowInputBox(true);
+        } finally {
+            setIsTyping(false);
+        }
+    };
+
+    // Handle whisper option click: send the whisper as user action with hidden director hint
+    const handleWhisperClick = async (whisper: InnerWhisper) => {
+        if (isTyping) return;
+        clearWhispers();
+        setIsTyping(true);
+
+        // The whisper text becomes the user's visible action
+        const userAction = whisper.whisper;
+
+        try {
+            const result = await onSendMessage(userAction, whisper.secret || undefined);
+            const items = parseDialogue(result.content, 'normal');
+            setDialogueBatch(items);
+            setDialogueQueue(items);
+            if (items.length > 0) {
+                processNextDialogue(items[0], items.slice(1));
+            }
+            // Schedule next whisper reveal if AI provided more
+            if (result.whispers.length > 0) {
+                const totalChars = items.reduce((sum, item) => sum + item.text.length, 0);
+                const estimatedPlayMs = totalChars * 20 + items.length * 500;
+                whisperRevealTimer.current = setTimeout(() => {
+                    setActiveWhispers(result.whispers);
+                    setWhispersVisible(true);
+                }, Math.min(estimatedPlayMs, 8000));
             }
         } catch (e: any) {
             setCurrentText("(连接中断)");
@@ -497,17 +558,60 @@ const DateSession: React.FC<DateSessionProps> = ({
                         {currentSprite && <img src={currentSprite} className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom" style={{ filter: showInputBox ? 'brightness(1)' : (isTextAnimating ? 'brightness(1.05)' : 'brightness(1)'), transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${isTextAnimating ? spriteConfig.scale * 1.02 : spriteConfig.scale})` }} />}
                     </div>
                     {!isTyping && (
-                        <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
+                        <div className="absolute inset-x-0 bottom-8 z-30 flex flex-col items-center gap-3">
+                            {/* VN Dialogue Box */}
                             <div className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer">
                                 <div className="absolute -top-3 left-6"><div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div></div>
                                 <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
-                                {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
+                                {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && !whispersVisible && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
                             </div>
+
+                            {/* Inner Whispers — Glassmorphism floating options */}
+                            {whispersVisible && activeWhispers.length > 0 && !isTextAnimating && dialogueQueue.length === 0 && (
+                                <div className="w-[90%] max-w-lg flex flex-col gap-2 pointer-events-auto">
+                                    {activeWhispers.map((w, i) => (
+                                        <button
+                                            key={i}
+                                            onClick={(e) => { e.stopPropagation(); handleWhisperClick(w); }}
+                                            className="w-full text-left px-5 py-3 rounded-2xl border transition-all duration-300 active:scale-[0.97]
+                                                bg-white/[0.07] backdrop-blur-xl border-white/[0.12] hover:bg-white/[0.14] hover:border-white/[0.25]
+                                                shadow-[0_4px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)]"
+                                            style={{ animationDelay: `${i * 150}ms`, animation: `whisperFadeIn 0.6s ease-out ${i * 150}ms both` }}
+                                        >
+                                            <span className="text-white/80 text-[14px] font-light tracking-wide leading-relaxed">
+                                                {w.whisper}
+                                            </span>
+                                            {w.tone && (
+                                                <span className="ml-2 text-[10px] text-white/30 font-medium tracking-wider uppercase">
+                                                    {w.tone}
+                                                </span>
+                                            )}
+                                        </button>
+                                    ))}
+                                    {/* Free input fallback */}
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); clearWhispers(); setShowInputBox(true); }}
+                                        className="w-full text-center px-5 py-2.5 rounded-2xl border transition-all duration-300 active:scale-[0.97]
+                                            bg-transparent border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
+                                        style={{ animation: `whisperFadeIn 0.6s ease-out ${activeWhispers.length * 150}ms both` }}
+                                    >
+                                        <span className="text-white/30 text-[12px] font-light tracking-widest">✨ 自由输入…</span>
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </>
             )}
+
+            {/* Whisper fade-in keyframes (injected inline for isolation) */}
+            <style>{`
+                @keyframes whisperFadeIn {
+                    from { opacity: 0; transform: translateY(8px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            `}</style>
 
             {/* Input Layer */}
             <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>
@@ -522,7 +626,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 {showInputBox && (
                     <div className={`w-[90%] max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
                         <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
-                        <button onClick={handleSend} disabled={!input.trim() || isTyping} className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center">SEND</button>
+                        <button onClick={() => handleSend()} disabled={!input.trim() || isTyping} className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center">SEND</button>
                     </div>
                 )}
             </div>

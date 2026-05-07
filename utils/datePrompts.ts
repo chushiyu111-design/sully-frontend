@@ -306,6 +306,38 @@ export const OUTPUT_FORMAT_AND_COT_TRIGGER = `
 export const buildDatePreamble = (charName: string, userName: string) =>
     DREAMWEAVER + '\n\n' + buildIdentityIntro(charName, userName);
 
+// ====== Inner Whispers (内心低语) prompt instruction ======
+const buildInnerWhisperInstruction = (userName: string) => `
+### 💭 内心低语 (Inner Whispers) — 可选交互系统
+当你感知到当前对话来到了一个**情感转折点**（暧昧升温、心动瞬间、欲言又止、紧张对峙、身体距离变化），你**可以**（但不是必须）在回复的**最末尾**附加一个 <inner_whispers> 块。
+
+**什么时候该出现**：
+- 气氛暧昧到可以推进一步的时刻
+- ${userName}可能不知道该如何回应的沉默时刻
+- 关键的情感抉择节点（进还是退、说还是不说）
+- 你自己做了某个让场面紧张的动作之后
+
+**什么时候不该出现**：
+- 普通日常闲聊（大部分时候）
+- 刚刚已经出现过一次之后的连续几轮
+- ${userName}明确在自由表达、聊得很开心的时候
+
+**格式**（严格遵守，放在所有正文行之后）：
+<inner_whispers>
+[
+  {"whisper": "悄悄握紧他的手…", "tone": "大胆", "secret": "${userName}终于勇敢了，你要表现出意外但嘴角忍不住上扬，用力回握"},
+  {"whisper": "假装没注意到，低头看地面", "tone": "退缩", "secret": "${userName}在逃避，你要主动打破距离，比如侧头凑近看ta在看什么"}
+]
+</inner_whispers>
+
+**关键规则**：
+1. whisper 是 ${userName} 脑海中闪过的**潜意识动作**，不是台词。用 [动作描述…] 的形式
+2. tone 是情绪倾向标签：大胆/温柔/调皮/克制/退缩
+3. secret 是**你给自己的导演笔记** — ${userName}永远看不到这个字段。在这里写：如果${userName}做了这个选择，你打算怎么反应。利用信息差制造心动：比如${userName}选了退缩，你反而要逼近
+4. 提供 2-3 个选项，确保至少有一个「大胆」和一个「克制」方向
+5. 不要每一轮都生成 whispers，只在真正的转折点出现
+`;
+
 /** Build the immersive theater scene block (perspective + VN rules + scene context) */
 export const buildTheaterScene = (
     charName: string,
@@ -345,6 +377,8 @@ ${perspectivePrompt}
 [normal] 指尖从发梢滑落，垂在身侧。视线转过来的时候并不急，像是刚好、又像是故意。
 [shy] "……你一直在看我吗？"
 [happy] 嘴角的弧度藏不住，像是被戳中了什么小心思。
+
+${buildInnerWhisperInstruction(userName)}
 
 ### 场景上下文
 1. **Location**: 你们现在**面对面**。

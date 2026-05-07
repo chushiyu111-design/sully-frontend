@@ -12,6 +12,8 @@ import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking } from '../../utils/thinkingExtractor';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
+import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge } from '../../utils/dateSummaryPrompts';
+import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState } from '../../types';
 
 import {
@@ -28,6 +30,7 @@ import {
     saveTheaterSession, getTheaterSession, deleteTheaterSession,
     getCustomLocations, addCustomLocation as dbAddCustomLocation,
     deleteCustomLocation as dbDeleteCustomLocation,
+    getVisitCounts, incrementVisitCount,
 } from '../../utils/db/theaterStore';
 
 import TheaterMap from './TheaterMap';
@@ -36,12 +39,63 @@ import Modal from '../../components/os/Modal';
 import './theater.css';
 
 type Mode = 'select' | 'map' | 'session';
+export type TheaterExitSyncMode = 'summary' | 'raw' | 'none';
+
+type SummaryDraft = {
+    content: string;
+    summaryType: 'auto' | 'manual';
+    coveredMsgIds: number[];
+    sessionStartMsgId: number;
+    promptSnapshot: string;
+    lastCoveredMsgId: number;
+    bridgeOnSave?: boolean;
+    bridgeOnly?: boolean;
+    bridgeAlreadySaved?: boolean;
+    sourceSummaryMsgId?: number;
+    fromPendingAuto?: boolean;
+};
+
+const THEATER_SUMMARY_CONTEXT_KEEP_COUNT = 5;
 
 const isTheaterMessage = (m: Message) =>
     m.metadata?.source === 'theater' && !m.metadata?.hiddenFromUser;
 
+const isTheaterRawMessage = (m: Message) =>
+    m.metadata?.source === 'theater' && !m.metadata?.isSummary && !m.metadata?.isDateContextBridge;
+
+const isTheaterSummaryMessage = (m: Message) =>
+    m.metadata?.source === 'theater' && m.metadata?.isSummary === true;
+
+const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } =>
+    !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim();
+
+const getCurrentTheaterSessionMessages = (msgs: Message[]) => {
+    const theatMsgs = msgs.filter(isTheaterRawMessage).sort((a, b) => a.timestamp - b.timestamp);
+    const openingIndex = theatMsgs.map(m => m.metadata?.isOpening).lastIndexOf(true);
+    return openingIndex >= 0 ? theatMsgs.slice(openingIndex) : theatMsgs;
+};
+
+const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
+    const sessionMessages = getCurrentTheaterSessionMessages(msgs);
+    if (sessionMessages.length === 0) return '';
+    const sessionStartMsgId = sessionMessages[0].id;
+    const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+    const summaries = msgs
+        .filter(isTheaterSummaryMessage)
+        .filter(s => s.metadata?.sessionStartMsgId === sessionStartMsgId || (
+            Array.isArray(s.metadata?.coveredMsgIds) && s.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
+        ))
+        .sort((a, b) => a.timestamp - b.timestamp);
+    if (summaries.length === 0) return '';
+    const blocks = summaries.map((s, i) => {
+        const label = s.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
+        return `### 已总结片段 ${i + 1}（${label}）\n${s.content}`;
+    }).join('\n\n');
+    return `\n\n### 【本次剧场的已总结上下文】\n以下是本次剧场中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
+};
+
 const TheaterApp: React.FC = () => {
-    const { closeApp, characters, setActiveCharacterId, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, characters, setActiveCharacterId, apiConfig, addToast, userProfile, updateCharacter } = useOS();
 
     // ── Core State ──
     const [mode, setMode] = useState<Mode>('select');
@@ -61,6 +115,19 @@ const TheaterApp: React.FC = () => {
     // ── Exit Review ──
     const [showExitReview, setShowExitReview] = useState(false);
 
+    // ── Summary State ──
+    const [isSummaryGenerating, setIsSummaryGenerating] = useState(false);
+    const [activeSummaryDraft, setActiveSummaryDraft] = useState<SummaryDraft | null>(null);
+    const [pendingAutoSummary, setPendingAutoSummary] = useState<SummaryDraft | null>(null);
+    const [showSummarySettings, setShowSummarySettings] = useState(false);
+    const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
+    const summaryGeneratingRef = useRef(false);
+
+    const secondaryApiConfig = getSecondaryApiConfig();
+    const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
+    const canAutoSummary = hasCompleteApiConfig(secondaryApiConfig);
+    const summaryDisabledReason = canManualSummary ? undefined : '请先配置主 API 或副 API';
+
     // ── Pity ref for non-stale access in callbacks ──
     const sessionRef = useRef(session);
     useEffect(() => { sessionRef.current = session; }, [session]);
@@ -76,7 +143,12 @@ const TheaterApp: React.FC = () => {
     useEffect(() => {
         const presets = getPresetLocations();
         const custom = getCustomLocations();
-        setLocations([...presets, ...custom]);
+        const counts = getVisitCounts();
+        const merged = [...presets, ...custom].map(loc => ({
+            ...loc,
+            visitCount: counts[loc.id] || loc.visitCount || 0,
+        }));
+        setLocations(merged);
     }, []);
 
     // ── Character Selection ──
@@ -131,8 +203,9 @@ const TheaterApp: React.FC = () => {
                 session.timeSlot,
                 updatedSession.locationChangeCount,
             );
-            // Update visit count on location
-            loc = { ...loc, visitCount: loc.visitCount + 1, lastVisitTime: Date.now() };
+            // Update visit count on location (persisted)
+            const newCount = incrementVisitCount(loc.id);
+            loc = { ...loc, visitCount: newCount, lastVisitTime: Date.now() };
             setLocations(prev => prev.map(l => l.id === loc.id ? loc : l));
         }
 
@@ -278,6 +351,7 @@ const TheaterApp: React.FC = () => {
         try {
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+            systemPrompt += buildTheaterSummaryMemoryPrompt(allMsgs);
 
             // Inject director event if triggered
             if (directorEvent) {
@@ -341,6 +415,7 @@ const TheaterApp: React.FC = () => {
 
             const freshMsgs = await DB.getMessagesByCharId(char.id);
             setTheaterMessages(freshMsgs.filter(isTheaterMessage).sort((a, b) => a.timestamp - b.timestamp));
+            void maybeTriggerAutoSummary(freshMsgs);
         } catch (e) {
             console.error('[Theater] AI response error:', e);
             addToast('回复生成失败', 'error');
@@ -363,23 +438,180 @@ const TheaterApp: React.FC = () => {
         addToast('已删除自定义地点', 'info');
     }, [addToast]);
 
-    // ── Exit ──
-    const handleExit = useCallback(() => {
-        if (session && session.eventHistory.length > 0) {
-            setShowExitReview(true);
-        } else {
-            if (session) deleteTheaterSession(session.charId);
-            setMode('select');
-            setSession(null);
-            setChar(null);
-            setCurrentLocation(null);
-            setTheaterMessages([]);
-            setCurrentEvent(null);
-        }
-    }, [session]);
+    // ══════════════════════════════════════════════
+    //  Summary System (ported from DateApp)
+    // ══════════════════════════════════════════════
 
-    const confirmExit = useCallback(() => {
+    const generateSummaryDraft = async (summaryType: 'auto' | 'manual'): Promise<SummaryDraft | null> => {
+        if (!char || summaryGeneratingRef.current) return null;
+        const secondaryConfig = getSecondaryApiConfig();
+        const selectedApi = summaryType === 'auto'
+            ? secondaryConfig
+            : (hasCompleteApiConfig(secondaryConfig) ? secondaryConfig : apiConfig);
+        if (!hasCompleteApiConfig(selectedApi)) {
+            if (summaryType === 'manual') addToast('请先配置 API', 'error');
+            return null;
+        }
+        summaryGeneratingRef.current = true;
+        setIsSummaryGenerating(true);
+        try {
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的剧场内容', 'info'); return null; }
+            const targetMessages = summaryType === 'auto'
+                ? sessionMessages.filter(m => (!char.theaterSummaryLastAutoMsgId || m.id > char.theaterSummaryLastAutoMsgId) && !m.metadata?.dateSummaryAutoHidden)
+                : sessionMessages;
+            const threshold = char.theaterSummaryAutoThreshold || 20;
+            if (summaryType === 'auto' && targetMessages.length < threshold) return null;
+            if (targetMessages.length < 4) { if (summaryType === 'manual') addToast('消息太少，无法总结', 'info'); return null; }
+            const promptSnapshot = char.theaterSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
+            const prompt = buildSummaryPrompt(char.name, userProfile.name, new Date().toLocaleString(), targetMessages, promptSnapshot);
+            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
+                body: JSON.stringify({
+                    model: selectedApi.model,
+                    messages: [
+                        { role: 'system', content: '你负责把520约会剧场记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
+                        { role: 'user', content: prompt },
+                    ],
+                    temperature: 0.45,
+                }),
+            });
+            if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
+            const data = await safeResponseJson(response);
+            const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+            const content = extracted.content.trim();
+            if (!content) throw new Error('Summary content empty');
+            const coveredMsgIds = targetMessages.map(m => m.id);
+            return {
+                content, summaryType, coveredMsgIds,
+                sessionStartMsgId: sessionMessages[0].id, promptSnapshot,
+                lastCoveredMsgId: coveredMsgIds[coveredMsgIds.length - 1],
+            };
+        } catch (e: any) {
+            if (summaryType === 'manual') addToast(`总结生成失败: ${e.message || e}`, 'error');
+            else console.warn('[TheaterSummary] auto summary failed:', e);
+            return null;
+        } finally {
+            summaryGeneratingRef.current = false;
+            setIsSummaryGenerating(false);
+        }
+    };
+
+    const hideCoveredMsgIds = async (coveredMsgIds: number[], summaryMsgId: number) => {
+        const idsToHide = coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - THEATER_SUMMARY_CONTEXT_KEEP_COUNT));
+        if (idsToHide.length === 0) return;
+        await Promise.all(idsToHide.map(id => DB.updateMessageMetadata(id, {
+            hiddenFromUser: true, dateSummaryAutoHidden: true, hiddenBySummaryMsgId: summaryMsgId,
+        })));
+    };
+
+    const saveSummaryDraft = async (draft: SummaryDraft) => {
+        if (!char) return;
+        if (draft.bridgeAlreadySaved) {
+            if (char.theaterSummaryAutoHideEnabled && draft.sourceSummaryMsgId) await hideCoveredMsgIds(draft.coveredMsgIds, draft.sourceSummaryMsgId);
+            setActiveSummaryDraft(null);
+            addToast('已复用已保存总结同步到主聊天', 'success');
+            return;
+        }
+        if (draft.bridgeOnly) {
+            const bridgeMsgId = await DB.saveMessage({
+                charId: char.id, role: 'system', type: 'text', content: draft.content,
+                metadata: { source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'summary', coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot, summarySourceMsgId: draft.sourceSummaryMsgId },
+            });
+            if (char.theaterSummaryAutoHideEnabled) await hideCoveredMsgIds(draft.coveredMsgIds, draft.sourceSummaryMsgId || bridgeMsgId);
+            setActiveSummaryDraft(null);
+            addToast('已复用已保存总结同步到主聊天', 'success');
+            return;
+        }
+        const savedId = await DB.saveMessage({
+            charId: char.id, role: 'system', type: 'text', content: draft.content,
+            metadata: {
+                source: 'theater', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
+                coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
+                ...(draft.bridgeOnSave ? { isDateContextBridge: true, bridgeType: 'summary' } : {}),
+            },
+        });
+        if (char.theaterSummaryAutoHideEnabled) await hideCoveredMsgIds(draft.coveredMsgIds, savedId);
+        if (draft.summaryType === 'auto') updateCharacter(char.id, { theaterSummaryLastAutoMsgId: draft.lastCoveredMsgId });
+        if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) setPendingAutoSummary(null);
+        setActiveSummaryDraft(null);
+        const freshMsgs = await DB.getMessagesByCharId(char.id);
+        setTheaterMessages(freshMsgs.filter(isTheaterMessage).sort((a, b) => a.timestamp - b.timestamp));
+        addToast(draft.bridgeOnSave ? '总结已同步到主聊天' : '总结已保存', 'success');
+    };
+
+    const discardSummaryDraft = () => {
+        if (!char || !activeSummaryDraft) return;
+        if (activeSummaryDraft.summaryType === 'auto') {
+            updateCharacter(char.id, { theaterSummaryLastAutoMsgId: activeSummaryDraft.lastCoveredMsgId });
+            setPendingAutoSummary(null);
+        }
+        setActiveSummaryDraft(null);
+        addToast('已丢弃总结草稿', 'info');
+    };
+
+    const discardPendingAutoSummary = () => {
+        if (!char || !pendingAutoSummary) return;
+        updateCharacter(char.id, { theaterSummaryLastAutoMsgId: pendingAutoSummary.lastCoveredMsgId });
+        setPendingAutoSummary(null);
+        addToast('已丢弃自动总结', 'info');
+    };
+
+    const requestManualSummary = async () => {
+        const draft = await generateSummaryDraft('manual');
+        if (draft) setActiveSummaryDraft(draft);
+    };
+
+    const maybeTriggerAutoSummary = async (msgs: Message[]) => {
+        if (!char || !char.theaterSummaryAutoEnabled || pendingAutoSummary || summaryGeneratingRef.current) return;
+        if (!hasCompleteApiConfig(getSecondaryApiConfig())) return;
+        const sessionMessages = getCurrentTheaterSessionMessages(msgs);
+        const unsummarized = sessionMessages.filter(m => !m.metadata?.dateSummaryAutoHidden);
+        const newCount = char.theaterSummaryLastAutoMsgId
+            ? unsummarized.filter(m => m.id > char.theaterSummaryLastAutoMsgId!).length
+            : unsummarized.length;
+        const threshold = char.theaterSummaryAutoThreshold || 20;
+        if (newCount < threshold) return;
+        const draft = await generateSummaryDraft('auto');
+        if (draft) setPendingAutoSummary(draft);
+    };
+
+    const compressExistingSummaries = async () => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const summaries = allMsgs.filter(isTheaterSummaryMessage).sort((a, b) => a.timestamp - b.timestamp);
+        for (const summary of summaries) {
+            if (!Array.isArray(summary.metadata?.coveredMsgIds)) continue;
+            const ids = summary.metadata.coveredMsgIds.filter((id: unknown): id is number => typeof id === 'number');
+            await hideCoveredMsgIds(ids, summary.id);
+        }
+        const freshMsgs = await DB.getMessagesByCharId(char.id);
+        setTheaterMessages(freshMsgs.filter(isTheaterMessage).sort((a, b) => a.timestamp - b.timestamp));
+    };
+
+    const openSummarySettings = () => {
+        if (!char) return;
+        setSummaryPromptDraft(char.theaterSummaryPrompt || DEFAULT_DATE_SUMMARY_PROMPT);
+        setShowSummarySettings(true);
+    };
+
+    const saveSummarySettings = () => {
+        if (!char) return;
+        updateCharacter(char.id, { theaterSummaryPrompt: summaryPromptDraft.trim() || DEFAULT_DATE_SUMMARY_PROMPT });
+        setShowSummarySettings(false);
+        addToast('总结设置已保存', 'success');
+    };
+
+    // ══════════════════════════════════════════════
+    //  Exit & Sync
+    // ══════════════════════════════════════════════
+
+    const finishExit = () => {
         if (session) deleteTheaterSession(session.charId);
+        setPendingAutoSummary(null);
+        setActiveSummaryDraft(null);
         setShowExitReview(false);
         setMode('select');
         setSession(null);
@@ -387,9 +619,43 @@ const TheaterApp: React.FC = () => {
         setCurrentLocation(null);
         setTheaterMessages([]);
         setCurrentEvent(null);
-    }, [session]);
+    };
+
+    const saveRawBridgeAndExit = async () => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        if (sessionMessages.length > 0) {
+            await DB.saveMessage({
+                charId: char.id, role: 'system', type: 'text',
+                content: formatDateMessagesForBridge(sessionMessages, char.name, userProfile.name),
+                metadata: { source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'raw', coveredMsgIds: sessionMessages.map(m => m.id), sessionStartMsgId: sessionMessages[0].id },
+            });
+            addToast('原始记录已同步到主聊天', 'success');
+        }
+        finishExit();
+    };
+
+    const onExitSession = async (syncMode: TheaterExitSyncMode) => {
+        if (!char) return;
+        if (syncMode === 'none') { finishExit(); return; }
+        if (syncMode === 'raw') { await saveRawBridgeAndExit(); return; }
+        // syncMode === 'summary'
+        if (pendingAutoSummary) {
+            setActiveSummaryDraft({ ...pendingAutoSummary, bridgeOnSave: true, fromPendingAuto: true });
+            return;
+        }
+        const draft = await generateSummaryDraft('manual');
+        if (!draft) { addToast('未同步总结，仅保存进度', 'info'); finishExit(); return; }
+        setActiveSummaryDraft({ ...draft, bridgeOnSave: true });
+    };
+
+    const handleExit = useCallback(() => {
+        setShowExitReview(true);
+    }, []);
 
     // ── Render ──
+
 
     if (mode === 'select' || !char) {
         return (
@@ -481,34 +747,72 @@ const TheaterApp: React.FC = () => {
                     onSendMessage={handleSendMessage}
                     onChangeLocation={() => setMode('map')}
                     onExit={handleExit}
+                    isSummaryGenerating={isSummaryGenerating}
+                    hasPendingSummary={!!pendingAutoSummary}
+                    canManualSummary={canManualSummary}
+                    canAutoSummary={canAutoSummary}
+                    summaryDisabledReason={summaryDisabledReason}
+                    onRequestSummary={requestManualSummary}
+                    onReviewPendingSummary={() => pendingAutoSummary && setActiveSummaryDraft({ ...pendingAutoSummary, fromPendingAuto: true })}
+                    onDiscardPendingSummary={discardPendingAutoSummary}
+                    onToggleAutoSummary={(enabled) => updateCharacter(char.id, { theaterSummaryAutoEnabled: enabled })}
+                    onToggleAutoHideSummary={async (enabled) => {
+                        updateCharacter(char.id, { theaterSummaryAutoHideEnabled: enabled });
+                        if (enabled) { await compressExistingSummaries(); addToast('已开启压缩旧记录', 'success'); }
+                    }}
+                    onChangeThreshold={(t) => updateCharacter(char.id, { theaterSummaryAutoThreshold: t })}
+                    onOpenSummarySettings={openSummarySettings}
                 />
 
-                {/* Exit Review Modal */}
-                <Modal isOpen={showExitReview} title="今日回顾" onClose={() => setShowExitReview(false)} footer={
-                    <button
-                        onClick={confirmExit}
-                        className="w-full py-3.5 rounded-2xl font-bold text-white text-sm"
-                        style={{ background: 'linear-gradient(135deg, #FF6B9D, #C44569)' }}
-                    >
-                        结束剧场
-                    </button>
+                {/* Exit Sync Modal */}
+                <Modal isOpen={showExitReview} title="离开剧场" onClose={() => setShowExitReview(false)} footer={
+                    <div className="flex w-full flex-col gap-2">
+                        <button onClick={() => { setShowExitReview(false); onExitSession('summary'); }} className="w-full py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100">生成总结同步</button>
+                        <button onClick={() => { setShowExitReview(false); onExitSession('raw'); }} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">同步原始记录</button>
+                        <div className="flex gap-2">
+                            <button onClick={() => setShowExitReview(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
+                            <button onClick={() => { setShowExitReview(false); onExitSession('none'); }} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">暂不同步</button>
+                        </div>
+                    </div>
                 }>
-                    <div className="theater-timeline">
-                        {session?.eventHistory.map((evt, i) => (
-                            <div key={i} className="theater-timeline-item">
-                                <div>
-                                    <div className="theater-timeline-location">
-                                        {evt.sceneType.toUpperCase()}
+                    <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">离开时可以把这次剧场约会同步给主聊天。同步内容用户不会在聊天列表里看到，但角色之后会自然记得。</div>
+                    {session?.eventHistory && session.eventHistory.length > 0 && (
+                        <div className="theater-timeline mt-3">
+                            {session.eventHistory.map((evt, i) => (
+                                <div key={i} className="theater-timeline-item">
+                                    <div>
+                                        <div className="theater-timeline-location">{evt.sceneType.toUpperCase()}</div>
+                                        <div className="theater-timeline-event">{evt.event}</div>
                                     </div>
-                                    <div className="theater-timeline-event">{evt.event}</div>
                                 </div>
-                            </div>
-                        ))}
-                        {(!session?.eventHistory || session.eventHistory.length === 0) && (
-                            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: '20px 0' }}>
-                                这次散步很平静，没有特别的事件发生
-                            </div>
-                        )}
+                            ))}
+                        </div>
+                    )}
+                </Modal>
+
+                {/* Summary Preview Modal */}
+                {activeSummaryDraft && (
+                    <Modal isOpen={!!activeSummaryDraft} title="剧场总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
+                        <>
+                            <button onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">复制</button>
+                            <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
+                            <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{activeSummaryDraft.bridgeOnSave ? '保存并同步' : '保存'}</button>
+                        </>
+                    }>
+                        <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">{renderMarkdown(activeSummaryDraft.content)}</div>
+                    </Modal>
+                )}
+
+                {/* Summary Settings Modal */}
+                <Modal isOpen={showSummarySettings} title="总结设置" onClose={() => setShowSummarySettings(false)} footer={
+                    <>
+                        <button onClick={() => setShowSummarySettings(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">取消</button>
+                        <button onClick={saveSummarySettings} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">保存</button>
+                    </>
+                }>
+                    <div className="space-y-3">
+                        <p className="text-xs leading-relaxed text-slate-400">只影响剧场总结生成，不会改动立绘、场景等其他设置。</p>
+                        <textarea value={summaryPromptDraft} onChange={e => setSummaryPromptDraft(e.target.value)} rows={9} className="w-full resize-y rounded-2xl border border-slate-100 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-700 outline-none focus:border-emerald-300/60 focus:ring-2 focus:ring-emerald-100" />
                     </div>
                 </Modal>
             </div>
@@ -519,3 +823,4 @@ const TheaterApp: React.FC = () => {
 };
 
 export default TheaterApp;
+

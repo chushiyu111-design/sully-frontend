@@ -75,3 +75,27 @@ export function updateCustomLocation(id: string, updates: Partial<TheaterLocatio
     );
     saveCustomLocations(existing);
 }
+
+// ── Visit Counts (persistent across sessions) ──
+
+const THEATER_VISIT_COUNTS_KEY = 'theater_visit_counts';
+
+export function getVisitCounts(): Record<string, number> {
+    try {
+        const raw = localStorage.getItem(THEATER_VISIT_COUNTS_KEY);
+        if (!raw) return {};
+        return JSON.parse(raw) as Record<string, number>;
+    } catch {
+        return {};
+    }
+}
+
+export function incrementVisitCount(locationId: string): number {
+    const counts = getVisitCounts();
+    const next = (counts[locationId] || 0) + 1;
+    counts[locationId] = next;
+    try {
+        localStorage.setItem(THEATER_VISIT_COUNTS_KEY, JSON.stringify(counts));
+    } catch { /* ignore */ }
+    return next;
+}

@@ -150,6 +150,13 @@ export interface CharacterProfile {
     dateSummaryLastAutoMsgId?: number; // Last date message id covered by auto summary
     dateSummaryAutoHideEnabled?: boolean; // Hide summarized date messages, keeping only recent context
 
+    // Theater (520) Summary System
+    theaterSummaryPrompt?: string;           // User-customized theater summary prompt
+    theaterSummaryAutoEnabled?: boolean;     // Auto theater summary toggle
+    theaterSummaryAutoThreshold?: number;    // Message threshold for auto summaries
+    theaterSummaryLastAutoMsgId?: number;    // Last theater message id covered by auto summary
+    theaterSummaryAutoHideEnabled?: boolean; // Hide summarized theater messages, keeping only recent context
+
     savedDateState?: DateState;
     specialMomentRecords?: Record<string, SpecialMomentRecord>;
 

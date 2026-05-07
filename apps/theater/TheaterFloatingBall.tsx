@@ -1,17 +1,70 @@
 /**
  * TheaterFloatingBall — 520约会剧场独立悬浮球
  * 粉色系主题，不与见面的 SummaryFloatingBall 耦合。
- * 实装：场景切换、设置入口
- * 占位：BGM、记忆印记、心情读取、取景框
+ * 实装：场景切换、设置入口、氛围 BGM
+ * 占位：记忆印记、心情读取、取景框
  */
 
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, PanInfo } from 'framer-motion';
+
+const DEFAULT_BALL_ICON = '/theater-ball-default.jpg';
+const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
+const ICON_MAX_SIZE = 96; // resize uploaded images to 96x96
+
+/** Resize an image file to a small square via canvas, return base64 data URL */
+const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = ICON_MAX_SIZE;
+            canvas.height = ICON_MAX_SIZE;
+            const ctx = canvas.getContext('2d')!;
+            // cover crop: take center square
+            const size = Math.min(img.width, img.height);
+            const sx = (img.width - size) / 2;
+            const sy = (img.height - size) / 2;
+            ctx.drawImage(img, sx, sy, size, size, 0, 0, ICON_MAX_SIZE, ICON_MAX_SIZE);
+            resolve(canvas.toDataURL('image/webp', 0.8));
+        };
+        img.onerror = reject;
+        img.src = reader.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+});
+import type { BgmStatus } from '../../utils/theaterBgm';
 
 interface TheaterFloatingBallProps {
     charId: string;
     onChangeLocation: () => void;
     onOpenSettings: () => void;
+    /** BGM state */
+    bgmStatus: BgmStatus;
+    bgmEnabled: boolean;
+    bgmVolume: number;
+    onBgmToggle: () => void;
+    onBgmVolumeChange: (v: number) => void;
+    onBgmRegenerate: () => void;
+    /** Summary state */
+    isSummaryGenerating?: boolean;
+    hasPendingSummary?: boolean;
+    canManualSummary?: boolean;
+    canAutoSummary?: boolean;
+    summaryDisabledReason?: string;
+    onRequestSummary?: () => void;
+    onReviewPendingSummary?: () => void;
+    onDiscardPendingSummary?: () => void;
+    onToggleAutoSummary?: (enabled: boolean) => void;
+    onToggleAutoHideSummary?: (enabled: boolean) => void;
+    onChangeThreshold?: (threshold: number) => void;
+    onOpenSummarySettings?: () => void;
+    /** Character state for reading toggles */
+    theaterSummaryAutoEnabled?: boolean;
+    theaterSummaryAutoHideEnabled?: boolean;
+    theaterSummaryAutoThreshold?: number;
 }
 
 const BALL_SIZE = 48;
@@ -47,14 +100,49 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     charId,
     onChangeLocation,
     onOpenSettings,
+    bgmStatus, bgmEnabled, bgmVolume,
+    onBgmToggle, onBgmVolumeChange, onBgmRegenerate,
+    isSummaryGenerating, hasPendingSummary, canManualSummary, canAutoSummary,
+    summaryDisabledReason,
+    onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
+    onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
+    onOpenSummarySettings,
+    theaterSummaryAutoEnabled, theaterSummaryAutoHideEnabled, theaterSummaryAutoThreshold,
 }) => {
     const storageKey = `theater_ball_pos_${charId}`;
+    const iconKey = `${ICON_STORAGE_PREFIX}${charId}`;
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const constraintsRef = useRef<HTMLDivElement>(null);
     const [panelOpen, setPanelOpen] = useState(false);
     const [position, setPosition] = useState(() => readPos(storageKey) || defaultPos());
     const [dragging, setDragging] = useState(false);
+    const [customIcon, setCustomIcon] = useState<string | null>(() => {
+        try { return localStorage.getItem(iconKey); } catch { return null; }
+    });
     const x = useMotionValue(position.x);
     const y = useMotionValue(position.y);
+
+    // The icon to display: custom > default
+    const ballIconUrl = customIcon || DEFAULT_BALL_ICON;
+
+    const handleIconUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            const dataUrl = await resizeImageToDataUrl(file);
+            localStorage.setItem(iconKey, dataUrl);
+            setCustomIcon(dataUrl);
+        } catch (err) {
+            console.error('[TheaterFloatingBall] Failed to process icon:', err);
+        }
+        // reset input so same file can be re-selected
+        e.target.value = '';
+    }, [iconKey]);
+
+    const handleResetIcon = useCallback(() => {
+        localStorage.removeItem(iconKey);
+        setCustomIcon(null);
+    }, [iconKey]);
 
     useEffect(() => {
         const next = readPos(storageKey) || defaultPos();
@@ -100,7 +188,12 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     };
 
     return (
-        <div ref={constraintsRef} className="absolute inset-0 z-[90] pointer-events-none">
+        <div
+            ref={constraintsRef}
+            className="absolute inset-0 z-[90]"
+            style={{ pointerEvents: panelOpen ? 'auto' : 'none' }}
+            onClick={() => panelOpen && setPanelOpen(false)}
+        >
             <motion.div
                 drag={!panelOpen}
                 dragConstraints={constraintsRef}
@@ -111,6 +204,15 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                 onDragEnd={commitPos}
                 className="absolute left-0 top-0 pointer-events-auto"
             >
+                {/* Hidden file input for icon upload */}
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleIconUpload}
+                />
+
                 {/* Ball */}
                 <button
                     type="button"
@@ -123,16 +225,21 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                         background: 'radial-gradient(circle, rgba(255,107,157,0.35) 0%, transparent 70%)',
                         animation: 'theater-pulse 3s ease-in-out infinite',
                     }} />
-                    {/* Core */}
-                    <span className="relative flex items-center justify-center w-10 h-10 rounded-full" style={{
-                        background: 'linear-gradient(135deg, rgba(255,107,157,0.7), rgba(196,69,105,0.7))',
-                        backdropFilter: 'blur(12px)',
-                        border: '1px solid rgba(255,255,255,0.2)',
+                    {/* Core — custom image or default */}
+                    <span className="relative flex items-center justify-center w-10 h-10 rounded-full overflow-hidden" style={{
+                        border: '1.5px solid rgba(255,255,255,0.25)',
                         boxShadow: '0 4px 20px rgba(255,107,157,0.4)',
                     }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="#fff" width={18} height={18}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
-                        </svg>
+                        <img
+                            src={ballIconUrl}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            draggable={false}
+                            onError={(e) => {
+                                // fallback to pink gradient if image fails
+                                (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                        />
                     </span>
                 </button>
 
@@ -190,11 +297,173 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                             {/* Divider */}
                             <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
 
-                            {/* Placeholders */}
-                            <PlaceholderItem icon="🎵" label="氛围 BGM" />
+                            {/* BGM — functional */}
+                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                                <button
+                                    type="button"
+                                    onClick={onBgmToggle}
+                                    className="w-full flex items-center justify-between gap-2 mb-1"
+                                >
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="text-base">{bgmEnabled ? '🎵' : '🔇'}</span>
+                                        <span className="text-xs text-white/80 font-medium">氛围 BGM</span>
+                                    </div>
+                                    <span className="text-[9px] tracking-wider" style={{
+                                        color: bgmStatus === 'generating' ? 'rgba(255,182,73,0.8)'
+                                            : bgmStatus === 'ready' ? 'rgba(130,255,170,0.7)'
+                                            : bgmStatus === 'error' ? 'rgba(255,100,100,0.7)'
+                                            : 'rgba(255,255,255,0.3)',
+                                    }}>
+                                        {bgmStatus === 'generating' ? '生成中…'
+                                            : bgmStatus === 'ready' ? '播放中'
+                                            : bgmStatus === 'error' ? '失败'
+                                            : bgmEnabled ? '等待' : '已关闭'}
+                                    </span>
+                                </button>
+                                {bgmEnabled && (
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className="text-[10px] text-white/30">🔈</span>
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={100}
+                                            value={Math.round(bgmVolume * 100)}
+                                            onChange={e => onBgmVolumeChange(Number(e.target.value) / 100)}
+                                            className="flex-1 h-1 rounded-full appearance-none cursor-pointer"
+                                            style={{
+                                                background: `linear-gradient(to right, rgba(255,107,157,0.6) ${bgmVolume * 100}%, rgba(255,255,255,0.1) ${bgmVolume * 100}%)`,
+                                                accentColor: '#ff6b9d',
+                                            }}
+                                        />
+                                        <span className="text-[10px] text-white/30">🔊</span>
+                                    </div>
+                                )}
+                                {bgmStatus === 'ready' && bgmEnabled && (
+                                    <button
+                                        type="button"
+                                        onClick={onBgmRegenerate}
+                                        className="w-full mt-1.5 text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                                    >
+                                        🔄 重新生成
+                                    </button>
+                                )}
+                            </div>
+                            {/* Divider */}
+                            <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
+
+                            {/* ── Summary Controls ── */}
+                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                                {/* Auto Summary Toggle */}
+                                <div className="flex items-center justify-between mb-1">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="text-base">📝</span>
+                                        <span className="text-xs text-white/80 font-medium">自动总结</span>
+                                    </div>
+                                    {canAutoSummary ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => onToggleAutoSummary?.(!theaterSummaryAutoEnabled)}
+                                            className="w-9 h-5 rounded-full transition-colors relative"
+                                            style={{ background: theaterSummaryAutoEnabled ? 'rgba(130,255,170,0.4)' : 'rgba(255,255,255,0.1)' }}
+                                        >
+                                            <span className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow" style={{ left: theaterSummaryAutoEnabled ? 18 : 2 }} />
+                                        </button>
+                                    ) : (
+                                        <span className="text-[9px] text-white/30 tracking-wider">{summaryDisabledReason || '需副API'}</span>
+                                    )}
+                                </div>
+                                {/* Threshold */}
+                                {theaterSummaryAutoEnabled && (
+                                    <div className="flex items-center gap-2 mt-1 mb-1">
+                                        <span className="text-[10px] text-white/40">每</span>
+                                        <input
+                                            type="number"
+                                            min={8}
+                                            max={100}
+                                            value={theaterSummaryAutoThreshold || 20}
+                                            onChange={e => onChangeThreshold?.(Math.max(8, Number(e.target.value) || 20))}
+                                            className="w-12 text-center text-[11px] rounded-lg py-0.5 bg-white/5 text-white/70 border border-white/10 outline-none"
+                                        />
+                                        <span className="text-[10px] text-white/40">条触发</span>
+                                    </div>
+                                )}
+                                {/* Auto Hide Toggle */}
+                                <div className="flex items-center justify-between mt-1">
+                                    <span className="text-[10px] text-white/50">压缩旧记录</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => onToggleAutoHideSummary?.(!theaterSummaryAutoHideEnabled)}
+                                        className="w-9 h-5 rounded-full transition-colors relative"
+                                        style={{ background: theaterSummaryAutoHideEnabled ? 'rgba(130,255,170,0.4)' : 'rgba(255,255,255,0.1)' }}
+                                    >
+                                        <span className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow" style={{ left: theaterSummaryAutoHideEnabled ? 18 : 2 }} />
+                                    </button>
+                                </div>
+                                {/* Pending Summary */}
+                                {hasPendingSummary && (
+                                    <div className="flex gap-1.5 mt-2">
+                                        <button type="button" onClick={onReviewPendingSummary} className="flex-1 text-[10px] py-1.5 rounded-lg" style={{ background: 'rgba(130,255,170,0.15)', color: 'rgba(130,255,170,0.9)' }}>
+                                            查看待确认
+                                        </button>
+                                        <button type="button" onClick={onDiscardPendingSummary} className="text-[10px] py-1.5 px-2 rounded-lg text-white/30" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                                            丢弃
+                                        </button>
+                                    </div>
+                                )}
+                                {/* Manual Summary + Settings */}
+                                <div className="flex gap-1.5 mt-2">
+                                    <button
+                                        type="button"
+                                        onClick={onRequestSummary}
+                                        disabled={isSummaryGenerating || !canManualSummary}
+                                        className="flex-1 text-[10px] py-1.5 rounded-lg transition-colors disabled:opacity-30"
+                                        style={{ background: 'rgba(255,107,157,0.15)', color: 'rgba(255,107,157,0.9)' }}
+                                    >
+                                        {isSummaryGenerating ? '生成中…' : '手动总结'}
+                                    </button>
+                                    <button type="button" onClick={onOpenSummarySettings} className="text-[10px] py-1.5 px-2 rounded-lg text-white/40" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                                        ⚙
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Remaining placeholders */}
                             <PlaceholderItem icon="📸" label="记忆印记" />
                             <PlaceholderItem icon="💭" label="心情读取" />
                             <PlaceholderItem icon="📷" label="取景框" />
+
+                            {/* Divider */}
+                            <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
+
+                            {/* Custom Icon */}
+                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="text-base">🎨</span>
+                                        <span className="text-xs text-white/80 font-medium">悬浮球图标</span>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 mt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="flex-1 text-[10px] py-1.5 rounded-lg transition-colors active:bg-white/10"
+                                        style={{ background: 'rgba(255,107,157,0.15)', color: 'rgba(255,107,157,0.9)' }}
+                                    >
+                                        上传图片
+                                    </button>
+                                    {customIcon && (
+                                        <button
+                                            type="button"
+                                            onClick={handleResetIcon}
+                                            className="flex-1 text-[10px] py-1.5 rounded-lg text-white/40 transition-colors active:bg-white/10"
+                                            style={{ background: 'rgba(255,255,255,0.06)' }}
+                                        >
+                                            恢复默认
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

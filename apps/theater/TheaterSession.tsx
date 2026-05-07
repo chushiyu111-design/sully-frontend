@@ -7,6 +7,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 import { useOS } from '../../context/OSContext';
+import { useConfig } from '../../context/ConfigContext';
+import { useTheaterBgm } from '../../hooks/useTheaterBgm';
 import TheaterSettings from './TheaterSettings';
 import TheaterFloatingBall from './TheaterFloatingBall';
 
@@ -30,6 +32,19 @@ interface TheaterSessionProps {
     onSendMessage: (text: string) => Promise<void>;
     onChangeLocation: () => void;
     onExit: () => void;
+    // Summary
+    isSummaryGenerating?: boolean;
+    hasPendingSummary?: boolean;
+    canManualSummary?: boolean;
+    canAutoSummary?: boolean;
+    summaryDisabledReason?: string;
+    onRequestSummary?: () => void;
+    onReviewPendingSummary?: () => void;
+    onDiscardPendingSummary?: () => void;
+    onToggleAutoSummary?: (enabled: boolean) => void;
+    onToggleAutoHideSummary?: (enabled: boolean) => void;
+    onChangeThreshold?: (threshold: number) => void;
+    onOpenSummarySettings?: () => void;
 }
 
 // ── Helpers ──
@@ -124,8 +139,23 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     char, userProfile, location, timeSlot,
     is520: _is520, currentEvent, isDirectorLoading, isAiLoading,
     messages, onSendMessage, onChangeLocation, onExit,
+    isSummaryGenerating, hasPendingSummary, canManualSummary, canAutoSummary,
+    summaryDisabledReason,
+    onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
+    onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
+    onOpenSummarySettings,
 }) => {
     const { addToast, registerBackHandler } = useOS();
+    const { ttsConfig } = useConfig();
+
+    // ── BGM ──
+    const bgm = useTheaterBgm({
+        location,
+        timeSlot,
+        event: currentEvent,
+        apiKey: ttsConfig.apiKey || '',
+        groupId: ttsConfig.groupId,
+    });
 
     // ── VN State ──
     const pages = useMemo(() => buildPages(messages), [messages]);
@@ -487,6 +517,27 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 charId={char.id}
                 onChangeLocation={onChangeLocation}
                 onOpenSettings={() => setShowSettings(true)}
+                bgmStatus={bgm.status}
+                bgmEnabled={bgm.enabled}
+                bgmVolume={bgm.volume}
+                onBgmToggle={bgm.toggle}
+                onBgmVolumeChange={bgm.setVolume}
+                onBgmRegenerate={bgm.regenerate}
+                isSummaryGenerating={isSummaryGenerating}
+                hasPendingSummary={hasPendingSummary}
+                canManualSummary={canManualSummary}
+                canAutoSummary={canAutoSummary}
+                summaryDisabledReason={summaryDisabledReason}
+                onRequestSummary={onRequestSummary}
+                onReviewPendingSummary={onReviewPendingSummary}
+                onDiscardPendingSummary={onDiscardPendingSummary}
+                onToggleAutoSummary={onToggleAutoSummary}
+                onToggleAutoHideSummary={onToggleAutoHideSummary}
+                onChangeThreshold={onChangeThreshold}
+                onOpenSummarySettings={onOpenSummarySettings}
+                theaterSummaryAutoEnabled={char.theaterSummaryAutoEnabled}
+                theaterSummaryAutoHideEnabled={char.theaterSummaryAutoHideEnabled}
+                theaterSummaryAutoThreshold={char.theaterSummaryAutoThreshold}
             />
         </div>
     );

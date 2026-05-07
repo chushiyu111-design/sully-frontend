@@ -15,6 +15,8 @@ export interface MinimaxMusicGenerateOptions {
     model?: string;
     prompt: string;
     lyrics: string;
+    /** When true, generate instrumental music without vocals. */
+    isInstrumental?: boolean;
     signal?: AbortSignal;
     timeoutMs?: number;
 }
@@ -145,9 +147,10 @@ export async function generateMinimaxMusic(options: MinimaxMusicGenerateOptions)
     const lyrics = options.lyrics.trim();
     const prompt = options.prompt.trim();
     const model = options.model || DEFAULT_MODEL;
+    const isInstrumental = options.isInstrumental === true;
 
     if (!apiKey) throw new Error('请先配置 MiniMax API Key');
-    if (!lyrics) throw new Error('歌词不能为空');
+    if (!isInstrumental && !lyrics) throw new Error('歌词不能为空');
 
     const response = await fetch(`${resolveBaseUrl(options.baseUrl)}/v1/music_generation`, {
         method: 'POST',
@@ -155,11 +158,11 @@ export async function generateMinimaxMusic(options: MinimaxMusicGenerateOptions)
         body: JSON.stringify({
             model,
             prompt: prompt.slice(0, 2000),
-            lyrics: lyrics.slice(0, 3500),
+            ...(isInstrumental ? {} : { lyrics: lyrics.slice(0, 3500) }),
             stream: false,
             output_format: 'hex',
             lyrics_optimizer: false,
-            is_instrumental: false,
+            is_instrumental: isInstrumental,
             audio_setting: {
                 sample_rate: 44100,
                 bitrate: 256000,

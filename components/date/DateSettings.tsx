@@ -210,7 +210,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
             
             {/* Live Preview Area — matches DateSession visual mode layout */}
             <div className="aspect-[9/16] max-h-[320px] bg-black relative overflow-hidden shrink-0 border-b border-slate-200">
-                    <div className="absolute inset-0 bg-cover bg-center opacity-80" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
+                    <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: char.dateBackground ? `url(${char.dateBackground})` : 'none' }}></div>
                     <div className="absolute inset-x-0 bottom-0 h-[90%] flex items-end justify-center pointer-events-none overflow-hidden">
                         <img 
                         src={currentSpriteImg}

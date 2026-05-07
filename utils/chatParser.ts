@@ -381,42 +381,52 @@ export const ChatParser = {
 
     // Chunking text for typing effect - splits into separate chat bubbles
     // Primary: split on line breaks (AI decides where to break)
-    // Fallback: if no line breaks and text is long, split on spaces between CJK characters
-    //   (Chinese text normally has no spaces, so "汉字 汉字" means the AI intended a line break)
+    // Secondary: within each chunk, convert spaces between CJK characters to separate bubbles
+    //   (Chinese text normally has no spaces, so spaces between CJK chars = AI intended a line break)
     chunkText: (text: string): string[] => {
         // Try line breaks first
         let chunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
             .map(c => c.trim())
             .filter(c => c.length > 0);
 
-        // Fallback: no line breaks found and text is long enough
-        // Split on spaces that sit between CJK characters/punctuation (中文里不该有空格)
-        // NOTE: We avoid regex lookbehind (?<=...) because Safari ≤ 16.3 does not
+        // Split on spaces that sit between CJK characters/punctuation
+        // NOTE: We avoid regex lookbehind (?<=...) because Safari <= 16.3 does not
         // support it and would throw a SyntaxError at module parse time, killing the
         // entire app.  Instead, we use a capture-group approach: match the CJK char
-        // before + space + CJK char after, then reconstruct the chunks by keeping the
-        // surrounding characters with their respective halves.
-        if (chunks.length <= 1 && text.trim().length > 50) {
-            const CJK_SPACE_CJK_RE = /([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+([\u4e00-\u9fff\u3400-\u4dbf])/g;
+        // before + space + CJK char after, then reconstruct by keeping surrounding
+        // characters with their respective halves.
+        const CJK_SPACE_CJK_RE = /([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+([\u4e00-\u9fff\u3400-\u4dbf])/g;
+
+        /**
+         * Split a single text segment on CJK-space-CJK boundaries.
+         * Short segments (<=15 chars) are kept as-is to avoid over-splitting.
+         */
+        const splitCjkSpaces = (segment: string): string[] => {
+            if (segment.length <= 15) return [segment];
             const parts: string[] = [];
             let lastIdx = 0;
+            CJK_SPACE_CJK_RE.lastIndex = 0;
             let m: RegExpExecArray | null;
-            while ((m = CJK_SPACE_CJK_RE.exec(text)) !== null) {
-                // Include the CJK char before the space in the current chunk
+            while ((m = CJK_SPACE_CJK_RE.exec(segment)) !== null) {
                 const splitPos = m.index + m[1].length;
-                parts.push(text.slice(lastIdx, splitPos));
+                parts.push(segment.slice(lastIdx, splitPos));
                 lastIdx = splitPos;
-                // Skip the whitespace; the next CJK char starts a new chunk
                 const spaceLen = m[0].length - m[1].length - m[2].length;
                 lastIdx += spaceLen;
-                // Move the regex index back so the trailing CJK char can be matched
-                // as a leading char for the next split
                 CJK_SPACE_CJK_RE.lastIndex = m.index + m[1].length + spaceLen;
             }
-            if (lastIdx < text.length) parts.push(text.slice(lastIdx));
-            chunks = parts.map(c => c.trim()).filter(c => c.length > 0);
+            if (lastIdx < segment.length) parts.push(segment.slice(lastIdx));
+            const result = parts.map(c => c.trim()).filter(c => c.length > 0);
+            return result.length > 0 ? result : [segment];
+        };
+
+        // Apply CJK space splitting to each chunk individually.
+        // This handles cases where AI uses spaces instead of newlines within a line.
+        const expanded: string[] = [];
+        for (const chunk of chunks) {
+            expanded.push(...splitCjkSpaces(chunk));
         }
 
-        return chunks;
+        return expanded;
     }
 }

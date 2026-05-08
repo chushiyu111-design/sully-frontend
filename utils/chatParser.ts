@@ -374,96 +374,6 @@ export const ChatParser = {
             const remaining = content.slice(lastIndex).trim();
             if (remaining && !isToolWrapperJunk(remaining)) parts.push({ type: 'text', content: remaining });
         }
-            // 2026-02-11 13:52 format (unbracketed, at line start)
-            .replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*/gm, '')
-            // （下午1:52）or（上午10:30）Chinese 12h parenthetical
-            .replace(/（[上下]午\d{1,2}[：:]\d{2}）/g, '')
-            // (1:52 PM) or (10:30 AM) English 12h parenthetical
-            .replace(/\(\d{1,2}:\d{2}\s*[AP]M\)/gi, '')
-            // Strip markdown headers (# ## ### etc) → keep the text
-            .replace(/^#{1,6}\s+/gm, '')
-            // Strip residual action/system tags that weren't caught earlier
-            .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|CALL)[:\s][\s\S]*?\]\]/g, '')
-            .replace(/\[schedule_message[^\]]*\]/g, '')
-            .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
-            .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
-            // [回复 "content"]: format (AI mimics history context format)
-            .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')
-            // Strip backtick-wrapped action tags and empty backtick pairs
-            .replace(/`(\[\[[\s\S]*?\]\])`/g, '$1')
-            .replace(/``+/g, '')
-            .replace(/(^|\s)`(\s|$)/gm, '$1$2')
-            // Strip markdown links → keep text only: [text](url) → text
-            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-            // Strip all ** sequences (orphaned bold markers are common AI artifacts;
-            // in chat context, losing bold formatting is acceptable for clean display)
-            .replace(/\*{2,}/g, '')
-            // Strip standalone separators and bullets
-            .replace(/^\s*---\s*$/gm, '')
-            .replace(/^\s*[-*+]\s*$/gm, '')
-            // Strip legacy translation marker (but keep %%BILINGUAL%% and <翻译> XML tags)
-            .replace(/%%TRANS%%[\s\S]*/gi, '')
-            // Collapse excessive whitespace
-            .replace(/\n{3,}/g, '\n\n')
-            .trim();
-    },
-
-    /**
-     * Check if text has meaningful display content after stripping all markers/junk.
-     * Used to decide whether a chunk is worth saving as a message.
-     */
-    hasDisplayContent: (text: string): boolean => {
-        const stripped = text
-            .replace(/%%\s*BILINGUAL\s*%%/gi, '')
-            .replace(/%%TRANS%%[\s\S]*/gi, '')
-            .replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '')
-            .replace(/^\s*---\s*$/gm, '')
-            .replace(/``+/g, '')
-            .replace(/(^|\s)`(\s|$)/gm, '$1$2')
-            .replace(/\[\[[\s\S]*?\]\]/g, '')
-            .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
-            .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')
-            .replace(/^#{1,6}\s+/gm, '')
-            .replace(/^\s*[-*+]\s*$/gm, '')
-            .trim();
-        return stripped.length > 0;
-    },
-
-    // Split text into bubbles (text and emojis)
-    parseSongShareContent,
-
-    splitResponse: (content: string): ChatResponsePart[] => {
-        content = normalizeSongShareTags(content);
-        const tokenPattern = /\[\[(SEND_EMOJI|SHARE_SONG):\s*([\s\S]*?)\]\]/g;
-        const parts: ChatResponsePart[] = [];
-        let lastIndex = 0;
-        let tokenMatch: RegExpExecArray | null;
-
-        while ((tokenMatch = tokenPattern.exec(content)) !== null) {
-            if (tokenMatch.index > lastIndex) {
-                const textBefore = content.slice(lastIndex, tokenMatch.index).trim();
-                if (textBefore && !isToolWrapperJunk(textBefore)) parts.push({ type: 'text', content: textBefore });
-            }
-
-            if (tokenMatch[1] === 'SEND_EMOJI') {
-                parts.push({ type: 'emoji', content: tokenMatch[2].trim() });
-            } else {
-                const songCard = parseSongShareContent(tokenMatch[2]);
-                if (songCard) {
-                    parts.push({ type: 'song', content: songCard });
-                } else {
-                    const rawTag = tokenMatch[0].trim();
-                    if (rawTag) parts.push({ type: 'text', content: rawTag });
-                }
-            }
-
-            lastIndex = tokenMatch.index + tokenMatch[0].length;
-        }
-
-        if (lastIndex < content.length) {
-            const remaining = content.slice(lastIndex).trim();
-            if (remaining && !isToolWrapperJunk(remaining)) parts.push({ type: 'text', content: remaining });
-        }
 
         if (parts.length === 0 && content.trim()) parts.push({ type: 'text', content: content.trim() });
         return parts;
@@ -489,6 +399,7 @@ export const ChatParser = {
 
         /**
          * Split a single text segment on CJK-space-CJK boundaries.
+         * Short segments (<=15 chars) are kept as-is to avoid over-splitting.
          */
         const splitCjkSpaces = (segment: string): string[] => {
             const parts: string[] = [];

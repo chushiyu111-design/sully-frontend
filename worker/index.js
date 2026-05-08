@@ -1639,6 +1639,45 @@ export default {
       }
     }
 
+    // ========== AI HOT 资讯代理 (aihot.virxact.com) ==========
+    if (url.pathname === '/aihot' && request.method === 'GET') {
+      // 5分钟内存缓存
+      const AIHOT_CACHE_MS = 5 * 60 * 1000;
+      if (!globalThis._aihotCache) globalThis._aihotCache = {};
+      const aihotCached = globalThis._aihotCache['selected'];
+      if (aihotCached && (Date.now() - aihotCached.timestamp) < AIHOT_CACHE_MS) {
+        return jsonResponse({ success: true, ...aihotCached.data, _cached: true }, { origin });
+      }
+
+      try {
+        const aihotUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+        const aihotRes = await fetch(
+          'https://aihot.virxact.com/api/public/items?mode=selected&take=30',
+          { headers: { 'User-Agent': aihotUA, 'Accept': 'application/json' } }
+        );
+        if (!aihotRes.ok) {
+          return jsonResponse({ success: false, error: `AIHOT API returned ${aihotRes.status}` }, { status: 502, origin });
+        }
+        const aihotData = await aihotRes.json();
+        const aihotResult = {
+          items: (aihotData.items || []).map(item => ({
+            id: item.id || '',
+            title: item.title || '',
+            url: item.url || '',
+            source: item.source || '',
+            publishedAt: item.publishedAt || '',
+            summary: item.summary || '',
+            category: item.category || null,
+          })),
+          count: aihotData.count || 0,
+        };
+        globalThis._aihotCache['selected'] = { data: aihotResult, timestamp: Date.now() };
+        return jsonResponse({ success: true, ...aihotResult }, { origin });
+      } catch (e) {
+        return jsonResponse({ success: false, error: `AI HOT fetch failed: ${e.message}` }, { status: 502, origin });
+      }
+    }
+
     // ========== 热搜代理 (原生微博直连) ==========
     if (url.pathname === '/hotlist' && request.method === 'GET') {
       const type = url.searchParams.get('type') || 'wbHot';

@@ -9,7 +9,7 @@ import type { TrajectoryNode, TrajectoryMood } from '../types/trajectory';
 import { MOOD_COLORS } from '../types/trajectory';
 import { getTrajectoryNodes, saveTrajectoryNode } from '../utils/db/trajectoryStore';
 import {
-    hasAnyMessages, initTrajectory, generateMonologue,
+    hasAnyMessages, initTrajectory, regenTrajectory, continueTrajectory, generateMonologue,
     generateAfterMonologue, generateWhisperResponse, createManualAfterNode,
 } from '../utils/trajectoryEngine';
 import { MinimaxTts } from '../utils/minimaxTts';
@@ -26,6 +26,7 @@ const TrajectoryApp: React.FC = () => {
     const [nodes, setNodes] = useState<TrajectoryNode[]>([]);
     const [activeNode, setActiveNode] = useState<TrajectoryNode | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [loadingPhase, setLoadingPhase] = useState<'before' | 'after' | ''>('');
     const [monoText, setMonoText] = useState('');
     const [isMonoGen, setIsMonoGen] = useState(false);
     const [whisperInput, setWhisperInput] = useState('');
@@ -52,10 +53,12 @@ const TrajectoryApp: React.FC = () => {
         setChar(c);
         setIsLoading(true);
         setView('timeline');
+        setLoadingPhase('before');
         try {
             let existing = getTrajectoryNodes(c.id);
             if (existing.length === 0) {
-                existing = await initTrajectory(c, api);
+                setLoadingPhase('before');
+                existing = await initTrajectory(c, api, userProfile.name);
             }
             setNodes(existing);
         } catch (e: any) {
@@ -64,6 +67,7 @@ const TrajectoryApp: React.FC = () => {
             setView('select');
         } finally {
             setIsLoading(false);
+            setLoadingPhase('');
         }
     }, [api, addToast]);
 
@@ -101,7 +105,7 @@ const TrajectoryApp: React.FC = () => {
         if (!char || !api || !activeNode || !whisperInput.trim()) return;
         setIsWhisperGen(true);
         try {
-            const resp = await generateWhisperResponse(char, activeNode, whisperInput.trim(), api);
+            const resp = await generateWhisperResponse(char, activeNode, whisperInput.trim(), api, userProfile.name);
             setWhisperResp(resp);
             const record = { userWhisper: whisperInput.trim(), charResponse: resp, timestamp: Date.now() };
             const updated = { ...activeNode, whisperHistory: [...(activeNode.whisperHistory || []), record] };
@@ -120,16 +124,36 @@ const TrajectoryApp: React.FC = () => {
         if (!char || !api) return;
         setShowRegenConfirm(false);
         setIsLoading(true);
+        setLoadingPhase('before');
         try {
-            const fresh = await initTrajectory(char, api);
+            const fresh = await regenTrajectory(char, api, userProfile.name);
             setNodes(fresh);
-            addToast('已重新生成轨迹节点', 'success');
+            addToast('已重新生成轨迹节点（手动记忆已保留）', 'success');
         } catch (e: any) {
             addToast('重新生成失败', 'error');
         } finally {
             setIsLoading(false);
+            setLoadingPhase('');
         }
-    }, [char, api, addToast]);
+    }, [char, api, addToast, userProfile.name]);
+
+    // ── Continue (append new nodes) ──
+    const handleContinue = useCallback(async () => {
+        if (!char || !api) return;
+        setIsLoading(true);
+        setLoadingPhase('before');
+        try {
+            const updated = await continueTrajectory(char, api, userProfile.name);
+            setNodes(updated);
+            const newCount = updated.length - nodes.length;
+            addToast(newCount > 0 ? `已补充 ${newCount} 个新节点` : '暂时没有新的轨迹可以补充', newCount > 0 ? 'success' : 'info');
+        } catch (e: any) {
+            addToast('继续追溯失败', 'error');
+        } finally {
+            setIsLoading(false);
+            setLoadingPhase('');
+        }
+    }, [char, api, addToast, userProfile.name, nodes.length]);
 
     // ── Add Manual Node ──
     const handleAddNode = useCallback(() => {
@@ -194,6 +218,7 @@ const TrajectoryApp: React.FC = () => {
 
     const beforeNodes = nodes.filter(n => n.era === 'before_meeting');
     const afterNodes = nodes.filter(n => n.era === 'after_meeting');
+    const hasMeetingPoint = beforeNodes.length > 0 && afterNodes.length > 0;
 
     // ── Per-character trajectory summary (for select page) ──
     const [charNodesMap, setCharNodesMap] = useState<Record<string, TrajectoryNode[]>>({});
@@ -411,7 +436,7 @@ const TrajectoryApp: React.FC = () => {
 
                 <div className="traj-detail-scroll">
                     {isLoading ? (
-                        <div className="traj-detail-loading"><div className="traj-loading-spinner" /><span>正在读取记忆档案…</span></div>
+                        <div className="traj-detail-loading"><div className="traj-loading-spinner" /><span>{loadingPhase === 'after' ? '正在从记忆中提炼相遇后的轨迹…' : '正在读取记忆档案…'}</span></div>
                     ) : nodes.length === 0 ? (
                         /* Empty state */
                         <div className="traj-archive-empty">
@@ -433,91 +458,111 @@ const TrajectoryApp: React.FC = () => {
                                 <div className="traj-profile-stats" style={{ marginBottom: '12px', color: '#586272' }}>
                                     档案完整度 {nodes.length > 0 ? Math.round(((nodes.length - tlUnread) / nodes.length) * 100) : 0}% · {tlUnread > 0 ? `${tlUnread} 段待读取` : '全部已读'}
                                 </div>
-                                <button className="traj-profile-action" onClick={() => setShowRegenConfirm(true)}>
-                                    {tlUnread > 0 ? '继续追溯' : '重新追溯'}
-                                </button>
+                                <div className="traj-profile-actions">
+                                    <button className="traj-profile-action" onClick={handleContinue}>
+                                        继续追溯
+                                    </button>
+                                    <button className="traj-profile-action traj-profile-action--secondary" onClick={() => setShowRegenConfirm(true)}>
+                                        重新追溯
+                                    </button>
+                                </div>
                             </div>
 
-                            {/* Before Meeting chapter */}
-                            {beforeNodes.length > 0 && (
-                                <>
-                                    <div className="traj-chapter-intro">
-                                        <div className="traj-chapter-title">在遇见你之前</div>
-                                        <div className="traj-chapter-subtitle">Before You</div>
-                                        <div className="traj-chapter-desc">那些尚未与你有关，却已经塑造了{char?.name}的时刻。</div>
-                                    </div>
+                            {/* ── Unified Timeline ── */}
+                            <div className="traj-chapter-intro">
+                                <div className="traj-chapter-title">{char?.name}的时间线</div>
+                                <div className="traj-chapter-subtitle">Life Trajectory</div>
+                                <div className="traj-chapter-desc">
+                                    {afterNodes.length > 0
+                                        ? `从独自走过的那些年，到有你以后的每一刻。`
+                                        : `那些尚未与你有关，却已经塑造了${char?.name}的时刻。`}
+                                </div>
+                            </div>
 
-                                    <div className="traj-spine">
-                                        {beforeNodes.map((node, idx) => {
-                                            const ntype = inferNodeType(node);
-                                            const accent = getNodeAccentColor(ntype);
-                                            const isRead = !!node.monologue;
-                                            return (
-                                                <div key={node.id} className={`traj-spine-node traj-spine-node--${ntype} ${isRead ? 'traj-spine-node--read' : ''}`}
-                                                     style={{ '--spine-accent': accent, animationDelay: `${idx * 0.07}s` } as React.CSSProperties}
-                                                     onClick={() => handleOpenNode(node)}>
-                                                    <div className="traj-spine-dot" />
-                                                    <div className="traj-spine-card">
-                                                        <div className="traj-spine-card-top">
-                                                            <span className="traj-spine-age">AGE {String(node.age).padStart(2, '0')}</span>
-                                                            <span className="traj-spine-type" style={{ color: accent }}>{nodeTypeLabel[ntype]}</span>
-                                                        </div>
-                                                        <div className="traj-spine-title">{node.title}</div>
-                                                        <div className="traj-spine-excerpt">
-                                                            {node.monologue
-                                                                ? node.monologue.slice(0, 40).replace(/\n/g, ' ') + '…'
-                                                                : '这段记忆仍在整理中。'}
-                                                        </div>
-                                                        <div className="traj-spine-tags">
-                                                            {node.keywords.map((k, i) => <span key={i} className="traj-spine-tag">{k}</span>)}
-                                                        </div>
-                                                        <div className="traj-spine-footer">
-                                                            {node.whisperHistory && node.whisperHistory.length > 0 && (
-                                                                <span>残响 {node.whisperHistory.length}</span>
-                                                            )}
-                                                            <span>情绪底色：{nodeMoodTone[node.mood] || '微冷'}</span>
-                                                        </div>
-                                                    </div>
+                            <div className="traj-spine">
+                                {/* Before meeting nodes */}
+                                {beforeNodes.map((node, idx) => {
+                                    const ntype = inferNodeType(node);
+                                    const accent = getNodeAccentColor(ntype);
+                                    const isRead = !!node.monologue;
+                                    return (
+                                        <div key={node.id} className={`traj-spine-node traj-spine-node--${ntype} ${isRead ? 'traj-spine-node--read' : ''}`}
+                                             style={{ '--spine-accent': accent, animationDelay: `${idx * 0.07}s` } as React.CSSProperties}
+                                             onClick={() => handleOpenNode(node)}>
+                                            <div className="traj-spine-dot" />
+                                            <div className="traj-spine-card">
+                                                <div className="traj-spine-card-top">
+                                                    <span className="traj-spine-age">AGE {String(node.age).padStart(2, '0')}</span>
+                                                    <span className="traj-spine-type" style={{ color: accent }}>{nodeTypeLabel[ntype]}</span>
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
-                                </>
-                            )}
-
-                            {/* After Meeting chapter */}
-                            {afterNodes.length > 0 && (
-                                <>
-                                    <div className="traj-chapter-intro">
-                                        <div className="traj-chapter-title">在遇见你之后</div>
-                                        <div className="traj-chapter-subtitle">After You</div>
-                                        <div className="traj-chapter-desc">从此以后，记忆里多了你的痕迹。</div>
-                                    </div>
-
-                                    <div className="traj-spine">
-                                        {afterNodes.map((node, idx) => {
-                                            const isRead = !!node.monologue;
-                                            return (
-                                                <div key={node.id} className={`traj-spine-node traj-spine-node--related ${isRead ? 'traj-spine-node--read' : ''}`}
-                                                     style={{ '--spine-accent': '#C8D6E2', animationDelay: `${idx * 0.07}s` } as React.CSSProperties}
-                                                     onClick={() => handleOpenNode(node)}>
-                                                    <div className="traj-spine-dot" />
-                                                    <div className="traj-spine-card">
-                                                        <div className="traj-spine-card-top">
-                                                            <span className="traj-spine-age">相遇后</span>
-                                                            <span className="traj-spine-type" style={{ color: '#C8D6E2' }}>与你有关</span>
-                                                        </div>
-                                                        <div className="traj-spine-title">{node.title}</div>
-                                                        <div className="traj-spine-tags">
-                                                            {node.keywords.map((k, i) => <span key={i} className="traj-spine-tag">{k}</span>)}
-                                                        </div>
-                                                    </div>
+                                                <div className="traj-spine-title">{node.title}</div>
+                                                <div className="traj-spine-excerpt">
+                                                    {node.monologue
+                                                        ? node.monologue.slice(0, 40).replace(/\n/g, ' ') + '…'
+                                                        : '这段记忆仍在整理中。'}
                                                 </div>
-                                            );
-                                        })}
+                                                <div className="traj-spine-tags">
+                                                    {node.keywords.map((k, i) => <span key={i} className="traj-spine-tag">{k}</span>)}
+                                                </div>
+                                                <div className="traj-spine-footer">
+                                                    {node.whisperHistory && node.whisperHistory.length > 0 && (
+                                                        <span>残响 {node.whisperHistory.length}</span>
+                                                    )}
+                                                    <span>情绪底色：{nodeMoodTone[node.mood] || '微冷'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {/* ✦ Meeting Point Divider ✦ */}
+                                {hasMeetingPoint && (
+                                    <div className="traj-meeting-divider">
+                                        <div className="traj-meeting-glow" />
+                                        <div className="traj-meeting-dot" />
+                                        <div className="traj-meeting-text">
+                                            <span className="traj-meeting-label">遇 见 你</span>
+                                            <span className="traj-meeting-label-en">The Meeting Point</span>
+                                        </div>
                                     </div>
-                                </>
-                            )}
+                                )}
+
+                                {/* After meeting nodes */}
+                                {afterNodes.map((node, idx) => {
+                                    const ntype = inferNodeType(node);
+                                    const accent = getNodeAccentColor(ntype);
+                                    const isRead = !!node.monologue;
+                                    const sourceLabel = node.memorySource === 'vector' ? '自动提炼' : '手动记录';
+                                    return (
+                                        <div key={node.id} className={`traj-spine-node traj-spine-node--related ${isRead ? 'traj-spine-node--read' : ''}`}
+                                             style={{ '--spine-accent': accent, animationDelay: `${(beforeNodes.length + idx + 1) * 0.07}s` } as React.CSSProperties}
+                                             onClick={() => handleOpenNode(node)}>
+                                            <div className="traj-spine-dot" />
+                                            <div className="traj-spine-card">
+                                                <div className="traj-spine-card-top">
+                                                    <span className="traj-spine-age">相遇后</span>
+                                                    <span className="traj-spine-type" style={{ color: accent }}>{sourceLabel}</span>
+                                                </div>
+                                                <div className="traj-spine-title">{node.title}</div>
+                                                <div className="traj-spine-excerpt">
+                                                    {node.monologue
+                                                        ? node.monologue.slice(0, 40).replace(/\n/g, ' ') + '…'
+                                                        : '这段记忆仍在整理中。'}
+                                                </div>
+                                                <div className="traj-spine-tags">
+                                                    {node.keywords.map((k, i) => <span key={i} className="traj-spine-tag">{k}</span>)}
+                                                </div>
+                                                <div className="traj-spine-footer">
+                                                    {node.whisperHistory && node.whisperHistory.length > 0 && (
+                                                        <span>残响 {node.whisperHistory.length}</span>
+                                                    )}
+                                                    <span>情绪底色：{nodeMoodTone[node.mood] || '微冷'}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
 
                             {/* Add node button */}
                             <button className="traj-detail-add-btn" onClick={() => setShowAddModal(true)}>

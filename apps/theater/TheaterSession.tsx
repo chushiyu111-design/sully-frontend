@@ -4,7 +4,9 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import { resolveTheaterBg } from '../../utils/db/theaterStore';
 import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../../types';
+import type { InnerWhisper } from '../../utils/thinkingExtractor';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 import { useOS } from '../../context/OSContext';
 import { useConfig } from '../../context/ConfigContext';
@@ -29,9 +31,12 @@ interface TheaterSessionProps {
     isDirectorLoading: boolean;
     isAiLoading: boolean;
     messages: Message[];
-    onSendMessage: (text: string) => Promise<void>;
+    onSendMessage: (text: string, directorHint?: string) => Promise<void>;
     onChangeLocation: () => void;
     onExit: () => void;
+    // Inner Whispers (内心低语)
+    activeWhispers?: InnerWhisper[];
+    onWhisperClick?: (whisper: InnerWhisper) => void;
     // Timeline / Fork
     timelineLabel?: string;
     onForkFromMessage?: (msg: Message) => void;
@@ -148,6 +153,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
     onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
     onOpenSummarySettings,
+    activeWhispers = [], onWhisperClick,
 }) => {
     const { addToast, registerBackHandler } = useOS();
     const { ttsConfig } = useConfig();
@@ -177,8 +183,17 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const hadInitialMessagesRef = useRef(messages.length > 0);
 
     // ── Background Crossfade ──
-    const currentBg = location.bgImage
-        ? `url(${location.bgImage}) center/cover`
+    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        resolveTheaterBg(location.bgImage).then(url => {
+            if (!cancelled) setResolvedBg(url);
+        });
+        return () => { cancelled = true; };
+    }, [location.bgImage]);
+
+    const currentBg = resolvedBg
+        ? `url(${resolvedBg}) center/cover`
         : location.bgGradient || '#111';
     const prevBgRef = useRef(currentBg);
     const [bgLayers, setBgLayers] = useState<{ front: string; back: string; transitioning: boolean }>({
@@ -313,6 +328,12 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         try { await onSendMessage(text); } catch { addToast('发送失败，请重试', 'error'); }
     };
 
+    // ── Handle whisper click ──
+    const handleWhisperSelect = (w: InnerWhisper) => {
+        if (isLoading || !onWhisperClick) return;
+        onWhisperClick(w);
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     };
@@ -445,9 +466,33 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     )}
 
                     {/* End of conversation → tap hint */}
-                    {done && !isLoading && isLastPage && pages.length > 0 && (
+                    {done && !isLoading && isLastPage && pages.length > 0 && activeWhispers.length === 0 && (
                         <div className="theater-vn-ctc" style={{ fontSize: 10, letterSpacing: 2 }}>
                             点击回复
+                        </div>
+                    )}
+
+                    {/* Inner Whispers — Glassmorphism floating options */}
+                    {done && !isLoading && isLastPage && activeWhispers.length > 0 && (
+                        <div className="theater-vn-whispers" onClick={e => e.stopPropagation()}>
+                            {activeWhispers.map((w, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => handleWhisperSelect(w)}
+                                    className="theater-vn-whisper-btn"
+                                    style={{ animationDelay: `${i * 150}ms` }}
+                                >
+                                    <span className="theater-vn-whisper-text">{w.whisper}</span>
+                                    {w.tone && <span className="theater-vn-whisper-tone">{w.tone}</span>}
+                                </button>
+                            ))}
+                            <button
+                                className="theater-vn-whisper-free"
+                                onClick={() => setShowInput(true)}
+                                style={{ animationDelay: `${activeWhispers.length * 150}ms` }}
+                            >
+                                <span>✨ 自由输入…</span>
+                            </button>
                         </div>
                     )}
 

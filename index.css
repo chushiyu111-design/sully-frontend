@@ -263,6 +263,8 @@
   --preview-warm: #fff9f0;
   --preview-ink: #171215;
   font-family: var(--app-font), system-ui, sans-serif;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .preview-hero-scene {
@@ -281,11 +283,8 @@
 }
 
 .preview-phone-shell {
-  animation: previewFloat 7s ease-in-out infinite;
-}
-
-.preview-phone-shell {
   position: relative;
+  animation: previewFloat 7s ease-in-out infinite;
 }
 
 .preview-phone-shell::after {
@@ -300,10 +299,38 @@
   animation: previewSweep 7.5s ease-in-out infinite;
 }
 
+/* Scroll-triggered section reveal */
+.preview-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+
+.preview-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Feature card hover */
+.preview-feature-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.preview-feature-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .preview-phone-shell,
   .preview-phone-shell::after {
     animation: none;
+  }
+
+  .preview-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
   }
 }
 

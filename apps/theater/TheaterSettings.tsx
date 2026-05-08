@@ -7,6 +7,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { CharacterProfile, SpriteConfig } from '../../types';
 import { useOS } from '../../context/OSContext';
+import { resolveTheaterBg } from '../../utils/db/theaterStore';
 
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
 const EMOTION_LABELS: Record<string, string> = {
@@ -167,8 +168,19 @@ const TheaterSettings: React.FC<TheaterSettingsProps> = ({ char, location, isOpe
 
     if (!isOpen) return null;
 
-    const bgStyle = location?.bgImage
-        ? `url(${location.bgImage}) center/cover`
+    // Resolve bg image from IndexedDB if needed
+    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        resolveTheaterBg(location?.bgImage).then(url => {
+            if (!cancelled) setResolvedBg(url);
+        });
+        return () => { cancelled = true; };
+    }, [isOpen, location?.bgImage]);
+
+    const bgStyle = resolvedBg
+        ? `url(${resolvedBg}) center/cover`
         : location?.bgGradient || '#111';
 
     return (

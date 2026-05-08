@@ -2,29 +2,20 @@
  * LocationEditor — 用户自定义地点编辑器 Modal
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { TheaterLocation, LocationTag } from '../../types';
 import Modal from '../../components/os/Modal';
+import { processImage } from '../../utils/file';
+import { saveTheaterBgImage, deleteTheaterBgImage, resolveTheaterBg } from '../../utils/db/theaterStore';
 
 const ALL_TAGS: { value: LocationTag; label: string }[] = [
-    { value: 'romantic', label: '🌹 浪漫' },
-    { value: 'daily',    label: '☕ 日常' },
-    { value: 'adventure', label: '🎢 冒险' },
-    { value: 'quiet',    label: '🤫 安静' },
-    { value: 'crowded',  label: '👥 热闹' },
-    { value: 'outdoor',  label: '🌿 户外' },
-    { value: 'indoor',   label: '🏠 室内' },
-];
-
-const PRESET_GRADIENTS = [
-    'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-    'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-    'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
-    'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
-    'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)',
-    'linear-gradient(135deg, #fccb90 0%, #d57eeb 100%)',
-    'linear-gradient(135deg, #30cfd0 0%, #330867 100%)',
+    { value: 'romantic', label: '浪漫' },
+    { value: 'daily',    label: '日常' },
+    { value: 'adventure', label: '冒险' },
+    { value: 'quiet',    label: '安静' },
+    { value: 'crowded',  label: '热闹' },
+    { value: 'outdoor',  label: '户外' },
+    { value: 'indoor',   label: '室内' },
 ];
 
 interface LocationEditorProps {
@@ -39,7 +30,29 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
     const [nameEn, setNameEn] = useState(editingLocation?.nameEn || '');
     const [description, setDescription] = useState(editingLocation?.description || '');
     const [tags, setTags] = useState<LocationTag[]>(editingLocation?.tags || ['daily']);
-    const [selectedGradient, setSelectedGradient] = useState(editingLocation?.bgGradient || PRESET_GRADIENTS[0]);
+    // previewUrl is what's displayed — could be a resolved data URL or asset URL
+    const [previewUrl, setPreviewUrl] = useState<string>('');
+    // pendingDataUrl holds the raw upload data until save
+    const [pendingDataUrl, setPendingDataUrl] = useState<string>('');
+    const [uploading, setUploading] = useState(false);
+    const [removedImage, setRemovedImage] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Resolve existing bgImage on open
+    const resolvedRef = useRef(false);
+    React.useEffect(() => {
+        if (!isOpen) {
+            resolvedRef.current = false;
+            return;
+        }
+        if (resolvedRef.current) return;
+        resolvedRef.current = true;
+        if (editingLocation?.bgImage) {
+            resolveTheaterBg(editingLocation.bgImage).then(url => {
+                if (url) setPreviewUrl(url);
+            });
+        }
+    }, [isOpen, editingLocation?.bgImage]);
 
     const toggleTag = (tag: LocationTag) => {
         setTags(prev =>
@@ -47,16 +60,57 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
         );
     };
 
-    const handleSave = () => {
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            setUploading(true);
+            const dataUrl = await processImage(file, { skipCompression: true });
+            setPendingDataUrl(dataUrl);
+            setPreviewUrl(dataUrl);
+            setRemovedImage(false);
+        } catch (err) {
+            console.error('[LocationEditor] Image upload failed:', err);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    const handleRemoveImage = () => {
+        setPreviewUrl('');
+        setPendingDataUrl('');
+        setRemovedImage(true);
+    };
+
+    const handleSave = async () => {
         if (!name.trim() || !description.trim()) return;
 
+        const locationId = editingLocation?.id || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+        // Handle image persistence
+        let bgImageValue: string | undefined = editingLocation?.bgImage;
+
+        if (pendingDataUrl) {
+            // New upload → save to IndexedDB, store asset key
+            const key = await saveTheaterBgImage(locationId, pendingDataUrl);
+            bgImageValue = key;
+        } else if (removedImage) {
+            // User removed image → delete from IndexedDB
+            if (editingLocation?.id) {
+                await deleteTheaterBgImage(editingLocation.id);
+            }
+            bgImageValue = undefined;
+        }
+
         const location: TheaterLocation = {
-            id: editingLocation?.id || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            id: locationId,
             name: name.trim(),
             nameEn: nameEn.trim() || undefined,
             description: description.trim(),
             tags: tags.length > 0 ? tags : ['daily'],
-            bgGradient: selectedGradient,
+            bgImage: bgImageValue,
+            bgGradient: bgImageValue ? undefined : 'linear-gradient(135deg, #f5d0e0, #e8d5f5)',
             isPreset: false,
             visitCount: editingLocation?.visitCount || 0,
             lastVisitTime: editingLocation?.lastVisitTime,
@@ -69,18 +123,18 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
     return (
         <Modal isOpen={isOpen} title={editingLocation ? "编辑地点" : "新增地点"} onClose={onClose} footer={
             <div className="flex gap-3 w-full">
-                <button onClick={onClose} className="flex-1 py-3 bg-white/5 rounded-2xl text-white/50 font-bold text-sm">取消</button>
+                <button onClick={onClose} className="flex-1 py-3 rounded-2xl font-bold text-sm" style={{ background: 'rgba(0,0,0,0.04)', color: '#999' }}>取消</button>
                 <button
                     onClick={handleSave}
                     disabled={!name.trim() || !description.trim()}
-                    className="flex-1 py-3 rounded-2xl font-bold text-sm text-white disabled:opacity-30"
-                    style={{ background: 'linear-gradient(135deg, #FF6B9D, #C44569)' }}
+                    className="flex-1 py-3 rounded-2xl font-bold text-sm disabled:opacity-30"
+                    style={{ background: 'linear-gradient(135deg, #F5A0B8, #E8869E)', color: '#fff' }}
                 >
                     {editingLocation ? '保存修改' : '创建地点'}
                 </button>
             </div>
         }>
-            <div className="space-y-4" style={{ color: '#fff' }}>
+            <div className="space-y-4" style={{ color: '#3a3a3a' }}>
                 {/* Name */}
                 <div className="theater-editor-field">
                     <label className="theater-editor-label">地点名称 *</label>
@@ -109,7 +163,7 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
 
                 {/* Description */}
                 <div className="theater-editor-field">
-                    <label className="theater-editor-label">氛围描述 * <span style={{ color: 'rgba(255,255,255,0.3)' }}>（100-200字，越详细剧情越好）</span></label>
+                    <label className="theater-editor-label">氛围描述 * <span style={{ color: 'rgba(0,0,0,0.3)' }}>（100-200字，越详细剧情越好）</span></label>
                     <textarea
                         value={description}
                         onChange={e => setDescription(e.target.value)}
@@ -117,7 +171,7 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
                         className="theater-editor-input theater-editor-textarea"
                         maxLength={300}
                     />
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', textAlign: 'right', marginTop: 4 }}>
+                    <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.3)', textAlign: 'right', marginTop: 4 }}>
                         {description.length}/300
                     </div>
                 </div>
@@ -138,25 +192,54 @@ const LocationEditor: React.FC<LocationEditorProps> = ({ isOpen, onClose, onSave
                     </div>
                 </div>
 
-                {/* Background Gradient */}
+                {/* Background Image Upload */}
                 <div className="theater-editor-field">
-                    <label className="theater-editor-label">卡片背景色</label>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                        {PRESET_GRADIENTS.map((g, i) => (
-                            <button
-                                key={i}
-                                onClick={() => setSelectedGradient(g)}
-                                style={{
-                                    width: 36, height: 36,
-                                    borderRadius: 12,
-                                    background: g,
-                                    border: selectedGradient === g ? '2px solid #fff' : '2px solid transparent',
-                                    cursor: 'pointer',
-                                    transition: 'border-color 0.2s',
-                                }}
-                            />
-                        ))}
-                    </div>
+                    <label className="theater-editor-label">场景壁纸 <span style={{ color: 'rgba(0,0,0,0.3)' }}>（可选，会显示在票根卡片和对话背景）</span></label>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageUpload}
+                        style={{ display: 'none' }}
+                    />
+                    {previewUrl ? (
+                        <div className="theater-editor-preview">
+                            <img src={previewUrl} alt="场景壁纸预览" className="theater-editor-preview-img" />
+                            <div className="theater-editor-preview-actions">
+                                <button
+                                    className="theater-editor-preview-btn"
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    更换
+                                </button>
+                                <button
+                                    className="theater-editor-preview-btn theater-editor-preview-btn--danger"
+                                    onClick={handleRemoveImage}
+                                >
+                                    移除
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <button
+                            className="theater-editor-upload-btn"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={uploading}
+                        >
+                            {uploading ? (
+                                <span className="theater-editor-upload-text">处理中…</span>
+                            ) : (
+                                <>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <rect x="3" y="3" width="18" height="18" rx="3" />
+                                        <circle cx="8.5" cy="8.5" r="1.5" />
+                                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                    </svg>
+                                    <span className="theater-editor-upload-text">点击上传壁纸</span>
+                                </>
+                            )}
+                        </button>
+                    )}
                 </div>
             </div>
         </Modal>

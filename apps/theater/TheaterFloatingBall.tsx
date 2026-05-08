@@ -8,9 +8,39 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, PanInfo } from 'framer-motion';
 
-const DEFAULT_BALL_ICON = '/theater-ball-default.jpg';
+const DEFAULT_BALL_ICON = '/theater-ball-bandaid.png';
 const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
 const ICON_MAX_SIZE = 96; // resize uploaded images to 96x96
+
+/** Strip white / near-white pixels from an image, returning a transparent PNG data-URL */
+const removeWhiteBackground = (src: string): Promise<string> => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = imageData.data;
+        for (let i = 0; i < d.length; i += 4) {
+            const r = d[i], g = d[i + 1], b = d[i + 2];
+            // Near-white → fully transparent
+            if (r > 240 && g > 240 && b > 240) {
+                d[i + 3] = 0;
+            // Light gray fringe → gradual alpha for smooth edges
+            } else if (r > 200 && g > 200 && b > 200) {
+                const brightness = (r + g + b) / 3;
+                d[i + 3] = Math.round(255 * (1 - (brightness - 200) / 55));
+            }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = src;
+});
 
 /** Resize an image file to a small square via canvas, return base64 data URL */
 const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -67,7 +97,7 @@ interface TheaterFloatingBallProps {
     theaterSummaryAutoThreshold?: number;
 }
 
-const BALL_SIZE = 48;
+const BALL_SIZE = 56;
 const EDGE_PADDING = 10;
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
@@ -119,11 +149,21 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     const [customIcon, setCustomIcon] = useState<string | null>(() => {
         try { return localStorage.getItem(iconKey); } catch { return null; }
     });
+    const [processedDefaultIcon, setProcessedDefaultIcon] = useState<string | null>(null);
     const x = useMotionValue(position.x);
     const y = useMotionValue(position.y);
 
-    // The icon to display: custom > default
-    const ballIconUrl = customIcon || DEFAULT_BALL_ICON;
+    // Process default icon: strip white background on first mount
+    useEffect(() => {
+        let cancelled = false;
+        removeWhiteBackground(DEFAULT_BALL_ICON)
+            .then(url => { if (!cancelled) setProcessedDefaultIcon(url); })
+            .catch(() => { /* fallback to raw image */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    // The icon to display: custom > processed default > raw default
+    const ballIconUrl = customIcon || processedDefaultIcon || DEFAULT_BALL_ICON;
 
     const handleIconUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -213,34 +253,44 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                     onChange={handleIconUpload}
                 />
 
-                {/* Ball */}
+                {/* Irregular glow keyframes */}
+                <style>{`
+                  @keyframes theater-irregular-glow {
+                    0%, 100% {
+                      filter: drop-shadow(0 0 6px rgba(255,154,187,0.6))
+                             drop-shadow(0 0 14px rgba(255,107,157,0.3))
+                             drop-shadow(0 0 2px rgba(255,200,220,0.5));
+                    }
+                    50% {
+                      filter: drop-shadow(0 0 10px rgba(255,154,187,0.9))
+                             drop-shadow(0 0 22px rgba(255,107,157,0.5))
+                             drop-shadow(0 0 4px rgba(255,220,235,0.7));
+                    }
+                  }
+                `}</style>
+                {/* Ball — irregular shape, no clipping */}
                 <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); if (!dragging) setPanelOpen(v => !v); }}
-                    className={`relative flex items-center justify-center rounded-full transition-all active:scale-90 ${dragging ? 'opacity-60' : 'opacity-100'}`}
-                    style={{ width: BALL_SIZE, height: BALL_SIZE }}
+                    className={`relative flex items-center justify-center transition-all active:scale-90 ${dragging ? 'opacity-60' : 'opacity-100'}`}
+                    style={{
+                        width: BALL_SIZE,
+                        height: BALL_SIZE,
+                        animation: 'theater-irregular-glow 3s ease-in-out infinite',
+                        background: 'transparent',
+                    }}
                 >
-                    {/* Glow */}
-                    <span className="absolute inset-0 rounded-full" style={{
-                        background: 'radial-gradient(circle, rgba(255,107,157,0.35) 0%, transparent 70%)',
-                        animation: 'theater-pulse 3s ease-in-out infinite',
-                    }} />
-                    {/* Core — custom image or default */}
-                    <span className="relative flex items-center justify-center w-10 h-10 rounded-full overflow-hidden" style={{
-                        border: '1.5px solid rgba(255,255,255,0.25)',
-                        boxShadow: '0 4px 20px rgba(255,107,157,0.4)',
-                    }}>
-                        <img
-                            src={ballIconUrl}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            draggable={false}
-                            onError={(e) => {
-                                // fallback to pink gradient if image fails
-                                (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                        />
-                    </span>
+                    {/* Core — irregular transparent PNG, no border/clip */}
+                    <img
+                        src={ballIconUrl}
+                        alt=""
+                        className="w-full h-full object-contain"
+                        draggable={false}
+                        style={{ pointerEvents: 'none' }}
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                    />
                 </button>
 
                 {/* Panel */}

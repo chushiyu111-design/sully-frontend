@@ -6,6 +6,7 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { RealtimeContextManager,NotionManager,FeishuManager,defaultRealtimeConfig } from './realtimeContext';
 import { buildCharacterHotSearch } from './hotSearchContext';
+import { buildCharacterAiHot } from './aihotContext';
 import { VectorMemoryRetriever } from './vectorMemoryRetriever';
 import { buildTemporalContext } from './temporalContext';
 import { buildCurrentLifeAnchorForCharacter,formatCurrentLifeAnchorForPrompt } from './lifeAnchor';
@@ -216,6 +217,19 @@ export const ChatPrompts = {
             }
         } catch (e) {
             console.error('[HotSearch] inject failed:', e);
+        }
+
+        // AI HOT 资讯独立注入 — 解耦于热搜
+        try {
+            const config = realtimeConfig || defaultRealtimeConfig;
+            if (config.aihotEnabled) {
+                const aihotContext = await buildCharacterAiHot(config, char);
+                if (aihotContext) {
+                    baseSystemPrompt += `\n${aihotContext}\n`;
+                }
+            }
+        } catch (e) {
+            console.error('[AIHot] inject failed:', e);
         }
 
         const lifeAnchor = buildCurrentLifeAnchorForCharacter(char, currentMsgs);
@@ -1007,11 +1021,11 @@ Step 5 — 最后检查
 
                 if (index === historySlice.length - 1 && m.role === 'user') {
                     // Inject temporal context (always) + legacy time gap hint
+                    // NOTE: lifeAnchor is already in system prompt (buildSystemPrompt).
+                    // Do NOT duplicate here — appending it to user messages caused AI to
+                    // treat internal metadata (sourceDetail/confidence) as user-sent content.
                     const temporalCtx = buildTemporalContext(historySlice, Date.now(), char.id);
-                    const lifeAnchorCtx = formatCurrentLifeAnchorForPrompt(
-                        buildCurrentLifeAnchorForCharacter(char, historySlice),
-                    );
-                    const contextSuffix = [lifeAnchorCtx, temporalCtx || timeGapHint].filter(Boolean).join('\n\n');
+                    const contextSuffix = temporalCtx || timeGapHint;
                     if (contextSuffix) content = `${content}\n\n${contextSuffix}`;
                 }
 

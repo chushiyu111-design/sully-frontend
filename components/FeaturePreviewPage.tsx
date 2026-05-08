@@ -1,499 +1,473 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   BookOpenText,
   Brain,
+  CaretDown,
   ChatTeardrop,
-  CloudArrowUp,
   Compass,
-  DeviceMobileCamera,
   Fire,
+  GameController,
+  GearSix,
+  Globe,
   Heart,
+  Heartbeat,
+  House,
+  IdentificationCard,
   Images,
   MusicNote,
+  Notebook,
   PaintBrush,
+  Palette,
+  Path,
+  PenNib,
   Phone,
+  PiggyBank,
+  Question,
   SealCheck,
   Sparkle,
+  Star,
   TrendUp,
   UsersThree,
+  Wrench,
+  Books,
+  Camera,
+  DeviceMobileCamera,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 
-type PreviewIcon = Icon;
+/* ─── Types ────────────────────────────────────────────── */
 
 interface FeaturePreviewPageProps {
   onEnterApp: () => void;
 }
 
-interface DemoTab {
-  id: 'chat' | 'memory' | 'life';
-  label: string;
-  title: string;
-  description: string;
-  accent: string;
-  points: string[];
-  lines: Array<{ speaker: string; text: string; align?: 'left' | 'right' }>;
+interface FeatureItem {
+  icon: Icon;
+  name: string;
+  desc: string;
 }
 
-const featurePillars: Array<{
-  icon: PreviewIcon;
+interface FeatureCategory {
+  id: string;
+  emoji: string;
   title: string;
-  copy: string;
-  detail: string;
-  accent: string;
-}> = [
-  {
-    icon: ChatTeardrop,
-    title: '沉浸式聊天系统',
-    copy: '私聊、群聊、隐藏历史、记忆归档与深度角色演绎，围绕长期陪伴体验搭建。',
-    detail: 'Message / 群聊 / Somnia',
-    accent: 'from-emerald-400 to-cyan-300',
-  },
-  {
-    icon: Brain,
-    title: '认知网络与向量记忆',
-    copy: '把零散对话沉淀成回忆、时间丝线、心意关联，让角色能在未来自动想起细节。',
-    detail: '神经链接 / 认知网络',
-    accent: 'from-violet-400 to-fuchsia-300',
-  },
-  {
-    icon: Phone,
-    title: '语音通话与实时陪伴',
-    copy: '把文字关系延伸到通话场景，通话内容也能进入记忆体系，减少割裂感。',
-    detail: '语音通话 / TTS',
-    accent: 'from-rose-400 to-orange-300',
-  },
-  {
-    icon: MusicNote,
-    title: '回忆唱片与音乐播放器',
-    copy: '从真实回忆生成歌词与歌曲草稿，再进入 Emo Cloud 播放、收藏和分享。',
-    detail: '词曲手札 / Emo Cloud',
-    accent: 'from-amber-300 to-red-300',
-  },
-  {
-    icon: Fire,
-    title: '社交动态与自由活动',
-    copy: '朋友圈、小红书图库、热搜与自由活动模块，让角色不只停留在聊天窗口。',
-    detail: 'Spark / 自由活动 / 热搜',
-    accent: 'from-red-400 to-pink-300',
-  },
-  {
-    icon: PaintBrush,
-    title: '高度可定制的手机外观',
-    copy: '壁纸、气泡、状态栏、桌面组件和图标都能调整，方便做出自己的宣传截图。',
-    detail: '外观 / 气泡工坊 / 状态栏工坊',
-    accent: 'from-sky-300 to-lime-300',
-  },
-];
+  color: string;       // bg color for category header pill
+  textColor: string;
+  items: FeatureItem[];
+}
 
-const demoTabs: DemoTab[] = [
+interface FAQItem {
+  q: string;
+  a: string;
+}
+
+/* ─── Data ─────────────────────────────────────────────── */
+
+const FEATURE_CATEGORIES: FeatureCategory[] = [
   {
     id: 'chat',
-    label: '聊天预览',
-    title: '像一台真的手机一样开始对话',
-    description: '从桌面通知、私聊到群聊，核心体验围绕“角色正在生活”展开。',
-    accent: '#34d399',
-    points: ['多角色私聊与群聊', '上下文折叠与隐藏历史', '通话记录进入记忆'],
-    lines: [
-      { speaker: 'SullyOS', text: '检测到新的角色消息，已同步到桌面提醒。' },
-      { speaker: '你', text: '刚才那句话以后还会记得吗？', align: 'right' },
-      { speaker: 'char', text: '会。我把它归进“那天夜里你没有睡着”的那条时间线了。' },
+    emoji: '💬',
+    title: '对话',
+    color: 'bg-emerald-100',
+    textColor: 'text-emerald-800',
+    items: [
+      { icon: ChatTeardrop, name: 'Message', desc: '和 char 一对一聊天，支持文字、图片、语音、表情包、转账和戳一戳' },
+      { icon: UsersThree, name: '群聊', desc: '多个 char 同时在一个群里聊天，各有各的性格和记忆' },
+      { icon: Phone, name: '语音通话', desc: '和 char 打电话，ta 能听见你说话，你也能听见 ta 的声音' },
     ],
   },
   {
     id: 'memory',
-    label: '记忆预览',
-    title: '把长期关系整理成可翻阅的记忆网络',
-    description: '重要瞬间会被提取、去重、关联，并在之后聊天时按语义召回。',
-    accent: '#a78bfa',
-    points: ['向量记忆自动提取', '时间丝线与心意关联', '云端漫游备份'],
-    lines: [
-      { speaker: '回忆片段', text: '雨夜、爵士、没有说完的道歉。' },
-      { speaker: '心意关联', text: '和三个月前的“可可蛋糕”形成呼应。' },
-      { speaker: '系统', text: '本轮新增 7 段记忆，合并 2 条相似印象。' },
+    emoji: '🧠',
+    title: '记忆与认知',
+    color: 'bg-violet-100',
+    textColor: 'text-violet-800',
+    items: [
+      { icon: Brain, name: '神经链接', desc: '角色管理中心——创建 char、编辑设定、管理记忆、挂载世界书' },
+      { icon: Sparkle, name: '认知网络', desc: '翻阅 ta 记住的回忆，按时间或情感关联整理成可视化网络' },
+      { icon: Globe, name: '世界书', desc: '给 char 补充背景设定，比如「在这个世界里魔法是存在的」' },
+      { icon: Path, name: '轨迹', desc: 'ta 的人生时间线——看 ta 来到你身边之前经历了什么' },
     ],
   },
   {
     id: 'life',
-    label: '生活预览',
-    title: '让角色走出对话框，进入日常应用',
-    description: '日记、日程、房间、见面、音乐和社交模块共同组成一个小型生活系统。',
-    accent: '#fb7185',
-    points: ['交换日记与时光契约', '小小窝、见面与存钱罐', 'TRPG、笔友会、世界书'],
-    lines: [
-      { speaker: '时光契约', text: '明晚 21:30，一起复盘这周的计划。' },
-      { speaker: 'Emo Cloud', text: '“未醒混音”已加入最近播放。' },
-      { speaker: 'Spark', text: '新的动态草稿已生成，可前往小红书图库配图。' },
+    emoji: '📱',
+    title: '生活',
+    color: 'bg-amber-100',
+    textColor: 'text-amber-800',
+    items: [
+      { icon: BookOpenText, name: '交换日记', desc: '和 char 互写日记，你写一篇 ta 回一篇' },
+      { icon: SealCheck, name: '时光契约', desc: '纪念日、日程和约定管理，设定了 ta 会记得' },
+      { icon: Heart, name: '见面', desc: '和 char 约见面，选地点、选活动' },
+      { icon: Sparkle, name: '约会剧场', desc: '沉浸式约会剧情模式，像玩乙女游戏一样推进故事' },
+      { icon: House, name: '小小窝', desc: '和 char 共同生活的小房间，可以装修、放家具、换立绘' },
+      { icon: PiggyBank, name: '存钱罐', desc: '和 char 一起攒钱，设立储蓄目标' },
+      { icon: Books, name: '自习室', desc: '和 char 一起学习，互相陪伴和监督' },
+    ],
+  },
+  {
+    id: 'social',
+    emoji: '🌐',
+    title: '社交与感知',
+    color: 'bg-rose-100',
+    textColor: 'text-rose-800',
+    items: [
+      { icon: Fire, name: 'Spark', desc: 'char 的朋友圈动态，ta 会自己发帖、配图' },
+      { icon: TrendUp, name: '实时热搜', desc: '微博热搜榜，char 会根据自己的兴趣刷到不同的热点' },
+      { icon: Compass, name: '自由活动', desc: 'char 在小红书上自由浏览、发帖、评论' },
+      { icon: Camera, name: '小红书图库', desc: '为 char 的社交动态准备配图素材' },
+      { icon: DeviceMobileCamera, name: '查手机', desc: '看看 ta 手机里都有什么（趣味功能）' },
+    ],
+  },
+  {
+    id: 'create',
+    emoji: '🎨',
+    title: '创作与定制',
+    color: 'bg-sky-100',
+    textColor: 'text-sky-800',
+    items: [
+      { icon: MusicNote, name: 'Emo Cloud', desc: '音乐播放器——可以播放从你们的回忆里生成的专属歌曲' },
+      { icon: Wrench, name: '状态栏工坊', desc: '自定义 char 每条消息下方的状态卡片，可视化编辑器' },
+      { icon: PaintBrush, name: '气泡工坊', desc: '自定义聊天气泡样式和配色' },
+      { icon: Palette, name: '外观', desc: '壁纸、字体、桌面布局、图标全局定制' },
+      { icon: Images, name: '相册', desc: '和 char 之间的图片收藏' },
+      { icon: Sparkle, name: '特别时光', desc: '特殊事件和节日的互动纪念功能' },
+    ],
+  },
+  {
+    id: 'explore',
+    emoji: '🔮',
+    title: '探索',
+    color: 'bg-purple-100',
+    textColor: 'text-purple-800',
+    items: [
+      { icon: Star, name: '摘星楼', desc: '占卜阁——塔罗牌、星盘、每日运势、命运对话' },
+      { icon: GameController, name: 'TRPG', desc: '和 char 一起跑团、玩桌游' },
+      { icon: PenNib, name: '笔友会', desc: '和 char 一起写小说、共创故事' },
+      { icon: Heartbeat, name: '半糖主义', desc: '饮食管理与健康记录' },
     ],
   },
 ];
 
-const showcaseItems: Array<{
-  icon: PreviewIcon;
-  title: string;
-  copy: string;
-  note: string;
-}> = [
-  { icon: Brain, title: '神经链接', copy: '角色设定、长期记忆、向量开关与关系状态管理。', note: '适合展示“人格底座”' },
-  { icon: Sparkle, title: '认知网络', copy: '回忆唱片匣、时间编织、心意提取与漫游备份。', note: '适合展示“长期陪伴”' },
-  { icon: MusicNote, title: 'Emo Cloud', copy: '歌单、歌词、进度拖拽、回忆唱片播放与分享入口。', note: '适合展示“情绪资产”' },
-  { icon: UsersThree, title: '群聊', copy: '多个角色同时参与，支持不同人格关系与场景调度。', note: '适合展示“世界感”' },
-  { icon: Images, title: '小红书图库', copy: '为发布场景准备配图素材，让社交动态更完整。', note: '适合展示“传播链路”' },
-  { icon: SealCheck, title: '时光契约', copy: '纪念日、日程与共同约定，把关系推进到未来。', note: '适合展示“仪式感”' },
+const SYSTEM_ITEMS: FeatureItem[] = [
+  { icon: GearSix, name: '设置', desc: 'API 配置、语音合成、语音识别、实时感知引擎、自律代理、备份还原' },
+  { icon: Question, name: '使用帮助', desc: '常见问题与故障排除' },
+  { icon: Notebook, name: '二改手册', desc: '全部功能的详细使用说明（就在 App 里）' },
+  { icon: IdentificationCard, name: '档案', desc: '你自己的个人信息设置' },
 ];
 
-const stats = [
-  { value: '30+', label: '内置应用入口' },
-  { value: 'v38', label: 'IndexedDB 数据层' },
-  { value: 'PWA', label: '可安装手机体验' },
-  { value: 'Free', label: '开源免费非商业' },
+const FAQ_DATA: FAQItem[] = [
+  {
+    q: '免费吗？',
+    a: '项目本身完全免费开源。对话功能需要自备 API 密钥，有免费额度的选项可以选。',
+  },
+  {
+    q: '数据存在哪？',
+    a: '全部存在你自己的浏览器里（IndexedDB），不经过任何第三方服务器。换设备可以用云端备份迁移。',
+  },
+  {
+    q: '手机能用吗？',
+    a: '能。用浏览器打开后点「添加到主屏幕」，就跟一个原生 App 一样用，还能收推送通知。',
+  },
+  {
+    q: '需要翻墙吗？',
+    a: '取决于你用的 API 服务商。国内有不需要翻墙的选项（比如硅基流动、DeepSeek）。',
+  },
+  {
+    q: '遇到问题找谁？',
+    a: '打开桌面上的「使用帮助」App 看 FAQ，或者来群里问。',
+  },
 ];
 
-function GradientIcon({ icon: Icon, accent }: { icon: PreviewIcon; accent: string }) {
-  return (
-    <div className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border border-white/20 bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]">
-      <div className={`absolute inset-0 bg-gradient-to-br ${accent} opacity-80`} />
-      <Icon className="relative h-5 w-5 text-[#151016]" weight="bold" />
-    </div>
-  );
+const STATS = [
+  { value: '30+', label: '内置应用' },
+  { value: 'PWA', label: '可装到桌面' },
+  { value: '本地', label: '数据存储' },
+  { value: '免费', label: '开源非商业' },
+];
+
+/* ─── Scroll Reveal Hook ───────────────────────────────── */
+
+function useScrollReveal() {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: '0px 0px -40px 0px' }
+    );
+
+    const children = el.querySelectorAll('.preview-reveal');
+    children.forEach((child) => observer.observe(child));
+
+    return () => observer.disconnect();
+  }, []);
+
+  return ref;
 }
 
-function PhonePreview({ activeDemo }: { activeDemo: DemoTab }) {
+/* ─── Sub-Components ───────────────────────────────────── */
+
+function FeatureCard({ item }: { item: FeatureItem }) {
+  const Icon = item.icon;
   return (
-    <div className="preview-phone-shell mx-auto w-full max-w-[350px] rounded-[2.35rem] border border-white/20 bg-[#151016]/90 p-3 shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
-      <div className="relative h-[690px] overflow-hidden rounded-[1.85rem] border border-white/10 bg-[#0c1012] text-white">
-        <div className="absolute inset-0 bg-[url('/images/bg-dusk.png')] bg-cover bg-center opacity-70" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-[#111118]/30 to-[#111118]/80" />
-
-        <div className="relative z-10 flex h-full flex-col px-5 pb-5 pt-4">
-          <div className="flex items-center justify-between text-[11px] font-semibold text-white/80">
-            <span>22:18</span>
-            <span>SullyOS</span>
-          </div>
-
-          <div className="mt-6">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/60">System Ready</div>
-            <div className="mt-2 text-[3.45rem] font-bold leading-none tracking-normal">22:18</div>
-          </div>
-
-          <div className="mt-6 rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl backdrop-blur-2xl">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-400 text-[#0b1210]">
-                <ChatTeardrop className="h-6 w-6" weight="bold" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold">Message</span>
-                  <span className="text-[10px] text-white/60">now</span>
-                </div>
-                <p className="mt-1 truncate text-xs text-white/70">{activeDemo.lines[activeDemo.lines.length - 1].text}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-4 gap-3">
-            {[
-              { icon: Brain, label: '链接' },
-              { icon: UsersThree, label: '群聊' },
-              { icon: MusicNote, label: '音乐' },
-              { icon: Fire, label: 'Spark' },
-              { icon: Heart, label: '见面' },
-              { icon: BookOpenText, label: '日记' },
-              { icon: TrendUp, label: '热搜' },
-              { icon: Compass, label: '活动' },
-            ].map((app) => {
-              const Icon = app.icon;
-              return (
-                <div key={app.label} className="flex flex-col items-center gap-1.5">
-                  <div className="flex h-[3.15rem] w-[3.15rem] items-center justify-center rounded-2xl border border-white/20 bg-white/15 shadow-lg backdrop-blur-xl">
-                    <Icon className="h-6 w-6 text-white" weight="bold" />
-                  </div>
-                  <span className="text-[10px] font-semibold text-white/70">{app.label}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-auto rounded-[1.7rem] border border-white/15 bg-[#151016]/75 p-4 shadow-2xl backdrop-blur-2xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50">Live Preview</div>
-                <div className="mt-1 text-lg font-bold">{activeDemo.label}</div>
-              </div>
-              <div className="h-2.5 w-2.5 rounded-full" style={{ background: activeDemo.accent, boxShadow: `0 0 22px ${activeDemo.accent}` }} />
-            </div>
-            <div className="mt-4 space-y-2.5">
-              {activeDemo.lines.map((line) => (
-                <div key={`${line.speaker}-${line.text}`} className={`flex ${line.align === 'right' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[88%] rounded-2xl px-3 py-2 ${line.align === 'right' ? 'bg-white text-[#151016]' : 'bg-white/12 text-white'}`}>
-                    <div className={`mb-1 text-[10px] font-bold ${line.align === 'right' ? 'text-[#151016]/60' : 'text-white/50'}`}>{line.speaker}</div>
-                    <p className="text-[12px] font-medium leading-relaxed">{line.text}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+    <div className="preview-feature-card flex items-start gap-3.5 rounded-2xl border border-[#171215]/8 bg-white p-4 shadow-sm">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#171215]/5">
+        <Icon className="h-5 w-5 text-[#171215]/70" weight="bold" />
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <h4 className="text-[15px] font-bold text-[#171215]">{item.name}</h4>
+        <p className="mt-1 text-[13px] leading-relaxed text-[#171215]/60">{item.desc}</p>
       </div>
     </div>
   );
 }
 
+function CategorySection({ category }: { category: FeatureCategory }) {
+  return (
+    <div className="preview-reveal">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="text-xl">{category.emoji}</span>
+        <span className={`rounded-full px-3 py-1 text-[13px] font-bold ${category.color} ${category.textColor}`}>
+          {category.title}
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {category.items.map((item) => (
+          <FeatureCard key={item.name} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FAQCard({ item }: { item: FAQItem }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/8 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-white/5"
+      >
+        <span className="text-[15px] font-bold text-white/90">{item.q}</span>
+        <CaretDown
+          className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          weight="bold"
+        />
+      </button>
+      {open && (
+        <div className="px-5 pb-4 animate-fade-in">
+          <p className="text-[13px] leading-relaxed text-white/60">{item.a}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Main Page ────────────────────────────────────────── */
+
 function FeaturePreviewPage({ onEnterApp }: FeaturePreviewPageProps) {
-  const [activeTabId, setActiveTabId] = useState<DemoTab['id']>('chat');
-  const activeDemo = useMemo(() => demoTabs.find((tab) => tab.id === activeTabId) || demoTabs[0], [activeTabId]);
+  const containerRef = useScrollReveal();
 
   return (
-    <main className="preview-page min-h-screen overflow-x-hidden bg-[#171215] text-[#fff9f0]">
-      <section className="preview-hero-scene relative min-h-[94svh] overflow-hidden">
-        <header className="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-7 lg:px-10">
-          <button
-            type="button"
-            onClick={onEnterApp}
-            className="flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-3 py-2 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-xl transition hover:bg-white/15"
-          >
+    <main className="preview-page min-h-screen bg-[#171215] text-[#fff9f0]" ref={containerRef}>
+
+      {/* ── Hero Section ── */}
+      <section className="preview-hero-scene relative overflow-hidden">
+        {/* Header Nav */}
+        <header className="relative z-20 mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-5 sm:px-7">
+          <div className="flex items-center gap-3">
             <img src="/icons/icon-192.webp" alt="SullyOS" className="h-9 w-9 rounded-2xl" />
             <span className="leading-tight">
               <span className="block text-sm font-bold">手抓糯米机</span>
-              <span className="block text-[11px] font-semibold text-white/60">SullyOS 二改版</span>
+              <span className="block text-[11px] font-semibold text-white/50">SullyOS 二改版</span>
             </span>
-          </button>
+          </div>
 
-          <nav className="hidden items-center gap-1 rounded-full border border-white/10 bg-black/20 p-1 text-[13px] font-semibold text-white/70 backdrop-blur-xl md:flex">
-            <a href="#preview-core" className="rounded-full px-4 py-2 transition hover:bg-white/15 hover:text-white">功能</a>
-            <a href="#preview-showcase" className="rounded-full px-4 py-2 transition hover:bg-white/15 hover:text-white">截图清单</a>
-            <a href="#preview-share" className="rounded-full px-4 py-2 transition hover:bg-white/15 hover:text-white">宣传重点</a>
+          <nav className="hidden items-center gap-1 text-[13px] font-semibold text-white/60 md:flex">
+            <button type="button" onClick={() => document.getElementById('guide-features')?.scrollIntoView({ behavior: 'smooth' })} className="rounded-full px-3 py-1.5 transition hover:text-white">功能</button>
+            <button type="button" onClick={() => document.getElementById('guide-start')?.scrollIntoView({ behavior: 'smooth' })} className="rounded-full px-3 py-1.5 transition hover:text-white">上手</button>
+            <button type="button" onClick={() => document.getElementById('guide-faq')?.scrollIntoView({ behavior: 'smooth' })} className="rounded-full px-3 py-1.5 transition hover:text-white">常见问题</button>
           </nav>
 
           <button
             type="button"
             onClick={onEnterApp}
-            className="hidden items-center gap-2 rounded-full bg-white px-4 py-2.5 text-[13px] font-bold text-[#171215] shadow-[0_12px_32px_rgba(0,0,0,0.22)] transition hover:-translate-y-0.5 hover:bg-[#fff2d0] sm:inline-flex"
+            className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[13px] font-bold text-[#171215] shadow-lg transition hover:-translate-y-0.5 hover:bg-[#fff2d0]"
           >
             进入体验
-            <ArrowRight className="h-4 w-4" weight="bold" />
+            <ArrowRight className="h-3.5 w-3.5" weight="bold" />
           </button>
         </header>
 
-        <div className="relative z-10 mx-auto grid min-h-[calc(94svh-84px)] w-full max-w-7xl items-end gap-8 px-5 pb-10 pt-4 sm:px-7 md:grid-cols-[minmax(0,0.86fr)_minmax(350px,0.74fr)] md:items-center lg:px-10">
-          <div
-            className="min-w-0 max-w-3xl pb-2 md:pb-10"
-            style={{ width: 'calc(100vw - 2.5rem)' }}
-          >
-            <h1 className="max-w-[760px] text-5xl font-black leading-[0.95] tracking-normal text-white drop-shadow-[0_18px_60px_rgba(0,0,0,0.45)] sm:text-6xl lg:text-8xl xl:text-[6.5rem]">
-              手抓糯米机
-              <span className="block">SullyOS</span>
-            </h1>
-            <p className="mt-6 max-w-full text-base font-medium leading-8 text-white/75 sm:max-w-2xl sm:text-lg">
-              <span className="block">一个把 AI 角色长期陪伴、记忆网络、</span>
-              <span className="block">语音通话、音乐创作和手机桌面体验</span>
-              <span className="block">装在一起的开源 PWA。</span>
-              <span className="block">适合快速展示项目亮点，也适合直接截图宣传。</span>
-            </p>
+        {/* Hero Content */}
+        <div className="relative z-10 mx-auto max-w-5xl px-5 pb-16 pt-12 sm:px-7 sm:pt-20 sm:pb-24">
+          <h1 className="max-w-3xl text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+            手抓糯米机
+            <span className="block text-white/40">SullyOS</span>
+          </h1>
 
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={onEnterApp}
-                className="inline-flex items-center gap-2 rounded-full bg-[#fff9f0] px-5 py-3 text-sm font-black text-[#171215] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition hover:-translate-y-0.5 hover:bg-[#ffe7a6]"
-              >
-                打开 SullyOS
-                <ArrowRight className="h-4 w-4" weight="bold" />
-              </button>
-              <a
-                href="#preview-core"
-                className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-3 text-sm font-bold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-xl transition hover:bg-white/15"
-              >
-                查看功能预览
-              </a>
-            </div>
+          <p className="mt-6 max-w-2xl text-base font-medium leading-8 text-white/65 sm:text-lg">
+            一个开源的角色模拟手机系统。
+            <br />
+            你可以在里面创建 char、聊天、打电话、写日记、听歌、逛小红书——
+            <br />
+            所有东西都跑在浏览器里，数据存在你自己的设备上。
+          </p>
 
-            <div
-              className="mt-10 grid w-full max-w-[350px] grid-cols-2 gap-3 sm:max-w-2xl sm:grid-cols-4"
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onEnterApp}
+              className="inline-flex items-center gap-2 rounded-full bg-[#fff9f0] px-5 py-3 text-sm font-bold text-[#171215] shadow-lg transition hover:-translate-y-0.5 hover:bg-[#ffe7a6]"
             >
-              {stats.map((item) => (
-                <div key={item.label} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-xl">
-                  <div className="text-xl font-black text-white">{item.value}</div>
-                  <div className="mt-1 text-[11px] font-semibold text-white/60">{item.label}</div>
-                </div>
-              ))}
-            </div>
+              打开 SullyOS
+              <ArrowRight className="h-4 w-4" weight="bold" />
+            </button>
+            <button
+              type="button"
+              onClick={() => document.getElementById('guide-features')?.scrollIntoView({ behavior: 'smooth' })}
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-5 py-3 text-sm font-semibold text-white/80 backdrop-blur-xl transition hover:bg-white/15"
+            >
+              看看都有什么功能
+              <CaretDown className="h-3.5 w-3.5" weight="bold" />
+            </button>
           </div>
 
-          <div
-            className="relative mx-0 min-w-0 max-w-[330px] pb-8 sm:mx-auto sm:max-w-[350px] md:pb-0"
-            style={{ width: 'calc(100vw - 2.5rem)' }}
-          >
-            <PhonePreview activeDemo={activeDemo} />
-          </div>
-        </div>
-      </section>
-
-      <section id="preview-core" className="relative border-y border-white/10 bg-[#fff9f0] px-5 py-16 text-[#171215] sm:px-7 lg:px-10">
-        <div className="mx-auto grid w-full max-w-7xl gap-10 lg:grid-cols-[0.85fr_1.15fr]">
-          <div>
-            <h2 className="text-4xl font-black leading-tight tracking-normal sm:text-5xl">核心功能一眼看懂</h2>
-            <p className="mt-5 max-w-xl text-[15px] font-medium leading-8 text-[#51464c]">
-              这不是单一聊天窗口，而是一套围绕角色、记忆、生活与创作串起来的前端体验。下面的模块可以作为宣传图标题，也可以作为 README 的功能目录。
-            </p>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            {featurePillars.map((feature) => (
-              <article key={feature.title} className="rounded-[1.35rem] border border-[#171215]/10 bg-white p-5 shadow-[0_18px_55px_rgba(54,39,36,0.08)]">
-                <GradientIcon icon={feature.icon} accent={feature.accent} />
-                <h3 className="mt-4 text-xl font-black tracking-normal">{feature.title}</h3>
-                <p className="mt-3 text-sm font-medium leading-7 text-[#5c5156]">{feature.copy}</p>
-                <div className="mt-4 border-t border-[#171215]/10 pt-3 text-[11px] font-black uppercase tracking-[0.18em] text-[#a24b5d]">
-                  {feature.detail}
-                </div>
-              </article>
+          {/* Stats Bar */}
+          <div className="mt-10 flex flex-wrap gap-3">
+            {STATS.map((s) => (
+              <div key={s.label} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 backdrop-blur">
+                <div className="text-base font-black text-white">{s.value}</div>
+                <div className="mt-0.5 text-[11px] font-semibold text-white/45">{s.label}</div>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="bg-[#151016] px-5 py-16 text-white sm:px-7 lg:px-10">
-        <div className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/10 p-4 shadow-[0_28px_75px_rgba(0,0,0,0.28)] backdrop-blur-2xl">
-            <div className="flex flex-wrap gap-2">
-              {demoTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTabId(tab.id)}
-                  className={`rounded-full px-4 py-2 text-[13px] font-bold transition ${
-                    activeDemo.id === tab.id
-                      ? 'bg-white text-[#151016]'
-                      : 'border border-white/10 bg-white/5 text-white/70 hover:bg-white/15 hover:text-white'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+      {/* ── Features Section ── */}
+      <section id="guide-features" className="bg-[#fff9f0] px-5 py-14 text-[#171215] sm:px-7">
+        <div className="mx-auto max-w-5xl">
+          <div className="preview-reveal">
+            <h2 className="text-3xl font-black tracking-tight sm:text-4xl">功能目录</h2>
+            <p className="mt-3 max-w-2xl text-[15px] font-medium leading-7 text-[#171215]/55">
+              下面是目前支持的全部功能。桌面上的每个图标都能点进去用。
+            </p>
+          </div>
 
-            <div className="mt-6 rounded-[1.4rem] border border-white/10 bg-[#0c1012] p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-3xl font-black leading-tight tracking-normal">{activeDemo.title}</h2>
-                  <p className="mt-3 max-w-xl text-sm font-medium leading-7 text-white/60">{activeDemo.description}</p>
-                </div>
-                <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 sm:flex">
-                  <Sparkle className="h-6 w-6" style={{ color: activeDemo.accent }} weight="fill" />
-                </div>
+          <div className="mt-10 space-y-10">
+            {FEATURE_CATEGORIES.map((cat) => (
+              <CategorySection key={cat.id} category={cat} />
+            ))}
+
+            {/* System category — slightly different style */}
+            <div className="preview-reveal">
+              <div className="mb-4 flex items-center gap-2.5">
+                <span className="text-xl">⚙️</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-[13px] font-bold text-slate-700">
+                  系统
+                </span>
               </div>
-
-              <div className="mt-7 grid gap-3">
-                {activeDemo.points.map((point, index) => (
-                  <div key={point} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/7 px-4 py-3">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-black text-[#151016]" style={{ background: activeDemo.accent }}>
-                      {index + 1}
-                    </span>
-                    <span className="text-sm font-bold text-white/80">{point}</span>
-                  </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {SYSTEM_ITEMS.map((item) => (
+                  <FeatureCard key={item.name} item={item} />
                 ))}
               </div>
             </div>
           </div>
-
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-1">
-            {activeDemo.lines.map((line) => (
-              <article key={`${activeDemo.id}-${line.speaker}-${line.text}`} className="rounded-[1.35rem] border border-white/10 bg-white/10 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/40">{line.speaker}</div>
-                <p className="mt-3 text-[15px] font-semibold leading-7 text-white/80">{line.text}</p>
-              </article>
-            ))}
-          </div>
         </div>
       </section>
 
-      <section id="preview-showcase" className="bg-[#effaf6] px-5 py-16 text-[#171215] sm:px-7 lg:px-10">
-        <div className="mx-auto w-full max-w-7xl">
-          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
-            <div>
-              <h2 className="text-4xl font-black leading-tight tracking-normal sm:text-5xl">宣传截图清单</h2>
-              <p className="mt-4 max-w-2xl text-[15px] font-medium leading-8 text-[#4d5c55]">
-                想做功能预览时，可以按这些入口逐张截图：先展示 OS 桌面，再展示长期记忆、音乐、社交、通话和日程这些差异化能力。
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onEnterApp}
-              className="inline-flex w-fit items-center gap-2 rounded-full bg-[#171215] px-5 py-3 text-sm font-black text-white shadow-[0_18px_45px_rgba(23,18,21,0.18)] transition hover:-translate-y-0.5"
-            >
-              去主界面截图
-              <DeviceMobileCamera className="h-4 w-4" weight="bold" />
-            </button>
-          </div>
-
-          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {showcaseItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <article key={item.title} className="group rounded-[1.4rem] border border-[#171215]/10 bg-white p-5 shadow-[0_20px_60px_rgba(28,56,45,0.08)] transition hover:-translate-y-1 hover:shadow-[0_26px_70px_rgba(28,56,45,0.12)]">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#171215] text-white">
-                      <Icon className="h-6 w-6" weight="bold" />
-                    </div>
-                    <span className="rounded-full bg-[#effaf6] px-3 py-1 text-[11px] font-black text-[#2c6651]">{item.note}</span>
-                  </div>
-                  <h3 className="mt-5 text-2xl font-black tracking-normal">{item.title}</h3>
-                  <p className="mt-3 text-sm font-medium leading-7 text-[#52605a]">{item.copy}</p>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section id="preview-share" className="relative overflow-hidden bg-[#201417] px-5 py-16 text-white sm:px-7 lg:px-10">
-        <div className="absolute inset-0 bg-[url('/images/akashic-texture.png')] bg-cover bg-center opacity-[0.08]" />
-        <div className="relative mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-          <div>
-            <h2 className="text-4xl font-black leading-tight tracking-normal sm:text-5xl">宣传时可以这样讲</h2>
-            <p className="mt-5 max-w-xl text-[15px] font-medium leading-8 text-white/70">
-              重点不要只说“AI 聊天”，而是强调它把长期关系需要的记忆、场景、媒介和手机化入口都串起来了。
+      {/* ── Quick Start Section ── */}
+      <section id="guide-start" className="bg-[#f0f7f4] px-5 py-14 text-[#171215] sm:px-7">
+        <div className="mx-auto max-w-5xl">
+          <div className="preview-reveal">
+            <h2 className="text-3xl font-black tracking-tight sm:text-4xl">快速上手</h2>
+            <p className="mt-3 text-[15px] font-medium text-[#171215]/55">
+              三步开始用。
             </p>
           </div>
 
-          <div className="grid gap-4">
+          <div className="mt-8 grid gap-4 sm:grid-cols-3">
             {[
-              ['一句话定位', '开源免费的 AI 角色手机系统，把聊天、长期记忆、语音、音乐和社交动态都放进一台可安装的 PWA 里。'],
-              ['最容易打动人的点', '角色不只是回复消息，还能把你们的共同经历整理成可翻阅、可召回、可备份的记忆网络。'],
-              ['展示顺序建议', '先给桌面和通知，再给 Message 对话，再切到认知网络，最后用 Emo Cloud 或语音通话收尾。'],
-              ['合规提醒', '项目遵循 PolyForm Noncommercial License，适合非商业学习、研究和个人娱乐，宣传时建议明确“免费开源，禁止倒卖”。'],
-            ].map(([title, copy]) => (
-              <article key={title} className="rounded-[1.35rem] border border-white/10 bg-white/10 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-xl">
-                <h3 className="text-lg font-black tracking-normal">{title}</h3>
-                <p className="mt-2 text-sm font-medium leading-7 text-white/70">{copy}</p>
-              </article>
+              {
+                step: '1',
+                title: '打开网页',
+                desc: '用手机或电脑浏览器打开链接。想装到桌面的话，浏览器菜单里点「添加到主屏幕」。',
+              },
+              {
+                step: '2',
+                title: '配置 API',
+                desc: '打开桌面上的「设置」→ API 配置 → 填入地址和密钥。不知道去哪搞？群里问问，或者试试硅基流动的免费额度。',
+              },
+              {
+                step: '3',
+                title: '创建 char 开聊',
+                desc: '去「神经链接」创建一个 char，填好设定，回到 Message 发一条消息，ta 就在了。',
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="preview-reveal preview-feature-card rounded-2xl border border-[#171215]/8 bg-white p-5 shadow-sm"
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500 text-lg font-black text-white">
+                  {item.step}
+                </div>
+                <h3 className="mt-4 text-lg font-bold text-[#171215]">{item.title}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#171215]/60">{item.desc}</p>
+              </div>
             ))}
           </div>
         </div>
+      </section>
 
-        <div className="relative mx-auto mt-14 flex w-full max-w-7xl flex-col items-start justify-between gap-5 rounded-[1.7rem] border border-white/10 bg-[#fff9f0] p-6 text-[#171215] shadow-[0_24px_80px_rgba(0,0,0,0.24)] md:flex-row md:items-center">
-          <div>
-            <h2 className="text-2xl font-black tracking-normal">准备好截第一张功能预览了吗？</h2>
-            <p className="mt-2 text-sm font-semibold leading-7 text-[#5b4c52]">从 `#/preview` 发给别人看，或进入主界面按上面的清单截图。</p>
+      {/* ── FAQ Section ── */}
+      <section id="guide-faq" className="bg-[#1d181b] px-5 py-14 sm:px-7">
+        <div className="mx-auto max-w-5xl">
+          <div className="preview-reveal">
+            <h2 className="text-3xl font-black tracking-tight text-white sm:text-4xl">常见问题</h2>
+            <p className="mt-3 text-[15px] font-medium text-white/50">
+              新用户经常会问的几个问题。
+            </p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <a
-              href="#preview-core"
-              className="inline-flex items-center gap-2 rounded-full border border-[#171215]/10 bg-white px-5 py-3 text-sm font-black text-[#171215] transition hover:bg-[#f4ede2]"
-            >
-              回看功能
-            </a>
-            <button
-              type="button"
-              onClick={onEnterApp}
-              className="inline-flex items-center gap-2 rounded-full bg-[#171215] px-5 py-3 text-sm font-black text-white transition hover:bg-[#2a2025]"
-            >
-              进入项目
-              <CloudArrowUp className="h-4 w-4" weight="bold" />
-            </button>
+
+          <div className="mt-8 space-y-2">
+            {FAQ_DATA.map((item) => (
+              <div key={item.q} className="preview-reveal">
+                <FAQCard item={item} />
+              </div>
+            ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Footer ── */}
+      <section className="bg-[#171215] px-5 py-10 sm:px-7">
+        <div className="mx-auto flex max-w-5xl flex-col items-center gap-5 text-center">
+          <img src="/icons/icon-192.webp" alt="SullyOS" className="h-14 w-14 rounded-3xl opacity-80" />
+          <p className="text-sm font-medium text-white/40">
+            SullyOS · 开源 · 非商业 · PolyForm Noncommercial License
+          </p>
+          <button
+            type="button"
+            onClick={onEnterApp}
+            className="inline-flex items-center gap-2 rounded-full bg-white/10 px-6 py-3 text-sm font-bold text-white transition hover:bg-white/20"
+          >
+            进入体验
+            <ArrowRight className="h-4 w-4" weight="bold" />
+          </button>
         </div>
       </section>
     </main>

@@ -3,10 +3,11 @@
  * 双列票根卡片网格 + 撕口虚线 + 场次标签 + 空白票根新增
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { TheaterLocation, TimeSlot } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 import LocationEditor from './LocationEditor';
+import { resolveTheaterBg } from '../../utils/db/theaterStore';
 
 const TAG_LABELS: Record<string, string> = {
     romantic: '浪漫',
@@ -59,7 +60,24 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
     onBack,
 }) => {
     const [showEditor, setShowEditor] = useState(false);
+    const [resolvedBgs, setResolvedBgs] = useState<Record<string, string>>({});
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
+
+    // Resolve custom location bg images from IndexedDB
+    useEffect(() => {
+        let cancelled = false;
+        const resolve = async () => {
+            const result: Record<string, string> = {};
+            await Promise.all(locations.map(async (loc) => {
+                if (!loc.bgImage) return;
+                const url = await resolveTheaterBg(loc.bgImage);
+                if (url) result[loc.id] = url;
+            }));
+            if (!cancelled) setResolvedBgs(result);
+        };
+        resolve();
+        return () => { cancelled = true; };
+    }, [locations]);
 
     const handleLongPress = (locId: string, isPreset: boolean) => {
         if (isPreset) return;
@@ -158,8 +176,8 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
                                     <div
                                         className="theater-ticket-img-bg"
                                         style={{
-                                            background: loc.bgImage
-                                                ? `url(${loc.bgImage}) center/cover`
+                                        background: resolvedBgs[loc.id]
+                                                ? `url(${resolvedBgs[loc.id]}) center/cover`
                                                 : loc.bgGradient || 'linear-gradient(135deg, #f5d0e0, #e8d5f5)',
                                         }}
                                     />

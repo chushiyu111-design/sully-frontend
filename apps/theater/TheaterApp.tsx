@@ -9,7 +9,7 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import { ContextBuilder } from '../../utils/context';
 import { safeResponseJson } from '../../utils/safeApi';
-import { extractThinking } from '../../utils/thinkingExtractor';
+import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge } from '../../utils/dateSummaryPrompts';
@@ -35,7 +35,7 @@ import {
     getTimelines, saveTimeline, deleteTimeline as deleteTimelineStore,
     setActiveTimelineId,
     canCreateTimeline, generateTimelineLabel, getTimelineById,
-    resolveForkChain,
+    resolveForkChain, deleteTheaterBgImage,
 } from '../../utils/db/theaterStore';
 
 import TheaterMap from './TheaterMap';
@@ -155,6 +155,9 @@ const TheaterApp: React.FC = () => {
     const [isDirectorLoading, setIsDirectorLoading] = useState(false);
     const [isAiLoading, setIsAiLoading] = useState(false);
 
+    // ── Inner Whispers State ──
+    const [activeWhispers, setActiveWhispers] = useState<InnerWhisper[]>([]);
+
     // ── Exit Review ──
     const [showExitReview, setShowExitReview] = useState(false);
 
@@ -170,6 +173,12 @@ const TheaterApp: React.FC = () => {
     const [showSummarySettings, setShowSummarySettings] = useState(false);
     const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
     const summaryGeneratingRef = useRef(false);
+
+    // ── Gallery Carousel State ──
+    const carouselRef = useRef<HTMLDivElement>(null);
+    const autoScrollPaused = useRef(false);
+    const [focusedCharId, setFocusedCharId] = useState<string | null>(null);
+    const [selectingCharId, setSelectingCharId] = useState<string | null>(null);
 
     const secondaryApiConfig = getSecondaryApiConfig();
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
@@ -200,6 +209,59 @@ const TheaterApp: React.FC = () => {
         }));
         setLocations(merged);
     }, []);
+
+    // ── Auto-scroll gallery carousel ──
+    useEffect(() => {
+        if (mode !== 'select' || characters.length <= 2) return;
+        const el = carouselRef.current;
+        if (!el) return;
+        let rafId: number;
+        const tick = () => {
+            if (!autoScrollPaused.current && el) {
+                el.scrollLeft += 0.35;
+                if (el.scrollLeft >= el.scrollWidth - el.clientWidth - 1) {
+                    el.scrollLeft = 0;
+                }
+            }
+            rafId = requestAnimationFrame(tick);
+        };
+        rafId = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafId);
+    }, [mode, characters.length]);
+
+    // ── IntersectionObserver: detect centered poster for focus highlight ──
+    useEffect(() => {
+        if (mode !== 'select') return;
+        const el = carouselRef.current;
+        if (!el) return;
+        const posters = el.querySelectorAll<HTMLElement>('.theater-gallery-poster');
+        if (posters.length === 0) return;
+
+        // Auto-focus first card on mount if <= 2
+        if (characters.length <= 2 && characters.length > 0) {
+            setFocusedCharId(characters[0].id);
+        }
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                // Pick the entry with highest intersection ratio
+                let best: IntersectionObserverEntry | null = null;
+                for (const entry of entries) {
+                    if (!best || entry.intersectionRatio > best.intersectionRatio) {
+                        best = entry;
+                    }
+                }
+                if (best && best.intersectionRatio >= 0.6) {
+                    const charId = (best.target as HTMLElement).dataset.charId || null;
+                    setFocusedCharId(charId);
+                }
+            },
+            { root: el, threshold: [0, 0.3, 0.6, 0.85, 1] }
+        );
+
+        posters.forEach(p => observer.observe(p));
+        return () => observer.disconnect();
+    }, [mode, characters.length]);
 
     // ── Character Selection ──
     const handleSelectChar = useCallback(async (c: CharacterProfile) => {
@@ -233,6 +295,18 @@ const TheaterApp: React.FC = () => {
             setMode('map');
         }
     }, [locations, setActiveCharacterId]);
+
+    /** Staged poster click: animate → then navigate */
+    const handlePosterClick = useCallback((c: CharacterProfile) => {
+        if (selectingCharId) return; // prevent double-click
+        setSelectingCharId(c.id);
+        autoScrollPaused.current = true;
+        setTimeout(() => {
+            handleSelectChar(c);
+            // Reset after navigation (in case user comes back)
+            setSelectingCharId(null);
+        }, 620);
+    }, [selectingCharId, handleSelectChar]);
 
     // ── Timeline Selection ──
     const handleSelectTimeline = useCallback(async (timeline: TheaterTimeline) => {
@@ -406,10 +480,11 @@ const TheaterApp: React.FC = () => {
             const data = await safeResponseJson(response);
             const raw = data.choices[0].message.content;
             const extracted = extractThinking(raw);
+            const whisperResult = extractInnerWhispers(extracted.content);
 
             await DB.saveMessage({
                 charId: char.id, role: 'assistant', type: 'text',
-                content: extracted.content,
+                content: whisperResult.content,
                 metadata: { source: 'theater', branchId: tlId, isOpening: true, locationId: loc.id, thinking: extracted.thinking },
             });
 
@@ -437,8 +512,11 @@ const TheaterApp: React.FC = () => {
     };
 
     // ── Send Message (with director engine integration) ──
-    const handleSendMessage = useCallback(async (text: string) => {
+    const handleSendMessage = useCallback(async (text: string, directorHint?: string) => {
         if (!char || !currentLocation || !session || !apiConfig?.baseUrl) return;
+
+        // 0. Clear whispers from previous turn
+        setActiveWhispers([]);
 
         // 1. Save user message
         await DB.saveMessage({
@@ -540,9 +618,12 @@ const TheaterApp: React.FC = () => {
                 content: m.type === 'image' ? '[User sent an image]' : m.content,
             }));
 
-            const eventNote = directorEvent
+            let eventNote = directorEvent
                 ? `\n\n(System: 导演事件已触发 [${directorEvent.sceneType}]。你必须在回复中自然地对这个事件做出反应。严格遵守沉浸剧场格式。)`
                 : `\n\n(System: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头。)`;
+            if (directorHint) {
+                eventNote += `\n<director_note>${directorHint}</director_note>`;
+            }
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -562,10 +643,13 @@ const TheaterApp: React.FC = () => {
             const data = await safeResponseJson(response);
             const raw = data.choices[0].message.content;
             const extracted = extractThinking(raw);
+            // Extract inner whispers from the cleaned content
+            const whisperResult = extractInnerWhispers(extracted.content);
+            const cleanContent = whisperResult.content;
 
             await DB.saveMessage({
                 charId: char.id, role: 'assistant', type: 'text',
-                content: extracted.content,
+                content: cleanContent,
                 metadata: {
                     source: 'theater',
                     branchId: currentTimelineId,
@@ -575,11 +659,16 @@ const TheaterApp: React.FC = () => {
                 },
             });
 
+            // Surface whispers to the UI
+            if (whisperResult.whispers.length > 0) {
+                setActiveWhispers(whisperResult.whispers);
+            }
+
             // Update timeline preview
             if (currentTimelineId) {
                 const tl = getTimelineById(char.id, currentTimelineId);
                 if (tl) {
-                    saveTimeline({ ...tl, preview: extracted.content.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
+                    saveTimeline({ ...tl, preview: cleanContent.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
                 }
             }
 
@@ -603,6 +692,7 @@ const TheaterApp: React.FC = () => {
     // ── Delete Custom Location ──
     const handleDeleteCustomLocation = useCallback((id: string) => {
         dbDeleteCustomLocation(id);
+        deleteTheaterBgImage(id).catch(() => {}); // best-effort cleanup
         setLocations(prev => prev.filter(l => l.id !== id));
         addToast('已删除自定义地点', 'info');
     }, [addToast]);
@@ -925,19 +1015,53 @@ const TheaterApp: React.FC = () => {
                             <div className="theater-entry-hero-line" />
                         </div>
 
-                        {/* Character Grid */}
-                        <div className="theater-entry-list">
-                            {characters.map(c => (
-                                <button key={c.id} className="theater-entry-char" onClick={() => handleSelectChar(c)}>
-                                    <div className="theater-entry-char-ring">
-                                        <img src={c.avatar} alt={c.name} className="theater-entry-char-img" />
+                        {/* 摘星楼海报画廊 */}
+                        <div
+                            className={`theater-gallery-carousel${characters.length <= 2 ? ' theater-gallery-carousel--center' : ' theater-gallery-carousel--autoscroll'}`}
+                            ref={carouselRef}
+                            onTouchStart={() => { autoScrollPaused.current = true; }}
+                            onTouchEnd={() => { setTimeout(() => { autoScrollPaused.current = false; }, 3000); }}
+                            onMouseEnter={() => { autoScrollPaused.current = true; }}
+                            onMouseLeave={() => { autoScrollPaused.current = false; }}
+                        >
+                            {characters.map(c => {
+                                const isSelecting = selectingCharId === c.id;
+                                const isDismissing = selectingCharId !== null && selectingCharId !== c.id;
+                                let posterClass = 'theater-gallery-poster';
+                                if (isSelecting) posterClass += ' theater-gallery-poster--selecting';
+                                else if (isDismissing) posterClass += ' theater-gallery-poster--dismissing';
+                                else if (focusedCharId === c.id) posterClass += ' theater-gallery-poster--focused';
+                                return (
+                                    <div
+                                        key={c.id}
+                                        data-char-id={c.id}
+                                        className={posterClass}
+                                        onClick={() => handlePosterClick(c)}
+                                    >
+                                        {/* 满铺角色原画 */}
+                                        <img className="theater-gallery-poster-bg" src={c.avatar} alt={c.name} loading="eager" decoding="async" />
+                                        {/* 爱心邮戳 — 选中态淡入 */}
+                                        <svg className="theater-gallery-poster-stamp" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <circle cx="18" cy="18" r="16.5" stroke="rgba(255,45,120,0.35)" strokeWidth="1" strokeDasharray="2.5 1.8" />
+                                            <path d="M18 27s-7.5-4.8-7.5-9.8a4.5 4.5 0 0 1 7.5-3.35A4.5 4.5 0 0 1 25.5 17.2c0 5-7.5 9.8-7.5 9.8z" fill="rgba(255,45,120,0.45)" />
+                                            <text x="18" y="13" textAnchor="middle" fontSize="4.5" fill="rgba(255,45,120,0.4)" fontWeight="600" letterSpacing="0.5">520</text>
+                                        </svg>
+                                        {/* 底部渐变信息区 */}
+                                        <div className="theater-gallery-poster-info">
+                                            <div className="theater-gallery-poster-name">{c.name}</div>
+                                            <div className="theater-gallery-poster-desc">{c.description || '赴约档案…'}</div>
+                                            <div className="theater-gallery-poster-action">
+                                                <span>赴 约</span>
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" width={14} height={14}>
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                                                </svg>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="theater-entry-char-name">{c.name}</div>
-                                    <div className="theater-entry-char-desc">{c.description || '赴约档案…'}</div>
-                                </button>
-                            ))}
+                                );
+                            })}
                             {characters.length === 0 && (
-                                <div style={{ gridColumn: '1/-1', textAlign: 'center', color: 'var(--te-text-sub)', paddingTop: 40, fontSize: 13, fontWeight: 300 }}>还没有角色</div>
+                                <div style={{ width: '100%', textAlign: 'center', color: 'var(--te-text-sub)', paddingTop: 40, fontSize: 13, fontWeight: 300 }}>还没有角色</div>
                             )}
                         </div>
                     </div>
@@ -978,7 +1102,7 @@ const TheaterApp: React.FC = () => {
                     </div>
                     <div className="theater-entry-hero">
                         <div className="theater-entry-char-ring" style={{ margin: '0 auto' }}>
-                            <img src={char.avatar} alt={char.name} className="theater-entry-char-img" />
+                            <img src={char.avatar} alt={char.name} className="theater-entry-char-img" loading="eager" decoding="async" />
                         </div>
                         <div className="theater-entry-hero-subtitle" style={{ marginTop: 12 }}>{char.name}</div>
                         <div className="theater-entry-hero-line" />
@@ -1070,6 +1194,11 @@ const TheaterApp: React.FC = () => {
                     isAiLoading={isAiLoading}
                     messages={theaterMessages}
                     onSendMessage={handleSendMessage}
+                    activeWhispers={activeWhispers}
+                    onWhisperClick={async (w) => {
+                        setActiveWhispers([]);
+                        await handleSendMessage(w.whisper, w.secret || undefined);
+                    }}
                     onChangeLocation={() => setMode('map')}
                     onExit={handleExit}
                     timelineLabel={currentTimelineId ? (charTimelines.find(t => t.timelineId === currentTimelineId)?.label || undefined) : undefined}

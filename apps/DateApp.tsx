@@ -910,7 +910,9 @@ const DateApp: React.FC = () => {
         const data = await safeResponseJson(response);
         const rawContent = data.choices[0].message.content;
         const extracted = extractThinking(rawContent);
-        const content = extracted.content;
+        // Also strip inner whispers on reroll (same as normal send)
+        const whisperResult = extractInnerWhispers(extracted.content);
+        const content = whisperResult.content;
 
         // Save AI Response (thinking chain saved to metadata for dev debugging, hidden from UI)
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', thinking: extracted.thinking } });

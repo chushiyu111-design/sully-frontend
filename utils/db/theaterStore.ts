@@ -5,6 +5,56 @@
  */
 
 import type { TheaterSessionState, TheaterLocation, TheaterTimeline } from '../../types';
+import { saveAsset, getAsset, deleteAsset } from './contentStore';
+
+// ── Theater Background Image (IndexedDB via STORE_ASSETS) ──
+
+const THEATER_BG_PREFIX = 'theater_bg_';
+
+/** Check if a bgImage value is an IndexedDB asset key (vs a URL) */
+export function isTheaterAssetKey(bgImage: string | undefined): boolean {
+    if (!bgImage) return false;
+    return bgImage.startsWith(THEATER_BG_PREFIX);
+}
+
+/** Generate asset key for a location's background image */
+export function theaterBgKey(locationId: string): string {
+    return `${THEATER_BG_PREFIX}${locationId}`;
+}
+
+/** Save a background image to IndexedDB, returns the asset key */
+export async function saveTheaterBgImage(locationId: string, dataUrl: string): Promise<string> {
+    const key = theaterBgKey(locationId);
+    await saveAsset(key, dataUrl);
+    return key;
+}
+
+/** Load a background image from IndexedDB by asset key */
+export async function getTheaterBgImage(key: string): Promise<string | null> {
+    return getAsset(key);
+}
+
+/** Delete a background image from IndexedDB */
+export async function deleteTheaterBgImage(locationId: string): Promise<void> {
+    await deleteAsset(theaterBgKey(locationId));
+}
+
+/**
+ * Resolve a bgImage value to a displayable URL.
+ * - If it's a URL (starts with / or http) → return as-is
+ * - If it's an asset key → load from IndexedDB
+ * - Otherwise → return null
+ */
+export async function resolveTheaterBg(bgImage: string | undefined): Promise<string | null> {
+    if (!bgImage) return null;
+    if (bgImage.startsWith('/') || bgImage.startsWith('http') || bgImage.startsWith('data:')) {
+        return bgImage;
+    }
+    if (isTheaterAssetKey(bgImage)) {
+        return getTheaterBgImage(bgImage);
+    }
+    return null;
+}
 
 const THEATER_SESSION_KEY = 'theater_session_';
 const THEATER_CUSTOM_LOCATIONS_KEY = 'theater_custom_locations';

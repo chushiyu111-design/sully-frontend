@@ -13,7 +13,7 @@ import {
     getCrosstimeMessages, saveCrosstimeMessage,
 } from '../../utils/db/crosstimeStore';
 import {
-    buildParticipantContext, buildCrosstimeDirectorPrompt,
+    buildGroupedParticipantContexts, buildCrosstimeDirectorPrompt,
     formatCrosstimeMessages, findSameCharCollisions,
     checkNeedsSummary, buildCrosstimeSummaryPrompt,
     CROSSTIME_SUMMARY_PARTICIPANT_ID, parseSummaryContent,
@@ -175,22 +175,17 @@ const CrosstimeApp: React.FC = () => {
             const latestSummaryMsg = allMsgs.filter(m => m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID).pop();
             const summaryMap = latestSummaryMsg ? parseSummaryContent(latestSummaryMsg.content) : {};
 
-            // Build participant contexts with per-participant memory
-            let participantContexts = '';
-            const participantList: { pid: string; displayName: string; charId: string }[] = [];
-
-            for (const p of currentRoom.participants) {
-                const char = characters.find(c => c.id === p.charId);
-                if (!char) continue;
-                const node = getNodeForParticipant(p);
-                const memory = summaryMap[p.id]; // this participant's own memory
-                participantContexts += buildParticipantContext(p, char, userProfile, node, memory);
-                participantList.push({
-                    pid: p.id,
-                    displayName: `${char.name}·${p.label}`,
-                    charId: p.charId,
-                });
-            }
+            // Build grouped participant contexts (same char shares base, only deltas per slice)
+            const participantContexts = buildGroupedParticipantContexts(
+                currentRoom.participants, characters, userProfile,
+                getNodeForParticipant, summaryMap,
+            );
+            const participantList = currentRoom.participants
+                .map(p => {
+                    const char = characters.find(c => c.id === p.charId);
+                    return char ? { pid: p.id, displayName: `${char.name}·${p.label}`, charId: p.charId } : null;
+                })
+                .filter(Boolean) as { pid: string; displayName: string; charId: string }[];
 
             const recentMsgsStr = formatCrosstimeMessages(allMsgs, currentRoom.participants, characters, userProfile);
             const collisions = findSameCharCollisions(currentRoom.participants);

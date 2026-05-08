@@ -11,9 +11,90 @@ import type { CrosstimeParticipant, CrosstimeMessage } from '../types/crosstime'
 import { ContextBuilder } from './context';
 
 /**
- * 为单个时空切片构建人格上下文
- * @param conversationMemory 该切片的对话回忆（自动总结生成）
+ * 按角色分组构建参与者上下文
+ * 同一角色的共享基底（人设+世界观）只写一次，每个切片只写差异
+ * 大幅减少同角色多切片场景下的 input tokens
  */
+export function buildGroupedParticipantContexts(
+    participants: CrosstimeParticipant[],
+    characters: CharacterProfile[],
+    userProfile: UserProfile,
+    getNode: (p: CrosstimeParticipant) => TrajectoryNode | undefined,
+    summaryMap: Record<string, string>,
+): string {
+    // 按 charId 分组
+    const groups = new Map<string, CrosstimeParticipant[]>();
+    for (const p of participants) {
+        const list = groups.get(p.charId) || [];
+        list.push(p);
+        groups.set(p.charId, list);
+    }
+
+    let output = '';
+
+    for (const [charId, slices] of groups) {
+        const char = characters.find(c => c.id === charId);
+        if (!char) continue;
+
+        // ── 共享基底（只写一次）──
+        output += `========== ${char.name} · 共享人格基底 ==========
+### 核心性格
+${char.systemPrompt || '（未设定）'}
+`;
+        if (char.worldview?.trim()) {
+            output += `\n### 世界观\n${char.worldview}\n`;
+        }
+        output += `==========\n\n`;
+
+        // ── 每个切片的差异部分 ──
+        for (const p of slices) {
+            const displayName = `${char.name}·${p.label}`;
+            const memoryBlock = summaryMap[p.id]
+                ? `\n### 对话回忆\n${summaryMap[p.id]}\n`
+                : '';
+
+            if (p.timeSlice === 'current') {
+                // 当前版本：精简版（不再调 buildCoreContext）
+                output += `--- ${displayName} (PID: ${p.id}) ---
+[时空]: 当前时间线，拥有完整经历
+[与用户]: 认识${userProfile.name}`;
+                // 注入印象的核心评价（如果有）
+                if (char.impression) {
+                    output += `\n[内心印象]: ${char.impression.personality_core.summary}`;
+                }
+                output += memoryBlock;
+                output += `\n---\n\n`;
+            } else {
+                // 轨迹节点切片
+                const node = getNode(p);
+                output += `--- ${displayName} (PID: ${p.id}) ---
+[年龄]: ${p.age ?? '?'}岁
+`;
+                if (node) {
+                    output += `[人生阶段]: ${node.title}
+[情绪底色]: ${node.mood}
+[关键词]: ${node.keywords.join('、')}
+`;
+                    if (node.monologue) {
+                        output += `[内心片段]: ${node.monologue.slice(0, 200)}${node.monologue.length > 200 ? '…' : ''}\n`;
+                    }
+                }
+                output += `[⚠️ 时空隔离]: ${p.age ?? '?'}岁，不知道此后的事\n`;
+                if (p.era === 'before_meeting') {
+                    output += `[与用户]: 不认识${userProfile.name}\n`;
+                } else {
+                    output += `[与用户]: 认识${userProfile.name}\n`;
+                }
+                output += memoryBlock;
+                output += `---\n\n`;
+            }
+        }
+    }
+
+    return output;
+}
+
+// 保留旧函数签名的兼容 wrapper（单参与者场景）
 export function buildParticipantContext(
     participant: CrosstimeParticipant,
     char: CharacterProfile,
@@ -21,74 +102,11 @@ export function buildParticipantContext(
     node?: TrajectoryNode,
     conversationMemory?: string,
 ): string {
-    const pid = participant.id;
-    const displayName = `${char.name}·${participant.label}`;
-
-    // 回忆注入片段
-    const memoryBlock = conversationMemory
-        ? `\n### 对话回忆（你记得之前聊过的内容）\n${conversationMemory}\n`
-        : '';
-
-    if (participant.timeSlice === 'current') {
-        // 当前版本：完整上下文
-        const coreContext = ContextBuilder.buildCoreContext(char, userProfile, true);
-        return `<<< 参与者档案 START: ${displayName} (PID: ${pid}) >>>
-${coreContext}
-[时空标识]: 当前时间线的${char.name}，拥有完整的记忆和经历。
-[与用户的关系]: 认识${userProfile.name}。${memoryBlock}
-<<< 参与者档案 END >>>
-`;
-    }
-
-    // 轨迹节点切片：裁剪版上下文
-    let context = `<<< 参与者档案 START: ${displayName} (PID: ${pid}) >>>
-### 身份
-- 名字: ${char.name}
-- 年龄: ${participant.age ?? '未知'}岁
-- 核心性格:
-${char.systemPrompt || '（未设定）'}
-
-`;
-
-    if (char.worldview?.trim()) {
-        context += `### 世界观
-${char.worldview}
-
-`;
-    }
-
-    if (node) {
-        context += `### 时空锚点
-- 人生阶段: ${node.title}
-- 情绪底色: ${node.mood}
-- 关键词: ${node.keywords.join('、')}
-`;
-        if (node.monologue) {
-            context += `- 内心独白片段:
-${node.monologue.slice(0, 300)}${node.monologue.length > 300 ? '…' : ''}
-`;
-        }
-
-        context += `
-### ⚠️ 时空隔离规则
-- 你是 ${participant.age ?? '?'}岁的${char.name}。你**不知道** ${participant.age ?? '?'}岁以后会发生什么。
-- 不要提及任何你这个年龄之后的事件。
-`;
-
-        if (participant.era === 'before_meeting') {
-            context += `- 你**不认识** ${userProfile.name}。如果他出现，你会好奇他是谁。
-`;
-        } else {
-            context += `- 你认识 ${userProfile.name}（互动对象: ${userProfile.name}，${userProfile.bio || '无备注'}）。
-`;
-        }
-    }
-
-    if (memoryBlock) context += memoryBlock;
-
-    context += `<<< 参与者档案 END >>>
-`;
-    return context;
+    return buildGroupedParticipantContexts(
+        [participant], [char], userProfile,
+        () => node,
+        conversationMemory ? { [participant.id]: conversationMemory } : {},
+    );
 }
 
 /**

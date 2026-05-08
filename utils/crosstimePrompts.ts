@@ -12,15 +12,22 @@ import { ContextBuilder } from './context';
 
 /**
  * 为单个时空切片构建人格上下文
+ * @param conversationMemory 该切片的对话回忆（自动总结生成）
  */
 export function buildParticipantContext(
     participant: CrosstimeParticipant,
     char: CharacterProfile,
     userProfile: UserProfile,
     node?: TrajectoryNode,
+    conversationMemory?: string,
 ): string {
     const pid = participant.id;
     const displayName = `${char.name}·${participant.label}`;
+
+    // 回忆注入片段
+    const memoryBlock = conversationMemory
+        ? `\n### 对话回忆（你记得之前聊过的内容）\n${conversationMemory}\n`
+        : '';
 
     if (participant.timeSlice === 'current') {
         // 当前版本：完整上下文
@@ -28,7 +35,7 @@ export function buildParticipantContext(
         return `<<< 参与者档案 START: ${displayName} (PID: ${pid}) >>>
 ${coreContext}
 [时空标识]: 当前时间线的${char.name}，拥有完整的记忆和经历。
-[与用户的关系]: 认识${userProfile.name}。
+[与用户的关系]: 认识${userProfile.name}。${memoryBlock}
 <<< 参与者档案 END >>>
 `;
     }
@@ -76,6 +83,8 @@ ${node.monologue.slice(0, 300)}${node.monologue.length > 300 ? '…' : ''}
 `;
         }
     }
+
+    if (memoryBlock) context += memoryBlock;
 
     context += `<<< 参与者档案 END >>>
 `;
@@ -177,7 +186,7 @@ export const CROSSTIME_SUMMARY_PARTICIPANT_ID = '__summary__';
 
 /**
  * 将消息列表格式化为可读的对话记录
- * 如果存在总结消息，自动截取：最新总结 + 总结之后的消息
+ * 只取总结锚点之后的消息（总结本身已注入各切片 context）
  */
 export function formatCrosstimeMessages(
     messages: CrosstimeMessage[],
@@ -186,23 +195,17 @@ export function formatCrosstimeMessages(
     userProfile: UserProfile,
     limit: number = 30,
 ): string {
-    // 找到最新的总结消息
-    let startIdx = 0;
+    // 找到最新的总结消息位置，只发送之后的原文
     const lastSummaryIdx = messages.map((m, i) => m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID ? i : -1)
         .filter(i => i >= 0).pop();
-
-    let summaryPrefix = '';
-    if (lastSummaryIdx !== undefined && lastSummaryIdx >= 0) {
-        summaryPrefix = `### 【此前对话的总结】\n${messages[lastSummaryIdx].content}\n\n### 【总结之后的对话】\n`;
-        startIdx = lastSummaryIdx + 1;
-    }
+    const startIdx = (lastSummaryIdx !== undefined && lastSummaryIdx >= 0) ? lastSummaryIdx + 1 : 0;
 
     const afterSummary = messages.slice(startIdx);
     const recent = afterSummary.slice(-limit);
-    if (recent.length === 0 && !summaryPrefix) return '';
+    if (recent.length === 0) return '';
 
-    const formatted = recent.map(m => {
-        if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return ''; // skip nested summaries
+    return recent.map(m => {
+        if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return '';
         if (m.role === 'user') {
             if (m.isPrivate) {
                 const target = participants.find(p => p.id === m.privateTargetId);
@@ -217,20 +220,19 @@ export function formatCrosstimeMessages(
         const displayName = char ? `${char.name}·${participant?.label}` : '未知';
         return `${displayName}: ${m.content}`;
     }).filter(Boolean).join('\n');
-
-    return summaryPrefix + formatted;
 }
 
 /**
- * 构建跨时空对话总结 prompt
- * 使用 名字·标签 格式区分同名角色
+ * 构建 per-participant 总结 prompt
+ * 输出 JSON：{ "pid": "该切片视角的回忆", ... }
+ * 每个切片只知道自己的体验，不会混淆同名角色
  */
 export function buildCrosstimeSummaryPrompt(
     messagesToSummarize: CrosstimeMessage[],
     participants: CrosstimeParticipant[],
     characters: CharacterProfile[],
     userProfile: UserProfile,
-    existingSummary?: string,
+    existingSummaries?: Record<string, string>,
 ): string {
     const dialogue = messagesToSummarize.map(m => {
         if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return '';
@@ -244,34 +246,74 @@ export function buildCrosstimeSummaryPrompt(
         return `${name}: ${m.content}`;
     }).filter(Boolean).join('\n');
 
-    const participantNames = participants.map(p => {
+    const participantDescriptions = participants.map(p => {
         const c = characters.find(ch => ch.id === p.charId);
-        return c ? `${c.name}·${p.label}` : p.label;
-    }).join('、');
+        const name = c ? `${c.name}·${p.label}` : p.label;
+        return `  - PID "${p.id}" → ${name}`;
+    }).join('\n');
 
-    return `你是一个对话记录整理员。请将以下跨时空对话整理成简洁的总结。
+    // 已有总结的注入
+    let existingBlock = '';
+    if (existingSummaries && Object.keys(existingSummaries).length > 0) {
+        existingBlock = '\n## 各参与者已有的回忆\n';
+        for (const [pid, summary] of Object.entries(existingSummaries)) {
+            const p = participants.find(pp => pp.id === pid);
+            const c = p ? characters.find(ch => ch.id === p.charId) : null;
+            const name = c ? `${c.name}·${p?.label}` : pid;
+            existingBlock += `### ${name}\n${summary}\n\n`;
+        }
+        existingBlock += '请将新内容融合进各自的回忆中，输出完整的更新版。\n';
+    }
+
+    return `你是跨时空对话的记忆整理员。请为每个参与者分别整理出「他自己视角」的对话回忆。
 
 ## 重要规则
-- 每个参与者必须用「名字·标签」格式称呼，例如「陆沉·17岁」和「陆沉·现在」是两个不同的人
-- 参与者列表：${participantNames}
-- 保留关键情节、情绪转折、重要对话内容
-- 区分公开对话和悄悄话
-- 总结应该让读者能快速了解之前发生了什么
-- 只输出总结正文，不要加标题或格式说明
-${existingSummary ? `\n## 之前已有的总结\n${existingSummary}\n\n请在此基础上，融合新内容，输出一份完整的更新总结。` : ''}
+1. 每个参与者只能记住自己说过的话、听到的话、感受到的情绪
+2. 用第二人称「你」来称呼该参与者本人
+3. 其他参与者用「名字·标签」格式提及
+4. 如果有人悄悄对用户说了话，只出现在说话者的回忆里
+5. 保留关键情节和情绪转折，不需要逐条复述
+6. 每个参与者的回忆控制在 100-200 字以内
 
-## 需要总结的对话
-${dialogue}`;
+## 参与者列表
+${participantDescriptions}
+
+## 用户: ${userProfile.name}
+${existingBlock}
+## 需要整理的对话
+${dialogue}
+
+## 输出格式（严格 JSON）
+\`\`\`json
+{
+  "pid_value_1": "该参与者视角的回忆文本...",
+  "pid_value_2": "该参与者视角的回忆文本..."
+}
+\`\`\`
+只输出 JSON，不要有其他文字。`;
+}
+
+/**
+ * 解析已有总结消息为 per-participant map
+ */
+export function parseSummaryContent(content: string): Record<string, string> {
+    try {
+        const parsed = JSON.parse(content);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+            return parsed as Record<string, string>;
+        }
+    } catch { /* ignore */ }
+    return {};
 }
 
 /**
  * 检查是否需要触发自动总结
- * 返回需要被总结的消息（不含已有总结消息），如果不需要总结则返回 null
+ * 返回需要被总结的消息 + 已有的 per-participant 总结
  */
 export function checkNeedsSummary(
     messages: CrosstimeMessage[],
     threshold: number = 18,
-): { messagesToSummarize: CrosstimeMessage[]; existingSummary?: string } | null {
+): { messagesToSummarize: CrosstimeMessage[]; existingSummaries?: Record<string, string> } | null {
     // 找到最新总结的位置
     const lastSummaryIdx = messages.map((m, i) => m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID ? i : -1)
         .filter(i => i >= 0).pop();
@@ -283,14 +325,14 @@ export function checkNeedsSummary(
     const chatMsgs = afterSummary.filter(m => m.participantId !== CROSSTIME_SUMMARY_PARTICIPANT_ID);
     if (chatMsgs.length < threshold) return null;
 
-    // 需要总结：取出所有待总结消息（保留最后 5 条不总结，让上下文自然衔接）
+    // 保留最后 5 条不总结，让上下文衔接
     const keepRecent = 5;
     const toSummarize = chatMsgs.slice(0, -keepRecent);
     if (toSummarize.length < 8) return null;
 
     return {
         messagesToSummarize: toSummarize,
-        existingSummary: lastSummary?.content,
+        existingSummaries: lastSummary ? parseSummaryContent(lastSummary.content) : undefined,
     };
 }
 

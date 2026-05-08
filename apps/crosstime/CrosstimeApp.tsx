@@ -15,7 +15,8 @@ import {
 import {
     buildParticipantContext, buildCrosstimeDirectorPrompt,
     formatCrosstimeMessages, findSameCharCollisions,
-    checkNeedsSummary, buildCrosstimeSummaryPrompt, CROSSTIME_SUMMARY_PARTICIPANT_ID,
+    checkNeedsSummary, buildCrosstimeSummaryPrompt,
+    CROSSTIME_SUMMARY_PARTICIPANT_ID, parseSummaryContent,
 } from '../../utils/crosstimePrompts';
 import { safeResponseJson } from '../../utils/safeApi';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
@@ -170,7 +171,11 @@ const CrosstimeApp: React.FC = () => {
         try {
             const allMsgs = getCrosstimeMessages(currentRoom.id);
 
-            // Build participant contexts
+            // Read per-participant summaries from latest summary message
+            const latestSummaryMsg = allMsgs.filter(m => m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID).pop();
+            const summaryMap = latestSummaryMsg ? parseSummaryContent(latestSummaryMsg.content) : {};
+
+            // Build participant contexts with per-participant memory
             let participantContexts = '';
             const participantList: { pid: string; displayName: string; charId: string }[] = [];
 
@@ -178,7 +183,8 @@ const CrosstimeApp: React.FC = () => {
                 const char = characters.find(c => c.id === p.charId);
                 if (!char) continue;
                 const node = getNodeForParticipant(p);
-                participantContexts += buildParticipantContext(p, char, userProfile, node);
+                const memory = summaryMap[p.id]; // this participant's own memory
+                participantContexts += buildParticipantContext(p, char, userProfile, node, memory);
                 participantList.push({
                     pid: p.id,
                     displayName: `${char.name}·${p.label}`,
@@ -300,7 +306,7 @@ const CrosstimeApp: React.FC = () => {
             const prompt = buildCrosstimeSummaryPrompt(
                 check.messagesToSummarize,
                 currentRoom.participants, characters, userProfile,
-                check.existingSummary,
+                check.existingSummaries,
             );
 
             const response = await fetch(`${summaryApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -309,7 +315,7 @@ const CrosstimeApp: React.FC = () => {
                 body: JSON.stringify({
                     model: summaryApi.model || apiConfig?.model,
                     messages: [
-                        { role: 'system', content: '你负责将跨时空对话记录整理成简洁的总结。同名角色必须用「名字·标签」区分。只输出总结正文。' },
+                        { role: 'system', content: '你负责为跨时空对话中的每个参与者分别整理回忆。严格输出 JSON。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.4,
@@ -320,18 +326,29 @@ const CrosstimeApp: React.FC = () => {
             const data = await safeResponseJson(response);
             const raw = data.choices?.[0]?.message?.content || '';
             const extracted = extractThinking(raw);
-            const content = extracted.content.trim();
-            if (!content) return;
+            let jsonStr = extracted.content.trim();
+
+            // Parse JSON from response
+            jsonStr = jsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
+            const fb = jsonStr.indexOf('{');
+            const lb = jsonStr.lastIndexOf('}');
+            if (fb !== -1 && lb !== -1) jsonStr = jsonStr.substring(fb, lb + 1);
+
+            // Validate it's a proper per-participant map
+            const parsed = JSON.parse(jsonStr);
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                throw new Error('Summary output is not a valid JSON object');
+            }
 
             saveCrosstimeMessage({
                 roomId: currentRoom.id,
                 participantId: CROSSTIME_SUMMARY_PARTICIPANT_ID,
                 charId: '__system__',
                 role: 'system',
-                content,
+                content: JSON.stringify(parsed),
                 timestamp: Date.now(),
             });
-            console.log('[Crosstime] Auto-summary saved');
+            console.log('[Crosstime] Per-participant summary saved:', Object.keys(parsed));
         } catch (e) {
             console.warn('[Crosstime] Auto-summary failed:', e);
         } finally {

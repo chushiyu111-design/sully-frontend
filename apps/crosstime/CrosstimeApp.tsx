@@ -15,8 +15,11 @@ import {
 import {
     buildParticipantContext, buildCrosstimeDirectorPrompt,
     formatCrosstimeMessages, findSameCharCollisions,
+    checkNeedsSummary, buildCrosstimeSummaryPrompt, CROSSTIME_SUMMARY_PARTICIPANT_ID,
 } from '../../utils/crosstimePrompts';
 import { safeResponseJson } from '../../utils/safeApi';
+import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
+import { extractThinking } from '../../utils/thinkingExtractor';
 import './crosstime.css';
 
 type View = 'setup' | 'room' | 'history';
@@ -267,6 +270,9 @@ const CrosstimeApp: React.FC = () => {
             const updatedRoom = { ...currentRoom, lastActiveAt: Date.now() };
             setRoom(updatedRoom);
             saveCrosstimeRoom(updatedRoom);
+
+            // Trigger auto-summary in background
+            void maybeTriggerSummary(updatedRoom);
         } catch (e: any) {
             console.error('[Crosstime] Director error:', e);
             addToast('对话生成失败: ' + (e.message || ''), 'error');
@@ -274,6 +280,64 @@ const CrosstimeApp: React.FC = () => {
             setIsTyping(false);
         }
     }, [apiConfig, characters, userProfile, addToast]);
+
+    // ── Auto Summary ──
+    const summaryRunningRef = useRef(false);
+    const maybeTriggerSummary = useCallback(async (currentRoom: CrosstimeRoom) => {
+        if (summaryRunningRef.current) return;
+        const allMsgs = getCrosstimeMessages(currentRoom.id);
+        const check = checkNeedsSummary(allMsgs);
+        if (!check) return;
+
+        const secondaryConfig = getSecondaryApiConfig();
+        const summaryApi = (secondaryConfig?.baseUrl && secondaryConfig?.apiKey)
+            ? secondaryConfig
+            : apiConfig;
+        if (!summaryApi?.baseUrl || !summaryApi?.apiKey) return;
+
+        summaryRunningRef.current = true;
+        try {
+            const prompt = buildCrosstimeSummaryPrompt(
+                check.messagesToSummarize,
+                currentRoom.participants, characters, userProfile,
+                check.existingSummary,
+            );
+
+            const response = await fetch(`${summaryApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${summaryApi.apiKey}` },
+                body: JSON.stringify({
+                    model: summaryApi.model || apiConfig?.model,
+                    messages: [
+                        { role: 'system', content: '你负责将跨时空对话记录整理成简洁的总结。同名角色必须用「名字·标签」区分。只输出总结正文。' },
+                        { role: 'user', content: prompt },
+                    ],
+                    temperature: 0.4,
+                }),
+            });
+
+            if (!response.ok) throw new Error('Summary API failed');
+            const data = await safeResponseJson(response);
+            const raw = data.choices?.[0]?.message?.content || '';
+            const extracted = extractThinking(raw);
+            const content = extracted.content.trim();
+            if (!content) return;
+
+            saveCrosstimeMessage({
+                roomId: currentRoom.id,
+                participantId: CROSSTIME_SUMMARY_PARTICIPANT_ID,
+                charId: '__system__',
+                role: 'system',
+                content,
+                timestamp: Date.now(),
+            });
+            console.log('[Crosstime] Auto-summary saved');
+        } catch (e) {
+            console.warn('[Crosstime] Auto-summary failed:', e);
+        } finally {
+            summaryRunningRef.current = false;
+        }
+    }, [apiConfig, characters, userProfile]);
 
     // ── Exit Room ──
     const handleExitRoom = () => {
@@ -315,6 +379,7 @@ const CrosstimeApp: React.FC = () => {
                 </div>
                 <div className="crosstime-chat-scroll">
                     {viewingMessages.map(m => {
+                        if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return null;
                         const p = viewingRoom.participants.find(pp => pp.id === m.participantId);
                         const char = p ? characters.find(c => c.id === p.charId) : null;
                         const isUser = m.role === 'user';
@@ -389,6 +454,8 @@ const CrosstimeApp: React.FC = () => {
                 {/* Chat */}
                 <div className="crosstime-chat-scroll" ref={scrollRef}>
                     {messages.map(m => {
+                        // Skip internal summary messages
+                        if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return null;
                         const p = room.participants.find(pp => pp.id === m.participantId);
                         const char = p ? characters.find(c => c.id === p.charId) : null;
                         const isUser = m.role === 'user';

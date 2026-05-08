@@ -81,3 +81,28 @@ export interface TheaterSessionState {
     startedAt: number;
     lastActiveAt: number;
 }
+
+// ── Timeline / Multiverse (世界线系统) ──
+
+/** 一条独立的世界线（平行时空） */
+export interface TheaterTimeline {
+    timelineId: string;              // UUID, 同时作为消息 metadata.branchId
+    charId: string;
+    label: string;                   // "☕ 咖啡厅·温柔线" — 用户可编辑
+    createdAt: number;
+    lastActiveAt: number;
+
+    /** 分叉源 — null 表示这是初始主线 */
+    parentTimelineId: string | null;
+    /** 从父世界线的哪条消息之后开始分叉 (fork point) — null 表示根 */
+    forkAfterMessageId: number | null;
+
+    /** 该世界线的 session 状态 (pity/events/location 等) */
+    session: TheaterSessionState;
+
+    /** 显示信息 */
+    locationName: string;            // 最后所在地点名
+    messageCount: number;            // 该世界线独有的消息数
+    preview: string;                 // 最后一条 AI 消息的前 50 字
+}
+

@@ -3,7 +3,7 @@
  * 底部毛玻璃对话框 · 打字机效果 · 点击翻页 · Auto · Log
  */
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 import { useOS } from '../../context/OSContext';
@@ -32,6 +32,9 @@ interface TheaterSessionProps {
     onSendMessage: (text: string) => Promise<void>;
     onChangeLocation: () => void;
     onExit: () => void;
+    // Timeline / Fork
+    timelineLabel?: string;
+    onForkFromMessage?: (msg: Message) => void;
     // Summary
     isSummaryGenerating?: boolean;
     hasPendingSummary?: boolean;
@@ -139,6 +142,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     char, userProfile, location, timeSlot,
     is520: _is520, currentEvent, isDirectorLoading, isAiLoading,
     messages, onSendMessage, onChangeLocation, onExit,
+    timelineLabel, onForkFromMessage,
     isSummaryGenerating, hasPendingSummary, canManualSummary, canAutoSummary,
     summaryDisabledReason,
     onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
@@ -169,6 +173,27 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const [eventCollapsed, setEventCollapsed] = useState(false);
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
     const prevPagesLenRef = useRef(0);
+    /** Track whether the component mounted with messages already present (i.e. resumed history) */
+    const hadInitialMessagesRef = useRef(messages.length > 0);
+
+    // ── Background Crossfade ──
+    const currentBg = location.bgImage
+        ? `url(${location.bgImage}) center/cover`
+        : location.bgGradient || '#111';
+    const prevBgRef = useRef(currentBg);
+    const [bgLayers, setBgLayers] = useState<{ front: string; back: string; transitioning: boolean }>({
+        front: currentBg, back: '', transitioning: false,
+    });
+
+    useLayoutEffect(() => {
+        if (currentBg !== prevBgRef.current) {
+            // Start crossfade: old bg goes to back layer (fading out), new bg on front (fading in)
+            setBgLayers({ front: currentBg, back: prevBgRef.current, transitioning: true });
+            prevBgRef.current = currentBg;
+            const t = setTimeout(() => setBgLayers(prev => ({ ...prev, back: '', transitioning: false })), 700);
+            return () => clearTimeout(t);
+        }
+    }, [currentBg]);
     const hasInitializedRef = useRef(false);
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
@@ -184,9 +209,14 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         if (pages.length === 0) return;
 
         if (!hasInitializedRef.current) {
-            // First time we have pages (async messages loaded): jump to LAST page
             hasInitializedRef.current = true;
-            setPageIndex(pages.length - 1);
+            if (hadInitialMessagesRef.current) {
+                // Resumed session with existing history: jump to LAST page
+                setPageIndex(pages.length - 1);
+            } else {
+                // Fresh session — first scene just generated: start from page 0
+                setPageIndex(0);
+            }
             prevPagesLenRef.current = pages.length;
         } else if (pages.length !== prevPagesLenRef.current) {
             // New content from AI: jump to first NEW page
@@ -296,14 +326,16 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     // ── Render ──
     return (
         <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none flex flex-col">
-            {/* Background */}
+            {/* Background — dual-layer crossfade */}
+            {bgLayers.back && (
+                <div
+                    className="theater-bg-layer theater-bg-crossfade-out"
+                    style={{ background: bgLayers.back }}
+                />
+            )}
             <div
-                className="absolute inset-0"
-                style={{
-                    background: location.bgImage
-                        ? `url(${location.bgImage}) center/cover`
-                        : location.bgGradient || '#111',
-                }}
+                className={`theater-bg-layer ${bgLayers.transitioning ? 'theater-bg-crossfade-in' : ''}`}
+                style={{ background: bgLayers.front }}
             />
             {/* Gradient mask — replaces old panel background */}
             <div className="theater-vn-gradient-mask" />
@@ -329,6 +361,12 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 </button>
                 <div className="flex items-center gap-2">
                     <span className="text-white/30 text-[11px] font-medium tracking-wide">{location.name}</span>
+                    {timelineLabel && (
+                        <span className="text-emerald-400/40 text-[10px] font-medium">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={10} height={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
+                            {timelineLabel}
+                        </span>
+                    )}
                     <div className="theater-time-badge" style={{ padding: '4px 10px', fontSize: 11 }}>
                         <span>{timeLabel.icon}</span>
                         <span>{timeLabel.zh}</span>
@@ -488,11 +526,29 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     </div>
                     <div className="theater-vn-log-scroll">
                         {messages.map(msg => (
-                            <div key={msg.id} className="theater-vn-log-item">
+                            <div
+                                key={msg.id}
+                                className="theater-vn-log-item"
+                                onContextMenu={(e) => {
+                                    if (onForkFromMessage) {
+                                        e.preventDefault();
+                                        onForkFromMessage(msg);
+                                    }
+                                }}
+                            >
                                 <div className={`theater-vn-log-item-name ${msg.role === 'user' ? 'user' : ''}`}>
                                     {msg.role === 'user' ? (userProfile.name || '你') : char.name}
                                 </div>
                                 <div className="theater-vn-log-item-text">{cleanText(msg.content)}</div>
+                                {onForkFromMessage && (
+                                    <button
+                                        className="theater-vn-log-fork-btn"
+                                        onClick={(e) => { e.stopPropagation(); onForkFromMessage(msg); }}
+                                        title="从这里分叉"
+                                    >
+                                        <span style={{ fontSize: 9, letterSpacing: 0.5 }}>分叉</span>
+                                    </button>
+                                )}
                             </div>
                         ))}
                         {messages.length === 0 && (

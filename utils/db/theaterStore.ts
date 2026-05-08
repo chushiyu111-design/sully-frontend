@@ -4,7 +4,7 @@
  * Uses localStorage for lightweight session state (avoids DB version bumps).
  */
 
-import type { TheaterSessionState, TheaterLocation } from '../../types';
+import type { TheaterSessionState, TheaterLocation, TheaterTimeline } from '../../types';
 
 const THEATER_SESSION_KEY = 'theater_session_';
 const THEATER_CUSTOM_LOCATIONS_KEY = 'theater_custom_locations';
@@ -99,3 +99,121 @@ export function incrementVisitCount(locationId: string): number {
     } catch { /* ignore */ }
     return next;
 }
+
+// ══════════════════════════════════════════════════════════
+//  Timeline / Multiverse System (世界线系统)
+// ══════════════════════════════════════════════════════════
+
+const THEATER_TIMELINES_KEY = 'theater_timelines_';
+const THEATER_ACTIVE_TIMELINE_KEY = 'theater_active_tl_';
+const MAX_TIMELINES_PER_CHAR = 8;
+
+/** Get all timelines for a character, sorted by lastActiveAt desc */
+export function getTimelines(charId: string): TheaterTimeline[] {
+    try {
+        const raw = localStorage.getItem(THEATER_TIMELINES_KEY + charId);
+        if (!raw) return [];
+        const timelines = JSON.parse(raw) as TheaterTimeline[];
+        return timelines.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+    } catch {
+        return [];
+    }
+}
+
+/** Save or update a single timeline (upsert) */
+export function saveTimeline(timeline: TheaterTimeline): void {
+    try {
+        const existing = getTimelines(timeline.charId);
+        const idx = existing.findIndex(t => t.timelineId === timeline.timelineId);
+        if (idx >= 0) {
+            existing[idx] = timeline;
+        } else {
+            if (existing.length >= MAX_TIMELINES_PER_CHAR) {
+                console.warn(`[TheaterStore] Max timelines (${MAX_TIMELINES_PER_CHAR}) reached for char ${timeline.charId}`);
+                return;
+            }
+            existing.push(timeline);
+        }
+        localStorage.setItem(THEATER_TIMELINES_KEY + timeline.charId, JSON.stringify(existing));
+    } catch (e) {
+        console.error('[TheaterStore] Failed to save timeline:', e);
+    }
+}
+
+/** Delete a timeline by ID */
+export function deleteTimeline(charId: string, timelineId: string): void {
+    try {
+        const existing = getTimelines(charId).filter(t => t.timelineId !== timelineId);
+        localStorage.setItem(THEATER_TIMELINES_KEY + charId, JSON.stringify(existing));
+        // If this was the active timeline, clear it
+        if (getActiveTimelineId(charId) === timelineId) {
+            clearActiveTimelineId(charId);
+        }
+    } catch { /* ignore */ }
+}
+
+/** Get a specific timeline */
+export function getTimelineById(charId: string, timelineId: string): TheaterTimeline | null {
+    return getTimelines(charId).find(t => t.timelineId === timelineId) || null;
+}
+
+/** Get/set which timeline is currently active for a character */
+export function getActiveTimelineId(charId: string): string | null {
+    try {
+        return localStorage.getItem(THEATER_ACTIVE_TIMELINE_KEY + charId) || null;
+    } catch {
+        return null;
+    }
+}
+
+export function setActiveTimelineId(charId: string, timelineId: string): void {
+    try {
+        localStorage.setItem(THEATER_ACTIVE_TIMELINE_KEY + charId, timelineId);
+    } catch { /* ignore */ }
+}
+
+export function clearActiveTimelineId(charId: string): void {
+    try {
+        localStorage.removeItem(THEATER_ACTIVE_TIMELINE_KEY + charId);
+    } catch { /* ignore */ }
+}
+
+/** Check if the max timeline limit has been reached */
+export function canCreateTimeline(charId: string): boolean {
+    return getTimelines(charId).length < MAX_TIMELINES_PER_CHAR;
+}
+
+/**
+ * Resolve the full fork chain for a timeline.
+ * Returns [rootTimelineId, ...intermediateIds, thisTimelineId] with fork message IDs.
+ */
+export function resolveForkChain(charId: string, timelineId: string): Array<{ timelineId: string; forkAfterMessageId: number | null }> {
+    const chain: Array<{ timelineId: string; forkAfterMessageId: number | null }> = [];
+    const allTimelines = getTimelines(charId);
+    let current: TheaterTimeline | undefined = allTimelines.find(t => t.timelineId === timelineId);
+
+    while (current) {
+        chain.unshift({ timelineId: current.timelineId, forkAfterMessageId: current.forkAfterMessageId });
+        if (!current.parentTimelineId) break;
+        current = allTimelines.find(t => t.timelineId === current!.parentTimelineId);
+    }
+
+    return chain;
+}
+
+/**
+ * Generate a default label for a new timeline.
+ * Format: "地点名 · 时段" or "世界线 #N"
+ */
+export function generateTimelineLabel(
+    locationName: string,
+    timeSlotZh: string,
+    charId: string,
+): string {
+    const count = getTimelines(charId).length + 1;
+    if (locationName) {
+        return `${locationName} · ${timeSlotZh} #${count}`;
+    }
+    return `世界线 #${count}`;
+}
+

@@ -34,6 +34,7 @@ export enum AppID {
     StatusWorkshop = 'status_workshop', // 状态栏工坊
     HalfSugar = 'half_sugar', // 半糖主义
     Theater = 'theater', // 520 约会剧场
+    Trajectory = 'trajectory', // 人生轨迹
 }
 
 export interface SystemLog {

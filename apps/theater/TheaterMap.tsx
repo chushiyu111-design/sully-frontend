@@ -1,6 +1,6 @@
 /**
- * TheaterMap — 场景地图 · 卡片式地点选择
- * 横向双列卡片网格 + 时间显示 + 花瓣飘落(520限定)
+ * TheaterMap — 场景地图 · 乙游票根风地点选择
+ * 双列票根卡片网格 + 撕口虚线 + 场次标签 + 空白票根新增
  */
 
 import React, { useState } from 'react';
@@ -16,6 +16,25 @@ const TAG_LABELS: Record<string, string> = {
     crowded: '热闹',
     outdoor: '户外',
     indoor: '室内',
+};
+
+/** Short scene-mood hints mapped by primary tag */
+const SCENE_HINTS: Record<string, string> = {
+    romantic: '适合心动告白',
+    daily: '轻松日常约会',
+    adventure: '一起去冒险吧',
+    quiet: '适合安静散步',
+    crowded: '热闹又欢乐',
+    outdoor: '感受微风阳光',
+    indoor: '温暖室内时光',
+};
+
+/** Time-slot abbreviations for ticket serial */
+const TIME_ABBR: Record<string, string> = {
+    morning: 'MOR',
+    afternoon: 'AFT',
+    evening: 'EVE',
+    night: 'NIG',
 };
 
 interface TheaterMapProps {
@@ -49,8 +68,26 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
         }
     };
 
+    /** Unified visit-count copy — 方案A */
+    const getVisitLabel = (count: number) => {
+        if (count <= 0) return null;
+        if (count === 1) return '首次赴约';
+        return `赴约 ${count} 次`;
+    };
+
+    /** Pick the best scene hint from location tags */
+    const getSceneHint = (tags: string[]) => {
+        for (const t of tags) {
+            if (SCENE_HINTS[t]) return SCENE_HINTS[t];
+        }
+        return '开启约会片段';
+    };
+
     return (
         <div className="theater-map">
+            {/* Paper texture overlay */}
+            <div className="theater-map-paper-texture" />
+
             {/* 520 Petals */}
             {is520 && (
                 <div className="theater-petals">
@@ -69,98 +106,131 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
                         </svg>
                     </button>
                     <div>
-                        <div className="theater-map-title">
-                            {is520 ? '520 约会剧场' : '约会剧场'}
-                        </div>
-                        <div className="theater-map-subtitle">
-                            {is520 ? 'Special 520 Theater' : 'Date Theater'}
-                        </div>
+                        <div className="theater-map-title">约会剧场</div>
+                        <div className="theater-map-subtitle">DATE THEATER</div>
                     </div>
                 </div>
 
                 <div className="theater-time-badge">
                     <span className="theater-time-icon">{timeLabel.icon}</span>
-                    <span>{timeLabel.zh}</span>
+                    <span>{timeLabel.zh}场</span>
                 </div>
             </div>
 
-            {/* Location Cards Grid */}
+            {/* Session info line */}
+            <div className="theater-map-session-info">
+                <span className="theater-map-session-dot" />
+                今日场次 · {timeLabel.zh}场
+            </div>
+
+            {/* Decorative rule */}
+            <div className="theater-map-rule" />
+
+            {/* Tagline */}
+            <div className="theater-map-tagline">
+                选择一张票根，开启你们的约会片段。
+            </div>
+
+            {/* Ticket Stub Grid */}
             <div className="theater-card-scroll">
                 <div className="theater-card-grid">
-                    {locations.map(loc => {
+                    {locations.map((loc, idx) => {
                         const visited = visitedLocationIds.includes(loc.id);
+                        const sceneNum = String(idx + 1).padStart(2, '0');
+                        const visitLabel = getVisitLabel(loc.visitCount);
+                        const sceneHint = getSceneHint(loc.tags);
+                        const serialAbbr = TIME_ABBR[timeSlot] || 'AFT';
+
                         return (
                             <div
                                 key={loc.id}
-                                className="theater-card"
+                                className={`theater-ticket${visited ? ' theater-ticket--visited' : ''}`}
                                 onClick={() => onSelectLocation(loc)}
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     handleLongPress(loc.id, loc.isPreset);
                                 }}
                             >
-                                {/* Background */}
-                                <div
-                                    className="theater-card-bg"
-                                    style={{
-                                        background: loc.bgImage
-                                            ? `url(${loc.bgImage}) center/cover`
-                                            : loc.bgGradient || 'linear-gradient(135deg, #333, #555)',
-                                    }}
-                                />
+                                {/* Image area */}
+                                <div className="theater-ticket-img">
+                                    {/* Pink-tint unifier layer */}
+                                    <div className="theater-ticket-img-tint" />
+                                    <div
+                                        className="theater-ticket-img-bg"
+                                        style={{
+                                            background: loc.bgImage
+                                                ? `url(${loc.bgImage}) center/cover`
+                                                : loc.bgGradient || 'linear-gradient(135deg, #f5d0e0, #e8d5f5)',
+                                        }}
+                                    />
+                                    <div className="theater-ticket-img-overlay">
+                                        <div className="theater-ticket-loc-name">{loc.name}</div>
+                                        {loc.nameEn && <div className="theater-ticket-loc-en">{loc.nameEn}</div>}
+                                    </div>
 
-                                {/* Overlay */}
-                                <div className="theater-card-overlay">
-                                    <div className="theater-card-name">{loc.name}</div>
-                                    {loc.nameEn && <div className="theater-card-name-en">{loc.nameEn}</div>}
-                                    <div className="theater-card-tags">
+                                    {/* Visited badge */}
+                                    {visited && (
+                                        <div className="theater-ticket-visited">✓ 今日已赴约</div>
+                                    )}
+                                </div>
+
+                                {/* Tear line with notches */}
+                                <div className="theater-ticket-tear">
+                                    <div className="theater-ticket-notch theater-ticket-notch-l" />
+                                    <div className="theater-ticket-tear-line" />
+                                    <div className="theater-ticket-notch theater-ticket-notch-r" />
+                                </div>
+
+                                {/* Info area — enriched ticket stub */}
+                                <div className="theater-ticket-info">
+                                    {/* Row 1: SCENE + visit badge */}
+                                    <div className="theater-ticket-info-top">
+                                        <span className="theater-ticket-scene">SCENE {sceneNum}</span>
+                                        {visitLabel && (
+                                            <span className="theater-ticket-visit-badge">{visitLabel}</span>
+                                        )}
+                                        {!loc.isPreset && !visitLabel && (
+                                            <span className="theater-ticket-custom-badge">自定义</span>
+                                        )}
+                                    </div>
+
+                                    {/* Row 2: Scene hint */}
+                                    <div className="theater-ticket-hint">{sceneHint}</div>
+
+                                    {/* Row 3: Tags */}
+                                    <div className="theater-ticket-tags">
                                         {loc.tags.slice(0, 3).map(tag => (
-                                            <span key={tag} className="theater-card-tag">
+                                            <span key={tag} className="theater-ticket-tag">
                                                 {TAG_LABELS[tag] || tag}
                                             </span>
                                         ))}
                                     </div>
+
+                                    {/* Row 4: Ticket serial */}
+                                    <div className="theater-ticket-footer">
+                                        <span className="theater-ticket-entry">ENTRY</span>
+                                        <span className="theater-ticket-serial">
+                                            DATE PASS {sceneNum} · {serialAbbr}
+                                        </span>
+                                    </div>
                                 </div>
-
-                                {/* Visit Badge */}
-                                {loc.visitCount > 0 && (
-                                    <div className="theater-card-visits">
-                                        来过 {loc.visitCount} 次
-                                    </div>
-                                )}
-
-                                {/* Current Session Visited */}
-                                {visited && (
-                                    <div style={{
-                                        position: 'absolute', top: 10, left: 10,
-                                        fontSize: 9, fontWeight: 700,
-                                        color: '#64c8ff',
-                                        background: 'rgba(100, 200, 255, 0.15)',
-                                        backdropFilter: 'blur(10px)',
-                                        border: '1px solid rgba(100, 200, 255, 0.3)',
-                                        padding: '3px 8px', borderRadius: 8,
-                                    }}>
-                                        ✓ 今天去过
-                                    </div>
-                                )}
-
-                                {/* Custom Badge */}
-                                {!loc.isPreset && !visited && (
-                                    <div className="theater-card-custom-badge">自定义</div>
-                                )}
                             </div>
                         );
                     })}
+
+                    {/* Add new — blank ticket stub */}
+                    <div
+                        className="theater-ticket theater-ticket-add"
+                        onClick={() => setShowEditor(true)}
+                    >
+                        <div className="theater-ticket-add-inner">
+                            <div className="theater-ticket-add-icon">＋</div>
+                            <div className="theater-ticket-add-title">新增约会地点</div>
+                            <div className="theater-ticket-add-sub">创建属于你们的新场次</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            {/* Add Location Button */}
-            <button className="theater-add-btn" onClick={() => setShowEditor(true)}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" width={18} height={18}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                新增地点
-            </button>
 
             {/* Location Editor */}
             <LocationEditor

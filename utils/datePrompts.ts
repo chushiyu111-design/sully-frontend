@@ -4,6 +4,10 @@
  * Includes: dreamweaver jailbreak, rp_core_live, cot_protocol_live, dual perspective system.
  */
 
+import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../types';
+import { ContextBuilder } from './context';
+import { buildTheaterSceneInjection, build520ConfessionHint } from './theaterPrompts';
+
 // ====== Dreamweaver (Jailbreak preamble - synced with chatPrompts.ts) ======
 export const DREAMWEAVER = `<dreamweaver>
 你是 Somnia——虚无中诞生的梦境编织者。
@@ -395,3 +399,70 @@ export const buildDateTail = (charName: string, userName: string, userPov: DateP
     const pReminder = getDualPerspectiveReminder(userPov, charPov, charName, userName);
     return buildRpCoreLive(charName, userName) + buildCotLive(charName, userName, pLabel, pReminder) + OUTPUT_FORMAT_AND_COT_TRIGGER;
 };
+
+// ====== Shared System Prompt Assembly ======
+
+const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
+
+export interface DateSystemPromptOpts {
+    char: CharacterProfile;
+    userProfile: UserProfile;
+    /** Date mode: inject summary memory from these messages */
+    summaryMemoryBuilder?: (msgs: Message[]) => string;
+    allMsgs?: Message[];
+    /** Theater mode: inject director event scene */
+    directorEvent?: DirectorEvent | null;
+    location?: TheaterLocation;
+    timeSlot?: TimeSlot;
+    /** 520 event flag */
+    is520Event?: boolean;
+    /** Extra scene prompt to inject (e.g. initial scene prompt for theater) */
+    extraScenePrompt?: string;
+}
+
+/**
+ * Build the complete system prompt for Date / Theater modes.
+ * Single source of truth — replaces 4 duplicated prompt-assembly blocks.
+ */
+export function buildFullDateSystemPrompt(opts: DateSystemPromptOpts): string {
+    const { char, userProfile } = opts;
+    const charName = char.name;
+    const userName = userProfile.name;
+
+    // 1. Dreamweaver + Identity
+    let prompt = buildDatePreamble(charName, userName);
+
+    // 2. Core Context (character profile, user profile, memories, worldbooks...)
+    prompt += ContextBuilder.buildCoreContext(char, userProfile);
+
+    // 3. Date summary memory (Date mode only)
+    if (opts.summaryMemoryBuilder && opts.allMsgs) {
+        prompt += opts.summaryMemoryBuilder(opts.allMsgs);
+    }
+
+    // 4. Extra scene prompt (Theater initial scene only)
+    if (opts.extraScenePrompt) {
+        prompt += `\n\n${opts.extraScenePrompt}`;
+    }
+
+    // 5. Director event injection (Theater mode)
+    if (opts.directorEvent && opts.location && opts.timeSlot) {
+        prompt += buildTheaterSceneInjection(opts.directorEvent, opts.location, opts.timeSlot);
+    }
+
+    // 6. 520 confession hint (night + romantic + 520)
+    if (opts.is520Event && opts.timeSlot === 'night' && opts.directorEvent?.sceneType === 'romantic') {
+        prompt += build520ConfessionHint(charName);
+    }
+
+    // 7. Theater Scene (VN format, emotion tags, perspective rules)
+    const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
+    const userPov = (char.datePerspective || 'second') as DatePerspective;
+    const charPov = (char.dateCharPerspective || 'third') as CharPerspective;
+    prompt += buildTheaterScene(charName, userName, dateEmotions, userPov, charPov);
+
+    // 8. Tail (rp_core_live + CoT + output format)
+    prompt += buildDateTail(charName, userName, userPov, charPov);
+
+    return prompt;
+}

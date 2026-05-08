@@ -127,7 +127,7 @@ describe('minimax music service', () => {
         })).rejects.toThrow(/MiniMax Music HTTP 403.*trace-primary.*trace-fallback/);
     });
 
-    it('uses the dedicated MiniMax music proxy by default', async () => {
+    it('routes through csyos-workers proxy by default', async () => {
         const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
             data: { audio: '494433' },
             extra_info: { music_duration: 123000 },
@@ -143,7 +143,11 @@ describe('minimax music service', () => {
             lyrics: '[Verse]\nhello',
         });
 
-        expect(fetchMock.mock.calls[0][0]).toBe('/minimax-music-api/v1/music_generation');
+        // Should route through the csyos-workers backend proxy
+        const url = String(fetchMock.mock.calls[0][0]);
+        expect(url).toContain('/api/music/minimax-generate');
+        // MiniMax API key sent via X-MiniMax-Key (not Authorization, which is for backend auth)
+        expect(fetchMock.mock.calls[0][1].headers['X-MiniMax-Key']).toBe('key');
         expect(fetchMock.mock.calls[0][1].headers['Group-Id']).toBe('group');
         expect(fetchMock.mock.calls[0][1].headers['X-Group-ID']).toBe('group');
     });

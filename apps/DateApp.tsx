@@ -154,6 +154,7 @@ const DateApp: React.FC = () => {
     const [previousMode, setPreviousMode] = useState<'select' | 'peek'>('select');
 
     const [peekStatus, setPeekStatus] = useState<string>('');
+    const [peekThinking, setPeekThinking] = useState<string>('');
     const [peekLoading, setPeekLoading] = useState(false);
 
     // History State
@@ -700,7 +701,7 @@ const DateApp: React.FC = () => {
                     role: 'assistant',
                     type: 'text',
                     content: peekStatus,
-                    metadata: { source: 'date', isOpening: true, thinking: (peekStatus as any)._thinking } // Added Flag
+                    metadata: { source: 'date', isOpening: true, thinking: peekThinking || undefined }
                 });
                 setHasSavedOpening(true);
             } catch (e) {
@@ -775,10 +776,7 @@ const DateApp: React.FC = () => {
             const rawPeek = data.choices[0].message.content;
             const peekExtracted = extractThinking(rawPeek);
             setPeekStatus(peekExtracted.content);
-            // Temporary hack to pass thinking down to save opening
-            if (peekExtracted.thinking) {
-                (peekExtracted.content as any)._thinking = peekExtracted.thinking;
-            }
+            setPeekThinking(peekExtracted.thinking || '');
 
         } catch (e: any) {
             setPeekStatus(`(无法感知状态: ${e.message})`);

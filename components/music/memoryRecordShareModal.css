@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════
+   Memory Record Share Modal — Vinyl Dreamscape
+   ═══════════════════════════════════════════ */
+
 .memory-record-share-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -30,39 +34,46 @@
     animation: memory-record-share-rise 0.28s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Hide scrollbar in modal */
+.memory-record-share-modal::-webkit-scrollbar { display: none; }
+.memory-record-share-modal { scrollbar-width: none; }
+
 @keyframes memory-record-share-rise {
     from { opacity: 0; transform: translateY(28px) scale(0.97); }
     to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ── Card Preview (9:16 Vinyl Dreamscape) ── */
+
 .memory-record-share-card-preview {
     position: relative;
-    display: grid;
-    grid-template-rows: auto minmax(188px, 1fr) auto auto auto;
-    row-gap: 13px;
-    aspect-ratio: 4 / 5;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    aspect-ratio: 9 / 16;
     overflow: hidden;
     border-radius: 24px;
-    padding: 19px;
-    background: #111015;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    padding: 22px;
+    background: #0a0810;
     isolation: isolate;
 }
 
+/* Blurred album art backdrop */
 .memory-record-share-card-backdrop {
     position: absolute;
-    inset: -30px;
-    width: calc(100% + 60px);
-    height: calc(100% + 60px);
+    inset: -44px;
+    width: calc(100% + 88px);
+    height: calc(100% + 88px);
     object-fit: cover;
-    filter: blur(22px) saturate(1.12);
-    opacity: 0.34;
+    filter: blur(34px) saturate(1.18);
+    opacity: 0.26;
 }
 
+/* Gradient wash */
 .memory-record-share-card-wash {
     position: absolute;
     inset: 0;
-    opacity: 0.8;
+    opacity: 0.72;
 }
 
 .memory-record-share-card-wash::after {
@@ -70,17 +81,52 @@
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(circle at 68% 16%, rgba(255, 233, 192, 0.22) 0, rgba(255, 233, 192, 0) 34%),
-        linear-gradient(180deg, rgba(11, 10, 15, 0.22) 0%, rgba(11, 10, 15, 0.08) 40%, rgba(11, 10, 15, 0.82) 100%);
+        radial-gradient(circle at 50% 28%, rgba(45, 18, 65, 0.55) 0%, transparent 52%),
+        linear-gradient(180deg, rgba(10, 8, 16, 0.25) 0%, rgba(10, 8, 16, 0.08) 30%, rgba(10, 8, 16, 0.88) 100%);
 }
 
+/* Grain texture */
+.memory-record-share-card-grain {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    background-size: 128px 128px;
+    opacity: 0.5;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+}
+
+/* Light leak — upper right warm amber */
+.memory-record-share-card-leak {
+    position: absolute;
+    top: -12%;
+    right: -8%;
+    width: 52%;
+    height: 42%;
+    background: radial-gradient(ellipse at center, rgba(255, 195, 110, 0.14) 0%, transparent 68%);
+    filter: blur(40px);
+    pointer-events: none;
+}
+
+/* Vignette */
+.memory-record-share-card-vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 28%, rgba(5, 3, 10, 0.52) 100%);
+    pointer-events: none;
+}
+
+/* Inner frame border */
 .memory-record-share-card-frame {
     position: absolute;
-    inset: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.13);
+    inset: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 19px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    pointer-events: none;
 }
+
+/* ── Header ── */
 
 .memory-record-share-card-header {
     position: relative;
@@ -88,17 +134,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    color: rgba(255, 255, 255, 0.68);
+    gap: 12px;
+    color: rgba(255, 255, 255, 0.58);
     font-size: 10px;
     font-weight: 850;
-    letter-spacing: 0.20em;
+    letter-spacing: 0.22em;
 }
 
 .memory-record-share-card-header span:last-child {
-    color: rgba(255, 248, 226, 0.88);
-    letter-spacing: 0;
+    color: rgba(255, 228, 175, 0.82);
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
 }
+
+/* ── Vinyl + Cover Stage ── */
 
 .memory-record-share-card-stage {
     position: relative;
@@ -106,30 +156,39 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 0;
-    height: clamp(190px, 52vw, 226px);
+    flex: 0 0 auto;
+    height: clamp(210px, 48%, 280px);
 }
 
-.memory-record-share-card-disc {
+.memory-record-share-card-vinyl {
     position: absolute;
-    top: 24px;
-    right: clamp(8px, 5vw, 24px);
-    width: clamp(154px, 44vw, 188px);
+    right: clamp(6px, 4%, 20px);
+    top: 50%;
+    transform: translateY(-50%);
+    width: clamp(148px, 42%, 186px);
     aspect-ratio: 1;
-    border-radius: 999px;
-    background: radial-gradient(circle at center, #0f0f12 0 21%, #222026 22% 23%, #0c0b10 24% 46%, #2b2930 47% 48%, #0b0a0e 49% 100%);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    border-radius: 50%;
+    background: #0e0e12;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+}
+
+.memory-record-share-card-vinyl svg {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 .memory-record-share-card-cover-shell {
     position: relative;
-    z-index: 1;
-    width: clamp(198px, 54vw, 230px);
+    z-index: 2;
+    width: clamp(178px, 50%, 218px);
     aspect-ratio: 1;
-    border-radius: 27px;
+    border-radius: 24px;
     padding: 6px;
-    background: rgba(255, 255, 255, 0.14);
-    box-shadow: 0 22px 48px rgba(0, 0, 0, 0.44);
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 22px 52px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+    transform: translateX(-8%);
 }
 
 .memory-record-share-card-cover {
@@ -139,9 +198,9 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    border-radius: 22px;
+    border-radius: 19px;
     background: linear-gradient(135deg, #211f2e 0%, #b98f73 54%, #d8cab6 100%);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
 .memory-record-share-card-cover img {
@@ -152,85 +211,131 @@
 }
 
 .memory-record-share-card-cover span {
-    color: rgba(255, 255, 255, 0.76);
+    color: rgba(255, 255, 255, 0.7);
     font-family: Georgia, serif;
-    font-size: 62px;
-    text-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+    font-size: 56px;
+    text-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
 }
 
-.memory-record-share-card-copy {
+/* ── Title + Artist ── */
+
+.memory-record-share-card-meta {
     position: relative;
     z-index: 1;
     text-align: left;
-    min-width: 0;
+    padding: 0 2px;
 }
 
-.memory-record-share-card-copy h3 {
+.memory-record-share-card-meta h3 {
     display: -webkit-box;
     margin: 0;
     overflow: hidden;
     color: #fff7dc;
-    font-size: clamp(24px, 7vw, 29px);
+    font-size: clamp(22px, 6.5vw, 28px);
     font-weight: 850;
-    line-height: 1.08;
-    letter-spacing: 0;
+    line-height: 1.12;
+    letter-spacing: -0.01em;
     overflow-wrap: anywhere;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
-.memory-record-share-card-copy div {
+.memory-record-share-card-meta-sub {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 14px;
+    gap: 8px;
     margin-top: 8px;
-    min-width: 0;
 }
 
-.memory-record-share-card-copy p,
-.memory-record-share-card-copy span {
+.memory-record-share-card-meta-sub p {
     margin: 0;
-    overflow: hidden;
-    line-height: 1.4;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.memory-record-share-card-copy p {
-    max-width: min(230px, 62%);
-    color: rgba(255, 255, 255, 0.82);
+    color: rgba(255, 255, 255, 0.72);
     font-size: 13px;
-    font-weight: 750;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.memory-record-share-card-copy span {
-    max-width: min(126px, 38%);
-    color: rgba(255, 255, 255, 0.52);
+.memory-record-share-card-meta-sub span {
+    color: rgba(255, 255, 255, 0.38);
     font-size: 11px;
-    font-weight: 650;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
+
+.memory-record-share-card-meta-sub .vd-dot {
+    flex-shrink: 0;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: rgba(255, 220, 160, 0.4);
+}
+
+/* ── Glassmorphism Lyrics ── */
 
 .memory-record-share-card-lyrics {
     position: relative;
     z-index: 1;
-    min-height: 46px;
-    border-left: 2px solid rgba(255, 239, 198, 0.62);
-    padding: 4px 0 4px 14px;
-    color: rgba(255, 250, 235, 0.86);
-    font-size: 13.5px;
-    font-weight: 650;
-    line-height: 1.55;
-    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.22);
-    background: linear-gradient(90deg, rgba(255, 239, 198, 0.08), rgba(255, 239, 198, 0));
+    border-radius: 14px;
+    padding: 14px 16px 14px 18px;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+}
+
+.memory-record-share-card-lyrics::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, rgba(255, 210, 130, 0.8), rgba(255, 185, 100, 0.4));
 }
 
 .memory-record-share-card-lyrics p {
     margin: 0;
+    color: rgba(255, 248, 228, 0.85);
+    font-size: 13.5px;
+    font-weight: 620;
+    line-height: 1.65;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.2);
 }
+
+/* ── Waveform ── */
+
+.memory-record-share-card-waveform {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+    height: 28px;
+    padding: 0 2px;
+}
+
+.memory-record-share-card-waveform-bar {
+    flex: 1;
+    min-width: 0;
+    max-width: 5px;
+    border-radius: 1.5px;
+    background: linear-gradient(180deg, rgba(255, 210, 130, 0.65) 0%, rgba(255, 185, 100, 0.25) 100%);
+    transition: height 0.3s ease;
+}
+
+/* ── Footer ── */
 
 .memory-record-share-card-footer {
     position: relative;
@@ -239,11 +344,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    color: rgba(255, 255, 255, 0.62);
+    color: rgba(255, 255, 255, 0.48);
     font-size: 9px;
     font-weight: 850;
-    letter-spacing: 0.14em;
-    min-width: 0;
+    letter-spacing: 0.16em;
 }
 
 .memory-record-share-card-footer span {
@@ -251,6 +355,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* ── Modal Copy & Actions (unchanged) ── */
 
 .memory-record-share-modal-copy {
     padding: 17px 4px 0;
@@ -301,7 +407,7 @@
 }
 
 .memory-record-share-modal-btn--primary {
-    background: #f2d290;
+    background: linear-gradient(135deg, #f2d290, #d4a65a);
     color: #241814;
     box-shadow: 0 12px 26px rgba(242, 210, 144, 0.18);
 }
@@ -311,6 +417,8 @@
     color: rgba(255, 255, 255, 0.66);
 }
 
+/* ── Responsive ── */
+
 @media (max-width: 380px) {
     .memory-record-share-modal {
         border-radius: 22px;
@@ -318,20 +426,19 @@
     }
 
     .memory-record-share-card-preview {
-        row-gap: 10px;
-        padding: 15px;
+        padding: 16px;
+        border-radius: 20px;
     }
 
-    .memory-record-share-card-stage {
-        height: 182px;
-    }
-
-    .memory-record-share-card-copy h3 {
-        font-size: 24px;
+    .memory-record-share-card-meta h3 {
+        font-size: 22px;
     }
 
     .memory-record-share-card-lyrics {
-        font-size: 13px;
-        line-height: 1.5;
+        padding: 11px 14px 11px 16px;
+    }
+
+    .memory-record-share-card-lyrics p {
+        font-size: 12.5px;
     }
 }

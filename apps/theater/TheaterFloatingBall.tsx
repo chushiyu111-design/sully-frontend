@@ -12,35 +12,7 @@ const DEFAULT_BALL_ICON = '/theater-ball-bandaid.png';
 const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
 const ICON_MAX_SIZE = 96; // resize uploaded images to 96x96
 
-/** Strip white / near-white pixels from an image, returning a transparent PNG data-URL */
-const removeWhiteBackground = (src: string): Promise<string> => new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imageData.data;
-        for (let i = 0; i < d.length; i += 4) {
-            const r = d[i], g = d[i + 1], b = d[i + 2];
-            // Near-white → fully transparent
-            if (r > 240 && g > 240 && b > 240) {
-                d[i + 3] = 0;
-            // Light gray fringe → gradual alpha for smooth edges
-            } else if (r > 200 && g > 200 && b > 200) {
-                const brightness = (r + g + b) / 3;
-                d[i + 3] = Math.round(255 * (1 - (brightness - 200) / 55));
-            }
-        }
-        ctx.putImageData(imageData, 0, 0);
-        resolve(canvas.toDataURL('image/png'));
-    };
-    img.onerror = reject;
-    img.src = src;
-});
+
 
 /** Resize an image file to a small square via canvas, return base64 data URL */
 const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -149,21 +121,11 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     const [customIcon, setCustomIcon] = useState<string | null>(() => {
         try { return localStorage.getItem(iconKey); } catch { return null; }
     });
-    const [processedDefaultIcon, setProcessedDefaultIcon] = useState<string | null>(null);
     const x = useMotionValue(position.x);
     const y = useMotionValue(position.y);
 
-    // Process default icon: strip white background on first mount
-    useEffect(() => {
-        let cancelled = false;
-        removeWhiteBackground(DEFAULT_BALL_ICON)
-            .then(url => { if (!cancelled) setProcessedDefaultIcon(url); })
-            .catch(() => { /* fallback to raw image */ });
-        return () => { cancelled = true; };
-    }, []);
-
-    // The icon to display: custom > processed default > raw default
-    const ballIconUrl = customIcon || processedDefaultIcon || DEFAULT_BALL_ICON;
+    // The icon to display: custom > default
+    const ballIconUrl = customIcon || DEFAULT_BALL_ICON;
 
     const handleIconUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];

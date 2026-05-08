@@ -1141,9 +1141,141 @@
 
 .traj-whisper-zone {
     padding: 24px 4px;
-    text-align: center;
     animation: traj-para-in 0.5s ease forwards;
+    transition: all 0.3s;
 }
+
+/* ── Signal Strength Indicator ── */
+
+.traj-whisper-signal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    opacity: 0.6;
+}
+
+.traj-whisper-signal-label {
+    font-size: 9px;
+    color: var(--traj-mauve);
+    letter-spacing: 0.08em;
+    font-weight: 500;
+}
+
+.traj-whisper-signal-dots {
+    display: flex;
+    gap: 3px;
+}
+
+.traj-whisper-signal-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(128, 108, 121, 0.15);
+    transition: all 0.3s;
+}
+
+.traj-whisper-signal-dot.active {
+    background: var(--traj-rose);
+    box-shadow: 0 0 4px rgba(193, 160, 172, 0.3);
+}
+
+/* ── Whisper History (Chat Bubbles) ── */
+
+.traj-whisper-history {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 0 4px 12px 4px;
+    margin-bottom: 12px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.traj-whisper-history::-webkit-scrollbar {
+    width: 2px;
+}
+
+.traj-whisper-history::-webkit-scrollbar-thumb {
+    background: rgba(193, 160, 172, 0.1);
+    border-radius: 1px;
+}
+
+.traj-whisper-exchange {
+    margin-bottom: 10px;
+    animation: traj-whisper-appear 0.4s ease forwards;
+}
+
+.traj-whisper-bubble {
+    max-width: 80%;
+    padding: 8px 14px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.traj-whisper-bubble--user {
+    margin-left: auto;
+    background: rgba(193, 160, 172, 0.12);
+    border: 1px solid rgba(193, 160, 172, 0.1);
+    color: var(--traj-pink);
+    border-bottom-right-radius: 4px;
+    text-align: right;
+}
+
+.traj-whisper-bubble--char {
+    margin-right: auto;
+    background: linear-gradient(135deg, rgba(74, 63, 75, 0.2) 0%, rgba(40, 34, 50, 0.25) 100%);
+    border: 1px solid rgba(128, 108, 121, 0.08);
+    color: rgba(240, 217, 228, 0.55);
+    border-bottom-left-radius: 4px;
+    font-style: italic;
+    filter: blur(0.15px);
+}
+
+/* ── Signal Decay Visual Effects ── */
+
+.traj-whisper-signal-weak {
+    animation: traj-signal-shake 4s ease-in-out infinite;
+}
+
+.traj-whisper-signal-critical {
+    animation: traj-signal-shake 2s ease-in-out infinite;
+}
+
+.traj-whisper-signal-critical .traj-whisper-signal-dot.active {
+    background: #C88090;
+    animation: traj-dot-flicker 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes traj-signal-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-0.5px); }
+    50% { transform: translateX(0.5px); }
+    75% { transform: translateX(-0.3px); }
+}
+
+@keyframes traj-dot-flicker {
+    0% { opacity: 1; }
+    50% { opacity: 0.3; }
+    100% { opacity: 0.8; }
+}
+
+/* Glitch effect on char bubbles after round 7 */
+.traj-whisper-glitch {
+    animation: traj-glitch-text 3s ease-in-out infinite;
+}
+
+@keyframes traj-glitch-text {
+    0%, 95%, 100% { transform: translateX(0); filter: blur(0.15px); }
+    96% { transform: translateX(-1px); filter: blur(0.8px); }
+    97% { transform: translateX(1px); filter: blur(0.3px); }
+    98% { transform: translateX(-0.5px); filter: blur(0.5px); }
+}
+
+/* ── Whisper Input ── */
 
 .traj-whisper-prompt {
     font-size: 13px;
@@ -1151,6 +1283,7 @@
     margin-bottom: 18px;
     font-style: italic;
     letter-spacing: 0.03em;
+    text-align: center;
 }
 
 .traj-whisper-input-row {
@@ -1201,21 +1334,124 @@
     background: rgba(193, 160, 172, 0.22);
 }
 
-.traj-whisper-response {
-    margin-top: 24px;
-    padding: 18px 22px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, rgba(193, 160, 172, 0.05) 0%, rgba(74, 63, 75, 0.1) 100%);
-    border: 1px solid rgba(193, 160, 172, 0.08);
-    font-size: 14px;
-    line-height: 1.9;
-    color: rgba(240, 217, 228, 0.5);
+/* ── Sealed State ── */
+
+.traj-whisper-sealed {
+    text-align: center;
+    padding: 24px 16px;
+    animation: traj-para-in 0.6s ease forwards;
+}
+
+.traj-whisper-sealed-icon {
+    color: rgba(128, 108, 121, 0.35);
+    margin-bottom: 12px;
+}
+
+.traj-whisper-sealed-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(193, 160, 172, 0.4);
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+}
+
+.traj-whisper-sealed-sub {
+    font-size: 11px;
+    color: rgba(128, 108, 121, 0.35);
     font-style: italic;
-    max-width: 340px;
-    margin-left: auto;
-    margin-right: auto;
-    animation: traj-whisper-appear 0.8s ease forwards;
-    filter: blur(0.2px);
+    line-height: 1.5;
+    margin-bottom: 16px;
+}
+
+.traj-whisper-close {
+    margin-top: 20px;
+    font-size: 11px;
+    color: rgba(128, 108, 121, 0.4);
+    cursor: pointer;
+    transition: color 0.2s;
+    letter-spacing: 0.08em;
+    text-align: center;
+}
+
+.traj-whisper-close:active {
+    color: var(--traj-mauve);
+}
+
+/* ── Sealed Button in Bottom Bar ── */
+
+.traj-mono-btn--sealed {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: rgba(74, 63, 75, 0.1);
+    border-color: rgba(128, 108, 121, 0.08);
+    color: rgba(128, 108, 121, 0.5);
+}
+
+/* ── Time-Space Turbulence Overlay ── */
+
+.traj-turbulence-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(9, 7, 14, 0.92);
+    animation: traj-turbulence-in 0.4s ease forwards;
+}
+
+@keyframes traj-turbulence-in {
+    0% { opacity: 0; backdrop-filter: blur(0); }
+    100% { opacity: 1; backdrop-filter: blur(20px); }
+}
+
+.traj-turbulence-crack {
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(135deg,
+            transparent 30%,
+            rgba(193, 130, 150, 0.03) 45%,
+            transparent 46%,
+            transparent 54%,
+            rgba(193, 130, 150, 0.04) 55%,
+            transparent 70%);
+    animation: traj-crack-scan 2s ease-in-out infinite;
+}
+
+@keyframes traj-crack-scan {
+    0% { transform: translateX(-100%); opacity: 0; }
+    50% { opacity: 1; }
+    100% { transform: translateX(100%); opacity: 0; }
+}
+
+.traj-turbulence-text {
+    text-align: center;
+    z-index: 2;
+    animation: traj-turbulence-text-in 0.6s ease 0.3s forwards;
+    opacity: 0;
+}
+
+@keyframes traj-turbulence-text-in {
+    0% { opacity: 0; transform: scale(0.9); filter: blur(8px); }
+    100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+.traj-turbulence-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: rgba(193, 130, 150, 0.7);
+    letter-spacing: 0.4em;
+    margin-bottom: 8px;
+    text-shadow: 0 0 20px rgba(193, 130, 150, 0.2);
+}
+
+.traj-turbulence-sub {
+    font-size: 11px;
+    color: rgba(128, 108, 121, 0.45);
+    letter-spacing: 0.15em;
+    font-family: var(--traj-serif);
+    font-style: italic;
 }
 
 @keyframes traj-whisper-appear {
@@ -1227,21 +1463,8 @@
     100% {
         opacity: 1;
         transform: translateY(0);
-        filter: blur(0.2px);
+        filter: blur(0);
     }
-}
-
-.traj-whisper-close {
-    margin-top: 20px;
-    font-size: 11px;
-    color: rgba(128, 108, 121, 0.4);
-    cursor: pointer;
-    transition: color 0.2s;
-    letter-spacing: 0.08em;
-}
-
-.traj-whisper-close:active {
-    color: var(--traj-mauve);
 }
 
 /* ── Add Node Modal ── */

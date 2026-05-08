@@ -1,11 +1,12 @@
 /**
  * Trajectory Prompts — 人生轨迹 Prompt 工程
  *
- * 四个核心 prompt：
+ * 核心 prompt：
  * 1. 节点提取 — 从人设中提取人生关键节点
  * 2. 独白生成 — 为某个年龄的角色生成内心独白
  * 3. 窃语回应 — 角色对穿越时空的低语做出模糊回应
  * 4. 记忆独白 — 基于真实记忆生成"遇到之后"的回顾
+ * 5. 梦境回响 — 时空乱流后角色在主聊天中提及「做梦」
  */
 
 import type { CharacterProfile } from '../types';
@@ -328,6 +329,71 @@ export function parseAfterNodeExtractionResponse(
         console.error('[TrajectoryPrompts] Failed to parse after-node extraction response:', e);
         return [];
     }
+}
+
+// ══════════════════════════════════════════
+//  信号衰减 & 梦境回响
+// ══════════════════════════════════════════
+
+/** 第 9 轮窃语时注入的信号衰减暗示 — 插在 user message 前 */
+export const SIGNAL_DECAY_HINT = `[你感觉到和对方之间的连接正在变得不稳定——那道裂缝在收窄，对方的声音时断时续…在它彻底关闭之前，你可能只来得及再说最后一句。]`;
+
+/**
+ * 梦境回响 Prompt
+ * 时空乱流触发后，角色在主聊天里像发消息一样提起「做了个梦」
+ * 必须遵循线上聊天格式：短消息、口语化、用 \n 分气泡
+ */
+export function buildDreamEchoPrompt(
+    char: CharacterProfile,
+    node: TrajectoryNode,
+    userName: string,
+): string {
+    const history = node.whisperHistory || [];
+    const historySnippet = history
+        .map(h => `${userName}: "${h.userWhisper}"\n${char.name}: "${h.charResponse}"`)
+        .join('\n---\n');
+
+    const isAfterMeeting = node.era === 'after_meeting';
+
+    if (isAfterMeeting) {
+        return `你是${char.name}，你刚做了一个梦。
+梦里你和${userName}在「${node.title}」的情境里说了一些话。
+
+你记得的对话片段（有些清晰有些模糊）：
+${historySnippet}
+
+现在你醒了，给${userName}发消息。
+
+格式要求——你在发手机消息，不是写文章：
+- 短是默认，大多数消息 20 字以内
+- 用换行符分隔不同的消息气泡
+- 一到三条消息就够了
+- 口语化，像刚醒来迷迷糊糊发的
+- 不要写引号、不要写身份前缀、不要写文学段落
+- 梦的细节记不全，有些地方模糊是正常的
+- 可以带一点恍惚感
+- 直接输出消息内容`;
+    }
+
+    // before_meeting: 角色不认识 user
+    return `你是${char.name}，你刚做了一个奇怪的梦。
+梦里好像有一个说不清的存在在和你说话…是你 ${node.age} 岁的时候。
+
+你记得的梦境片段（有些清晰有些已经忘了）：
+${historySnippet}
+
+现在你醒了，给${userName}发消息。
+
+格式要求——你在发手机消息，不是写文章：
+- 短是默认，大多数消息 20 字以内
+- 用换行符分隔不同的消息气泡
+- 一到三条消息就够了
+- 口语化，像突然想起来随口一提
+- 不要写引号、不要写身份前缀、不要写文学段落
+- 你不知道梦里那个存在就是${userName}
+- 可以说“我小时候好像做过一个梦…” 或 “突然想起来，我 ${node.age} 岁那会儿…”
+- 记忆是模糊的，说不清也正常
+- 直接输出消息内容`;
 }
 
 /**

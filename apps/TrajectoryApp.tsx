@@ -5,13 +5,16 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
+import { AppID } from '../types';
 import type { TrajectoryNode, TrajectoryMood } from '../types/trajectory';
 import { MOOD_COLORS } from '../types/trajectory';
 import { getTrajectoryNodes, saveTrajectoryNode } from '../utils/db/trajectoryStore';
 import {
     hasAnyMessages, initTrajectory, regenTrajectory, continueTrajectory, generateMonologue,
-    generateAfterMonologue, generateWhisperResponse, createManualAfterNode,
+    generateAfterMonologue, generateWhisperResponse, createManualAfterNode, generateDreamEcho,
+    WHISPER_MAX_ROUNDS,
 } from '../utils/trajectoryEngine';
+import { DB } from '../utils/db';
 import { MinimaxTts } from '../utils/minimaxTts';
 import { getTtsConfig } from '../utils/runtimeConfig';
 import { withCharacterTtsVoice } from '../utils/characterTts';
@@ -20,7 +23,7 @@ import '../styles/trajectory.css';
 type View = 'select' | 'timeline' | 'monologue';
 
 const TrajectoryApp: React.FC = () => {
-    const { closeApp, characters, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, characters, apiConfig, addToast, userProfile, openApp } = useOS();
     const [view, setView] = useState<View>('select');
     const [char, setChar] = useState<CharacterProfile | null>(null);
     const [nodes, setNodes] = useState<TrajectoryNode[]>([]);
@@ -30,9 +33,10 @@ const TrajectoryApp: React.FC = () => {
     const [monoText, setMonoText] = useState('');
     const [isMonoGen, setIsMonoGen] = useState(false);
     const [whisperInput, setWhisperInput] = useState('');
-    const [whisperResp, setWhisperResp] = useState('');
+    const [, setWhisperResp] = useState('');
     const [isWhisperGen, setIsWhisperGen] = useState(false);
     const [showWhisper, setShowWhisper] = useState(false);
+    const [showTurbulence, setShowTurbulence] = useState(false);
     const [showAddModal, setShowAddModal] = useState(false);
     const [addTitle, setAddTitle] = useState('');
     const [addKeywords, setAddKeywords] = useState('');
@@ -103,21 +107,69 @@ const TrajectoryApp: React.FC = () => {
     // ── Whisper ──
     const handleWhisper = useCallback(async () => {
         if (!char || !api || !activeNode || !whisperInput.trim()) return;
+        if (activeNode.whisperSealed) return;
+
+        const currentHistory = activeNode.whisperHistory || [];
+        const currentRound = currentHistory.length + 1;
+
+        // Check if already at max rounds
+        if (currentRound > WHISPER_MAX_ROUNDS) return;
+
         setIsWhisperGen(true);
         try {
-            const resp = await generateWhisperResponse(char, activeNode, whisperInput.trim(), api, userProfile.name);
+            const resp = await generateWhisperResponse(char, activeNode, whisperInput.trim(), api, userProfile.name, currentHistory);
             setWhisperResp(resp);
             const record = { userWhisper: whisperInput.trim(), charResponse: resp, timestamp: Date.now() };
-            const updated = { ...activeNode, whisperHistory: [...(activeNode.whisperHistory || []), record] };
+            const newHistory = [...currentHistory, record];
+            const isLastRound = newHistory.length >= WHISPER_MAX_ROUNDS;
+
+            const updated: TrajectoryNode = {
+                ...activeNode,
+                whisperHistory: newHistory,
+                ...(isLastRound ? { whisperSealed: true } : {}),
+            };
             saveTrajectoryNode(updated);
             setActiveNode(updated);
             setNodes(prev => prev.map(n => n.id === activeNode.id ? updated : n));
+            setWhisperInput('');
+
+            // Trigger time-space turbulence at round 10
+            if (isLastRound) {
+                // Short delay to let user read the last response
+                setTimeout(async () => {
+                    setShowTurbulence(true);
+                    // Generate dream echo and save to main chat
+                    try {
+                        const dreamText = await generateDreamEcho(char, updated, api, userProfile.name);
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'assistant',
+                            type: 'text',
+                            content: dreamText,
+                            metadata: {
+                                source: 'trajectory_dream',
+                                nodeId: updated.id,
+                                nodeTitle: updated.title,
+                                nodeAge: updated.age,
+                                nodeEra: updated.era,
+                            },
+                        });
+                    } catch (e) {
+                        console.warn('[Trajectory] Dream echo generation failed:', e);
+                    }
+                    // Auto-dismiss turbulence after animation
+                    setTimeout(() => {
+                        setShowTurbulence(false);
+                        setShowWhisper(false);
+                    }, 3000);
+                }, 1500);
+            }
         } catch (e: any) {
             addToast('窃语回应失败', 'error');
         } finally {
             setIsWhisperGen(false);
         }
-    }, [char, api, activeNode, whisperInput, addToast]);
+    }, [char, api, activeNode, whisperInput, addToast, userProfile]);
 
     // ── Regenerate Nodes ──
     const handleRegen = useCallback(async () => {
@@ -368,6 +420,23 @@ const TrajectoryApp: React.FC = () => {
                                         </div>
                                     );
                                 })}
+                            </div>
+
+                            {/* Crosstime Entry */}
+                            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                                <button
+                                    className="traj-continue-card"
+                                    onClick={() => openApp(AppID.Crosstime)}
+                                    style={{ cursor: 'pointer', textAlign: 'left', width: '100%', border: '1px solid rgba(139,92,246,0.15)', background: 'rgba(139,92,246,0.05)' }}
+                                >
+                                    <div className="traj-continue-header">
+                                        <span className="traj-continue-label" style={{ color: '#a78bfa' }}>跨时空对话</span>
+                                        <span className="traj-continue-status" style={{ color: '#7c3aed' }}>Crosstime</span>
+                                    </div>
+                                    <div className="traj-continue-name" style={{ fontSize: 13, color: '#8b92a5' }}>
+                                        让不同时间的他们坐在一起，聊聊天。
+                                    </div>
+                                </button>
                             </div>
                         </>
                     )}
@@ -642,8 +711,55 @@ const TrajectoryApp: React.FC = () => {
                         </div>
                     )}
                     {!isMonoGen && monoText && showWhisper && (
-                        <div className="traj-whisper-zone">
-                            {!whisperResp ? (
+                        <div className={`traj-whisper-zone ${(() => {
+                            const rounds = (activeNode?.whisperHistory || []).length;
+                            if (rounds >= 9) return 'traj-whisper-signal-critical';
+                            if (rounds >= 7) return 'traj-whisper-signal-weak';
+                            return '';
+                        })()}`}>
+                            {/* Signal strength indicator */}
+                            {!activeNode?.whisperSealed && (
+                                <div className="traj-whisper-signal">
+                                    <span className="traj-whisper-signal-label">连接强度</span>
+                                    <div className="traj-whisper-signal-dots">
+                                        {Array.from({ length: WHISPER_MAX_ROUNDS }, (_, i) => (
+                                            <span key={i} className={`traj-whisper-signal-dot ${i < (WHISPER_MAX_ROUNDS - (activeNode?.whisperHistory || []).length) ? 'active' : ''}`} />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Whisper conversation history */}
+                            {(activeNode?.whisperHistory || []).length > 0 && (
+                                <div className="traj-whisper-history">
+                                    {(activeNode?.whisperHistory || []).map((record, i) => (
+                                        <div key={i} className="traj-whisper-exchange">
+                                            <div className="traj-whisper-bubble traj-whisper-bubble--user">
+                                                {record.userWhisper}
+                                            </div>
+                                            <div className={`traj-whisper-bubble traj-whisper-bubble--char ${i >= 6 ? 'traj-whisper-glitch' : ''}`}>
+                                                {record.charResponse}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Sealed state */}
+                            {activeNode?.whisperSealed ? (
+                                <div className="traj-whisper-sealed">
+                                    <div className="traj-whisper-sealed-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                            <path d="M18.36 5.64a9 9 0 11-12.73 0" strokeLinecap="round"/>
+                                            <line x1="12" y1="2" x2="12" y2="12" strokeLinecap="round"/>
+                                        </svg>
+                                    </div>
+                                    <div className="traj-whisper-sealed-text">时空裂缝已关闭 · 连接已断开</div>
+                                    <div className="traj-whisper-sealed-sub">这段跨时空的对话已被封存。但有些痕迹，会以梦的形式留下来。</div>
+                                    <div className="traj-whisper-close" onClick={() => { setShowWhisper(false); setWhisperResp(''); setWhisperInput(''); }}>quietly leave</div>
+                                </div>
+                            ) : (
+                                /* Input area */
                                 <>
                                     <div className="traj-whisper-prompt">要对那时的{char?.name}说些什么吗</div>
                                     <div className="traj-whisper-input-row">
@@ -656,32 +772,48 @@ const TrajectoryApp: React.FC = () => {
                                         </button>
                                     </div>
                                 </>
-                            ) : (
-                                <>
-                                    <div className="traj-whisper-response">{whisperResp}</div>
-                                    <div className="traj-whisper-close" onClick={() => { setShowWhisper(false); setWhisperResp(''); setWhisperInput(''); }}>quietly leave</div>
-                                </>
                             )}
                         </div>
                     )}
+
+                    {/* Time-space turbulence overlay */}
+                    {showTurbulence && (
+                        <div className="traj-turbulence-overlay">
+                            <div className="traj-turbulence-crack" />
+                            <div className="traj-turbulence-text">
+                                <div className="traj-turbulence-title">时空乱流</div>
+                                <div className="traj-turbulence-sub">连接已断开</div>
+                            </div>
+                        </div>
+                    )}
                 </div>
-                {!isMonoGen && monoText && !showWhisper && (
-                    <div className="traj-mono-bar">
-                        {activeNode?.era === 'after_meeting' && (
-                            <button className={`traj-mono-btn ${isTtsPlaying ? 'traj-mono-btn--playing' : ''}`} onClick={handleTts}>
-                                {isTtsPlaying ? (
-                                    <><span className="traj-tts-wave"><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/></span>listening...</>
-                                ) : (
-                                    <>hear them</>
-                                )}
-                            </button>
-                        )}
-                        <button className="traj-mono-btn traj-mono-btn--primary" onClick={() => setShowWhisper(true)}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                            whisper
-                        </button>
-                    </div>
-                )}
+                    {!isMonoGen && monoText && !showWhisper && !showTurbulence && (
+                        <div className="traj-mono-bar">
+                            {activeNode?.era === 'after_meeting' && (
+                                <button className={`traj-mono-btn ${isTtsPlaying ? 'traj-mono-btn--playing' : ''}`} onClick={handleTts}>
+                                    {isTtsPlaying ? (
+                                        <><span className="traj-tts-wave"><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/><span className="traj-tts-wave-bar"/></span>listening...</>
+                                    ) : (
+                                        <>hear them</>
+                                    )}
+                                </button>
+                            )}
+                            {activeNode?.whisperSealed ? (
+                                <button className="traj-mono-btn traj-mono-btn--sealed" disabled>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M18.36 5.64a9 9 0 11-12.73 0" strokeLinecap="round"/>
+                                        <line x1="12" y1="2" x2="12" y2="12" strokeLinecap="round"/>
+                                    </svg>
+                                    连接已断开
+                                </button>
+                            ) : (
+                                <button className="traj-mono-btn traj-mono-btn--primary" onClick={() => setShowWhisper(true)}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                    whisper
+                                </button>
+                            )}
+                        </div>
+                    )}
             </div>
         </div>
     );

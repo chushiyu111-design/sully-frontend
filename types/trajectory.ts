@@ -64,6 +64,7 @@ export interface TrajectoryNode {
 
     // 窃语记录
     whisperHistory?: WhisperRecord[];
+    whisperSealed?: boolean;           // 时空乱流后封存，不可再窃语
 
     // 记忆关联（after_meeting 节点）
     memorySource?: 'vector' | 'manual';

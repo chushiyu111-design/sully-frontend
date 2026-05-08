@@ -5,7 +5,8 @@
 
 import type { CharacterProfile } from '../types';
 import type { TrajectoryNode, TrajectoryMood } from '../types/trajectory';
-import { buildNodeExtractionPrompt, buildContinueNodeExtractionPrompt, buildMonologuePrompt, buildWhisperResponsePrompt, buildAfterMeetingMonologuePrompt, parseNodeExtractionResponse, buildAfterMeetingNodeExtractionPrompt, parseAfterNodeExtractionResponse } from './trajectoryPrompts';
+import { buildNodeExtractionPrompt, buildContinueNodeExtractionPrompt, buildMonologuePrompt, buildWhisperResponsePrompt, buildAfterMeetingMonologuePrompt, parseNodeExtractionResponse, buildAfterMeetingNodeExtractionPrompt, parseAfterNodeExtractionResponse, SIGNAL_DECAY_HINT, buildDreamEchoPrompt } from './trajectoryPrompts';
+import type { WhisperRecord } from '../types/trajectory';
 import { safeResponseJson } from './safeApi';
 import { extractThinking } from './thinkingExtractor';
 import { saveAllTrajectoryNodes, saveTrajectoryNode, saveTrajectoryMeta, getTrajectoryNodes, getTrajectoryMeta } from './db/trajectoryStore';
@@ -46,12 +47,17 @@ function safeUUID(): string {
 }
 
 async function callLLM(api: ApiConfig, system: string, user: string, temp = 0.8): Promise<string> {
+    return callLLMMultiTurn(api, [{ role: 'system', content: system }, { role: 'user', content: user }], temp);
+}
+
+/** Multi-turn LLM call — accepts full messages array */
+async function callLLMMultiTurn(api: ApiConfig, messages: { role: string; content: string }[], temp = 0.8): Promise<string> {
     const res = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
         body: JSON.stringify({
             model: api.model,
-            messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+            messages,
             temperature: temp,
         }),
     });
@@ -137,12 +143,45 @@ export async function generateAfterMonologue(
     return callLLM(api, MONOLOGUE_SYSTEM, prompt, 0.85);
 }
 
-/** Generate whisper response */
+/** Maximum whisper rounds before time-space turbulence */
+export const WHISPER_MAX_ROUNDS = 10;
+
+/** Generate whisper response with multi-turn context */
 export async function generateWhisperResponse(
     char: CharacterProfile, node: TrajectoryNode, whisper: string, api: ApiConfig, userName?: string,
+    history?: WhisperRecord[],
 ): Promise<string> {
-    const prompt = buildWhisperResponsePrompt(char, node, whisper, userName);
-    return callLLM(api, WHISPER_SYSTEM, prompt, 0.8);
+    const messages: { role: string; content: string }[] = [{ role: 'system', content: WHISPER_SYSTEM }];
+
+    if (history && history.length > 0) {
+        // First turn: full scene setup + first whisper
+        messages.push({ role: 'user', content: buildWhisperResponsePrompt(char, node, history[0].userWhisper, userName) });
+        messages.push({ role: 'assistant', content: history[0].charResponse });
+        // Subsequent turns: pure dialogue
+        for (let i = 1; i < history.length; i++) {
+            messages.push({ role: 'user', content: history[i].userWhisper });
+            messages.push({ role: 'assistant', content: history[i].charResponse });
+        }
+        // Current whisper (round = history.length + 1)
+        const currentRound = history.length + 1;
+        const currentMsg = currentRound === 9
+            ? `${SIGNAL_DECAY_HINT}\n${whisper}`
+            : whisper;
+        messages.push({ role: 'user', content: currentMsg });
+    } else {
+        // First whisper ever on this node
+        messages.push({ role: 'user', content: buildWhisperResponsePrompt(char, node, whisper, userName) });
+    }
+
+    return callLLMMultiTurn(api, messages, 0.8);
+}
+
+/** Generate dream echo message for main chat after time-space turbulence */
+export async function generateDreamEcho(
+    char: CharacterProfile, node: TrajectoryNode, api: ApiConfig, userName: string,
+): Promise<string> {
+    const prompt = buildDreamEchoPrompt(char, node, userName);
+    return callLLM(api, WHISPER_SYSTEM, prompt, 0.85);
 }
 
 /** Minimum number of high-importance memories required to trigger after-node generation */

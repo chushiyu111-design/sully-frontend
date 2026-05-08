@@ -34,6 +34,7 @@ import {
   MusicNote,
   Heartbeat,
   Path,
+  GitBranch,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -72,6 +73,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   HalfSugar: ({ className }) => <Heartbeat className={className} weight="bold" />,
   Theater: ({ className }) => <Sparkle className={className} weight="fill" />,
   Trajectory: ({ className }) => <Path className={className} weight="bold" />,
+  Crosstime: ({ className }) => <GitBranch className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -90,6 +92,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.Theater, name: '约会剧场', icon: 'Theater', color: 'rose' },
   { id: AppID.Trajectory, name: '轨迹', icon: 'Trajectory', color: 'indigo' },
+  { id: AppID.Crosstime, name: '跨时空对话', icon: 'Crosstime', color: 'violet' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },

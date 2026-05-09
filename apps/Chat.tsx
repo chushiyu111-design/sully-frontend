@@ -1328,6 +1328,10 @@ const Chat: React.FC = () => {
                 // 未配置 Key — 给用户明确提示
                 if (sttErr instanceof SttNotConfiguredError) {
                     addToast('请先在设置中配置语音识别 API Key', 'error');
+                } else {
+                    // 显示具体错误原因，帮助用户排查
+                    const reason = sttErr?.message || String(sttErr);
+                    addToast(`语音识别失败: ${reason.slice(0, 150)}`, 'error');
                 }
             }
 
@@ -1344,10 +1348,6 @@ const Chat: React.FC = () => {
                     sttStatus: sttFailed ? 'failed' : 'empty',
                     transcribedText: '',
                 });
-
-                if (sttFailed) {
-                    addToast('语音识别暂不可用，已直接发送', 'info');
-                }
             }
 
             // 5. Refresh UI — 不自动触发 AI（与文字消息一致，用户点按钮手动触发）
@@ -1359,7 +1359,7 @@ const Chat: React.FC = () => {
             addToast('语音消息发送失败', 'error');
             setSttProcessing(false);
         }
-    }, [char, addToast, reloadMessages]);
+    }, [char, addToast, reloadMessages, sttConfig]);
 
     if (!char) {
         return (

@@ -1,9 +1,9 @@
 
 import React,{ useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { STT_PROVIDER_DEFAULTS } from '../../types/stt';
+import { STT_PROVIDER_DEFAULTS,getActiveApiKey } from '../../types/stt';
 import { getGuardedInputProps } from '../../utils/inputGuards';
-import type { SttProvider } from '../../types/stt';
+import type { SttProvider,SttConfig } from '../../types/stt';
 
 /** 识别语言选项 */
 const STT_LANGUAGE_OPTIONS: { value: string; label: string; hint?: string }[] = [
@@ -14,6 +14,83 @@ const STT_LANGUAGE_OPTIONS: { value: string; label: string; hint?: string }[] = 
     { value: 'ko', label: '한국어' },
 ];
 
+/**
+ * 保存后立刻做一次真实的 API 连通性测试：
+ * 发一段极短的静音 WAV 到供应商的 /audio/transcriptions，
+ * 看返回 HTTP 状态码是否正常。
+ */
+async function verifySttKey(config: SttConfig): Promise<{ ok: boolean; detail: string }> {
+    const apiKey = getActiveApiKey(config);
+    if (!apiKey || !apiKey.trim()) {
+        return { ok: false, detail: '当前供应商的 API Key 为空' };
+    }
+
+    const defaults = STT_PROVIDER_DEFAULTS[config.provider];
+    const baseUrl = (config.baseUrl || defaults.baseUrl).replace(/\/+$/, '');
+    const model = config.model || defaults.model;
+    const url = `${baseUrl}/audio/transcriptions`;
+
+    // 生成 1 帧（44 字节）的静音 WAV
+    const wavHeader = new ArrayBuffer(44);
+    const view = new DataView(wavHeader);
+    const writeStr = (offset: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF'); view.setUint32(4, 36, true); writeStr(8, 'WAVE');
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, 16000, true); view.setUint32(28, 32000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    writeStr(36, 'data'); view.setUint32(40, 0, true);
+    const blob = new Blob([wavHeader], { type: 'audio/wav' });
+
+    const formData = new FormData();
+    formData.append('file', blob, 'test.wav');
+    formData.append('model', model);
+    formData.append('response_format', 'json');
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            body: formData,
+            signal: controller.signal,
+        });
+
+        if (resp.ok) {
+            return { ok: true, detail: `连接成功 (${resp.status})` };
+        }
+
+        // 特殊情况：静音 WAV 可能被 API 拒绝为「无效音频」，
+        // 但只要不是 401/403 就说明 key 是对的
+        if (resp.status === 400) {
+            return { ok: true, detail: `API Key 有效 (${resp.status} - 测试音频被忽略，属正常)` };
+        }
+        if (resp.status === 401 || resp.status === 403) {
+            const errText = await resp.text().catch(() => '');
+            return { ok: false, detail: `API Key 无效 (${resp.status}): ${errText.slice(0, 120)}` };
+        }
+        if (resp.status === 429) {
+            return { ok: false, detail: `请求频率受限 (429)，请稍后再试` };
+        }
+
+        const errText = await resp.text().catch(() => '');
+        return { ok: false, detail: `API 返回错误 (${resp.status}): ${errText.slice(0, 120)}` };
+    } catch (err: any) {
+        if (err.name === 'AbortError') {
+            return { ok: false, detail: '连接超时 (10s)，请检查网络或 API 地址' };
+        }
+        // CORS 或网络错误
+        const msg = err?.message || String(err);
+        if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
+            return { ok: false, detail: `网络错误（可能被 CORS 拦截）: ${msg.slice(0, 100)}` };
+        }
+        return { ok: false, detail: `请求失败: ${msg.slice(0, 100)}` };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 const SttSettings: React.FC = () => {
     const { sttConfig, updateSttConfig, addToast } = useOS();
 
@@ -21,6 +98,47 @@ const SttSettings: React.FC = () => {
     const [sttGroqKey, setSttGroqKey] = useState(sttConfig.groqApiKey);
     const [sttSiliconKey, setSttSiliconKey] = useState(sttConfig.siliconflowApiKey);
     const [sttLanguage, setSttLanguage] = useState(sttConfig.language || '');
+    const [isTesting, setIsTesting] = useState(false);
+
+    const handleSaveAndTest = async () => {
+        const newConfig: SttConfig = {
+            provider: sttProvider,
+            groqApiKey: sttGroqKey,
+            siliconflowApiKey: sttSiliconKey,
+            language: sttLanguage || undefined,
+        };
+
+        // 1. 先保存
+        updateSttConfig(newConfig);
+
+        // 2. 检查当前 provider 对应的 key 是否填了
+        const activeKey = getActiveApiKey(newConfig);
+        if (!activeKey || !activeKey.trim()) {
+            const providerLabel = STT_PROVIDER_DEFAULTS[sttProvider].label;
+            addToast(`⚠️ 配置已保存，但当前供应商「${providerLabel}」的 Key 为空`, 'error');
+            return;
+        }
+
+        // 3. 做连通性测试
+        setIsTesting(true);
+        addToast('配置已保存，正在验证 API Key...', 'info');
+
+        try {
+            const result = await verifySttKey(newConfig);
+            if (result.ok) {
+                addToast(`✅ ${result.detail}`, 'success');
+            } else {
+                addToast(`❌ ${result.detail}`, 'error');
+            }
+        } catch {
+            addToast('验证过程出错', 'error');
+        } finally {
+            setIsTesting(false);
+        }
+    };
+
+    // 当前编辑中的 provider 对应的 key 是否为空
+    const activeKeyEmpty = sttProvider === 'groq' ? !sttGroqKey.trim() : !sttSiliconKey.trim();
 
     return (
         <section className="relative overflow-hidden bg-[#eef4fb]/70 backdrop-blur-sm rounded-3xl p-6 shadow-sm border border-[#d4e4f7]/60">
@@ -122,20 +240,20 @@ const SttSettings: React.FC = () => {
                     </a>
                 </div>
 
+                {/* 当前 provider 的 key 为空时的警告 */}
+                {activeKeyEmpty && (
+                    <p className="text-[10px] text-[#c4956a] pl-1 leading-relaxed">
+                        ⚠️ 当前选中的供应商「{STT_PROVIDER_DEFAULTS[sttProvider].label}」的 Key 为空，保存后语音识别将无法使用。
+                    </p>
+                )}
+
                 {/* 保存按钮 */}
                 <button
-                    onClick={() => {
-                        updateSttConfig({
-                            provider: sttProvider,
-                            groqApiKey: sttGroqKey,
-                            siliconflowApiKey: sttSiliconKey,
-                            language: sttLanguage || undefined,
-                        });
-                        addToast('语音识别配置已保存', 'success');
-                    }}
-                    className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-[#7b8db8]/20 bg-gradient-to-r from-[#7b8db8] to-[#8ba3c8] active:scale-95 transition-all"
+                    onClick={handleSaveAndTest}
+                    disabled={isTesting}
+                    className={`w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-[#7b8db8]/20 bg-gradient-to-r from-[#7b8db8] to-[#8ba3c8] active:scale-95 transition-all ${isTesting ? 'opacity-60' : ''}`}
                 >
-                    保存配置
+                    {isTesting ? '验证中...' : '保存并验证'}
                 </button>
             </div>
 

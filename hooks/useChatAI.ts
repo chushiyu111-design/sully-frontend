@@ -585,6 +585,19 @@ mode 可选值：
             // Clean all quote tag variants from content
             aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
 
+            // 7.5 Bare emoji name rescue — AI sometimes outputs [emojiName] without proper tags
+            // If content inside single brackets exactly matches a known emoji, convert to [[SEND_EMOJI:]]
+            if (emojis.length > 0) {
+                aiContent = aiContent.replace(/\[([^\]\[]{1,30})\]/g, (match: string, name: string) => {
+                    const trimmed = name.trim();
+                    if (emojis.some(e => e.name === trimmed)) {
+                        console.log(`🎨 [EmojiRescue] Bare [${trimmed}] → [[SEND_EMOJI: ${trimmed}]]`);
+                        return `[[SEND_EMOJI: ${trimmed}]]`;
+                    }
+                    return match;
+                });
+            }
+
             // 8. Split and Stream (Simulate Typing)
             // Note: SEND_EMOJI tags are preserved through sanitize so splitResponse can interleave them with text
 

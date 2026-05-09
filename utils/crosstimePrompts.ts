@@ -8,7 +8,6 @@
 import type { CharacterProfile, UserProfile } from '../types';
 import type { TrajectoryNode } from '../types/trajectory';
 import type { CrosstimeParticipant, CrosstimeMessage } from '../types/crosstime';
-import { ContextBuilder } from './context';
 
 /**
  * 按角色分组构建参与者上下文
@@ -185,7 +184,6 @@ ${recentMessages || '（暂无对话记录，这是第一轮）'}
 3. **气泡分段**: 长话分多条，每行是一个独立气泡。
 4. **时空隔离**: 每个角色只知道自己时间线内的事。年轻版本不知道未来。
 5. **性格一致**: 严格按照每个切片的人格档案行事。17岁叛逆期的他和现在温柔的他，说话方式完全不同。
-${userMode === 'online' ? `6. **私聊**: 角色可以悄悄对用户说话，使用格式 \`[[PRIVATE: 内容]]\`。这条不会被其他角色看到。` : ''}
 
 ### 输出格式 (JSON Array)
 严格输出 JSON，不要有任何多余文字。
@@ -224,13 +222,9 @@ export function formatCrosstimeMessages(
 
     return recent.map(m => {
         if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return '';
+        // 悄悄话不进入导演视野——真正的硬隔离
+        if (m.isPrivate) return '';
         if (m.role === 'user') {
-            if (m.isPrivate) {
-                const target = participants.find(p => p.id === m.privateTargetId);
-                const targetChar = target ? characters.find(c => c.id === target.charId) : null;
-                const targetName = targetChar ? `${targetChar.name}·${target?.label}` : '某人';
-                return `[${userProfile.name} 悄悄对 ${targetName} 说]: ${m.content}`;
-            }
             return `${userProfile.name}: ${m.content}`;
         }
         const participant = participants.find(p => p.id === m.participantId);
@@ -254,9 +248,10 @@ export function buildCrosstimeSummaryPrompt(
 ): string {
     const dialogue = messagesToSummarize.map(m => {
         if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return '';
+        // 悄悄话不参与总结——隐私隔离
+        if (m.isPrivate) return '';
         if (m.role === 'user') {
-            const prefix = m.isPrivate ? `[${userProfile.name} 悄悄话]` : userProfile.name;
-            return `${prefix}: ${m.content}`;
+            return `${userProfile.name}: ${m.content}`;
         }
         const p = participants.find(pp => pp.id === m.participantId);
         const char = p ? characters.find(c => c.id === p.charId) : null;
@@ -355,3 +350,43 @@ export function checkNeedsSummary(
 }
 
 export { findSameCharCollisions };
+
+/**
+ * 为悄悄话构建单角色回复 prompt
+ * 只包含目标角色人设 + 用户与该角色的悄悄话历史
+ */
+export function buildWhisperReplyPrompt(
+    participantContext: string,
+    whisperHistory: CrosstimeMessage[],
+    currentWhisper: string,
+    userProfile: UserProfile,
+    targetDisplayName: string,
+): string {
+    // 构建历史对话
+    let historyBlock = '';
+    if (whisperHistory.length > 0) {
+        historyBlock = '### 之前的悄悄话\n' + whisperHistory.map(m => {
+            if (m.role === 'user') return `${userProfile.name}: ${m.content}`;
+            return `${targetDisplayName}: ${m.content}`;
+        }).join('\n') + '\n\n';
+    }
+
+    return `【悄悄话 · 私密对话】
+
+${participantContext}
+
+### 场景
+${userProfile.name}在跨时空对话的间隙，悄悄凑过来对你说话。
+其他人听不到这段对话。
+
+${historyBlock}### ${userProfile.name}现在悄悄对你说
+"${currentWhisper}"
+
+### 要求
+- 你是${targetDisplayName}，用你最自然的方式回应这句悄悄话
+- 保持你在这个时空切片中的性格和认知
+- 语气应该比群聊更私密、更柔软
+- 直接输出回应文本，不要加引号或角色名前缀
+- 回复 1-3 句话，简短自然
+`;
+}

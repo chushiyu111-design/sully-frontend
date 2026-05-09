@@ -857,7 +857,7 @@ const DateApp: React.FC = () => {
         return { content, whispers: whisperResult.whispers };
     };
 
-    const handleReroll = async (): Promise<string> => {
+    const handleReroll = async (): Promise<{ content: string; whispers: InnerWhisper[] }> => {
         if (!char || dateMessages.length === 0) throw new Error("No context");
 
         const lastMsg = dateMessages[dateMessages.length - 1];
@@ -921,7 +921,7 @@ const DateApp: React.FC = () => {
         const freshMsgs = await DB.getMessagesByCharId(char.id);
         setDateMessages(freshMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp));
 
-        return content;
+        return { content, whispers: whisperResult.whispers };
     };
 
     // --- Editing & Deletion ---

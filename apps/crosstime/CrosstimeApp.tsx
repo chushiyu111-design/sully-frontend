@@ -17,6 +17,7 @@ import {
     formatCrosstimeMessages, findSameCharCollisions,
     checkNeedsSummary, buildCrosstimeSummaryPrompt,
     CROSSTIME_SUMMARY_PARTICIPANT_ID, parseSummaryContent,
+    buildWhisperReplyPrompt,
 } from '../../utils/crosstimePrompts';
 import { safeResponseJson } from '../../utils/safeApi';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
@@ -159,9 +160,98 @@ const CrosstimeApp: React.FC = () => {
         });
 
         setMessages(getCrosstimeMessages(room.id));
-        setPrivateTarget(null);
-        await triggerDirector(room);
+
+        if (privateTarget) {
+            // 悄悄话 → 只触发目标角色单独回复
+            const target = privateTarget;
+            setPrivateTarget(null);
+            await triggerWhisperReply(room, target, text);
+        } else {
+            // 公开发言 → 触发导演
+            await triggerDirector(room);
+        }
     };
+
+    // ── Whisper Reply (1-on-1 private response) ──
+    const triggerWhisperReply = useCallback(async (
+        currentRoom: CrosstimeRoom, target: CrosstimeParticipant, whisperText: string,
+    ) => {
+        if (!apiConfig?.apiKey) return;
+        setIsTyping(true);
+
+        try {
+            const char = characters.find(c => c.id === target.charId);
+            if (!char) throw new Error('Character not found');
+
+            const displayName = `${char.name}·${target.label}`;
+
+            // Build single-participant context
+            const participantContext = buildGroupedParticipantContexts(
+                [target], characters, userProfile,
+                getNodeForParticipant, {},
+            );
+
+            // Collect whisper history between user and this target
+            const allMsgs = getCrosstimeMessages(currentRoom.id);
+            const whisperHistory = allMsgs.filter(m =>
+                m.isPrivate && (
+                    (m.role === 'user' && m.privateTargetId === target.id) ||
+                    (m.role === 'assistant' && m.participantId === target.id && m.privateTargetId === 'user')
+                ),
+            ).slice(-20); // Keep last 20 whisper messages for context
+
+            // Exclude the message we just sent (it's the current whisper)
+            const historyWithoutCurrent = whisperHistory.slice(0, -1);
+
+            const prompt = buildWhisperReplyPrompt(
+                participantContext, historyWithoutCurrent, whisperText, userProfile, displayName,
+            );
+
+            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({
+                    model: apiConfig.model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.85,
+                    max_tokens: 500,
+                }),
+            });
+
+            if (!response.ok) throw new Error('Whisper reply failed');
+            const data = await safeResponseJson(response);
+            let replyText = data.choices?.[0]?.message?.content || '';
+
+            // Strip thinking tags if present
+            const extracted = extractThinking(replyText);
+            replyText = extracted.content.trim();
+
+            // Remove quotes if the model wraps the reply
+            if (replyText.startsWith('"') && replyText.endsWith('"')) {
+                replyText = replyText.slice(1, -1);
+            }
+
+            if (replyText) {
+                saveCrosstimeMessage({
+                    roomId: currentRoom.id,
+                    participantId: target.id,
+                    charId: target.charId,
+                    role: 'assistant',
+                    content: replyText,
+                    isPrivate: true,
+                    privateTargetId: 'user',
+                    timestamp: Date.now(),
+                });
+            }
+
+            setMessages(getCrosstimeMessages(currentRoom.id));
+        } catch (e: any) {
+            console.error('[Crosstime] Whisper reply error:', e);
+            addToast('悄悄话回复失败: ' + (e.message || ''), 'error');
+        } finally {
+            setIsTyping(false);
+        }
+    }, [apiConfig, characters, userProfile, addToast]);
 
     // ── Director ──
     const triggerDirector = useCallback(async (currentRoom: CrosstimeRoom) => {
@@ -227,31 +317,8 @@ const CrosstimeApp: React.FC = () => {
                 const targetP = currentRoom.participants.find(p => p.id === action.participantId);
                 if (!targetP) continue;
 
-                // Handle [[PRIVATE: ...]]
-                const privateRegex = /\[\[PRIVATE\s*[:：]\s*([\s\S]*?)\]\]/g;
-                let match;
-                while ((match = privateRegex.exec(action.content)) !== null) {
-                    const privateContent = match[1].trim();
-                    if (privateContent) {
-                        saveCrosstimeMessage({
-                            roomId: currentRoom.id,
-                            participantId: targetP.id,
-                            charId: targetP.charId,
-                            role: 'assistant',
-                            content: privateContent,
-                            isPrivate: true,
-                            privateTargetId: 'user',
-                            timestamp: Date.now(),
-                        });
-                    }
-                }
-
-                // Public content (strip private blocks)
-                const publicContent = action.content.replace(/\[\[PRIVATE\s*[:：]\s*[\s\S]*?\]\]/g, '').trim();
-                if (!publicContent) continue;
-
                 // Split by newlines for bubble splitting
-                const lines = publicContent.split('\n').map((l: string) => l.trim()).filter(Boolean);
+                const lines = action.content.split('\n').map((l: string) => l.trim()).filter(Boolean);
                 for (const line of lines) {
                     saveCrosstimeMessage({
                         roomId: currentRoom.id,

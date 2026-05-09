@@ -14,17 +14,18 @@ import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
-import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline } from '../../types';
+import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 
 import {
     computeWeights, rollEventType, shouldTriggerEvent, updatePity,
-    createPityCounter, advanceTimeSlot, getInitialTimeSlot,
-    is520EventActive, generateSessionId,
+    createPityCounter, getInitialTimeSlot,
+    is520EventActive, generateSessionId, getAutoGradient,
 } from '../../utils/theaterDirector';
 import {
     buildDirectorPrompt, buildTheaterSceneInjection, buildInitialScenePrompt,
     build520ConfessionHint, parseDirectorResponse,
+    buildTransitionDirectorPrompt, parseTransitionResponse, buildTransitionSceneInjection,
 } from '../../utils/theaterPrompts';
 import { getPresetLocations } from '../../utils/theaterLocations';
 import {
@@ -179,6 +180,12 @@ const TheaterApp: React.FC = () => {
     const autoScrollPaused = useRef(false);
     const [focusedCharId, setFocusedCharId] = useState<string | null>(null);
     const [selectingCharId, setSelectingCharId] = useState<string | null>(null);
+
+    // ── Transition State ──
+    const [isTransitioning, setIsTransitioning] = useState(false);
+    const [transitionLocationName, setTransitionLocationName] = useState('');
+    // ── Director Location Suggestion ──
+    const [pendingLocationSuggestion, setPendingLocationSuggestion] = useState<LocationSuggestion | null>(null);
 
     const secondaryApiConfig = getSecondaryApiConfig();
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
@@ -367,47 +374,44 @@ const TheaterApp: React.FC = () => {
             return;
         }
 
+        const isFirstLocation = !session.currentLocationId;
         const isNewLocation = loc.id !== session.currentLocationId;
-        let updatedSession = { ...session, currentLocationId: loc.id, lastActiveAt: Date.now() };
+        const prevLocation = currentLocation; // 旧地点（转场用）
+
+        // ── 更新 session ──
+        let updatedSession = {
+            ...session,
+            currentLocationId: loc.id,
+            lastActiveAt: Date.now(),
+            timeSlot: getInitialTimeSlot(), // ★ 实时时间感知
+        };
 
         if (isNewLocation) {
             updatedSession.locationChangeCount += 1;
             if (!updatedSession.visitedLocationIds.includes(loc.id)) {
                 updatedSession.visitedLocationIds.push(loc.id);
             }
-            updatedSession.timeSlot = advanceTimeSlot(
-                session.timeSlot,
-                updatedSession.locationChangeCount,
-            );
             const newCount = incrementVisitCount(loc.id);
             loc = { ...loc, visitCount: newCount, lastVisitTime: Date.now() };
             setLocations(prev => prev.map(l => l.id === loc.id ? loc : l));
         }
 
-        // ── CRITICAL: set mode first so UI always transitions ──
         setSession(updatedSession);
-        setCurrentLocation(loc);
         setCurrentEvent(null);
-        setMode('session');
 
-        // ── Timeline creation / persistence (non-blocking) ──
+        // ── Timeline creation ──
         let tlId = currentTimelineId;
         try {
             if (!tlId) {
                 const timeSlotZh = TIME_SLOT_LABELS[updatedSession.timeSlot]?.zh || '';
                 tlId = crypto.randomUUID();
                 const newTimeline: TheaterTimeline = {
-                    timelineId: tlId,
-                    charId: char.id,
+                    timelineId: tlId, charId: char.id,
                     label: generateTimelineLabel(loc.name, timeSlotZh, char.id),
-                    createdAt: Date.now(),
-                    lastActiveAt: Date.now(),
-                    parentTimelineId: null,
-                    forkAfterMessageId: null,
-                    session: updatedSession,
-                    locationName: loc.name,
-                    messageCount: 0,
-                    preview: '',
+                    createdAt: Date.now(), lastActiveAt: Date.now(),
+                    parentTimelineId: null, forkAfterMessageId: null,
+                    session: updatedSession, locationName: loc.name,
+                    messageCount: 0, preview: '',
                 };
                 saveTimeline(newTimeline);
                 setActiveTimelineId(char.id, tlId);
@@ -416,14 +420,167 @@ const TheaterApp: React.FC = () => {
             }
             persistSessionToTimeline(updatedSession, tlId, loc.name);
         } catch (e) {
-            console.error('[Theater] Timeline creation/persistence failed:', e);
+            console.error('[Theater] Timeline creation failed:', e);
         }
 
-        // Generate initial ambient scene
-        if (isNewLocation) {
-            await generateInitialScene(loc, updatedSession, tlId);
+        // ══════════════════════════════════════
+        //  分支：第一个地点 vs 换地点（转场）
+        // ══════════════════════════════════════
+
+        if (isFirstLocation || !prevLocation || !isNewLocation) {
+            // ── 第一个地点 or 同地点：直接进入 ──
+            setCurrentLocation(loc);
+            setMode('session');
+            if (isNewLocation) {
+                await generateInitialScene(loc, updatedSession, tlId);
+            }
+            return;
         }
-    }, [char, session, currentTimelineId]);
+
+        // ── 换地点：转场流程 ──
+        // 先进入 session（但不切背景，旧背景还在）
+        setMode('session');
+
+        // ① 插入系统叙述消息
+        await DB.saveMessage({
+            charId: char.id, role: 'user', type: 'text',
+            content: `（提议去${loc.name}。）`,
+            metadata: {
+                source: 'theater', branchId: tlId,
+                locationId: prevLocation.id,
+                isTransitionTrigger: true,
+            },
+        });
+        await refreshTimelineMessages();
+
+        // ② 调导演生成转场事件
+        let transitionEvent: TransitionEvent | null = null;
+        const secondaryConfig = getSecondaryApiConfig();
+        if (secondaryConfig?.baseUrl && secondaryConfig?.apiKey) {
+            setIsDirectorLoading(true);
+            try {
+                const prompt = buildTransitionDirectorPrompt(
+                    char.name, userProfile.name,
+                    prevLocation, loc,
+                    updatedSession.timeSlot, updatedSession.eventHistory,
+                );
+                const resp = await fetch(
+                    `${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secondaryConfig.apiKey}` },
+                        body: JSON.stringify({
+                            model: secondaryConfig.model || apiConfig!.model,
+                            messages: [{ role: 'user', content: prompt }],
+                            temperature: 0.7, max_tokens: 400,
+                        }),
+                    },
+                );
+                if (resp.ok) {
+                    const data = await safeResponseJson(resp);
+                    transitionEvent = parseTransitionResponse(data.choices[0].message.content);
+                }
+            } catch (e) {
+                console.warn('[Theater] Transition director failed:', e);
+            } finally {
+                setIsDirectorLoading(false);
+            }
+        }
+
+        // ③ 调主 API 生成转场叙事
+        if (apiConfig?.baseUrl) {
+            setIsAiLoading(true);
+            try {
+                let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+                systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+
+                if (transitionEvent) {
+                    systemPrompt += buildTransitionSceneInjection(
+                        transitionEvent, prevLocation, loc, updatedSession.timeSlot,
+                    );
+                }
+
+                const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
+                const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
+                const userPov = char.datePerspective || 'second';
+                const charPov = char.dateCharPerspective || 'third';
+                systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, updatedSession.timeSlot);
+                systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
+
+                const allMsgs = await DB.getMessagesByCharId(char.id);
+                const theaterMsgs = allMsgs
+                    .filter(m => isTheaterMessage(m, tlId || undefined))
+                    .sort((a, b) => a.timestamp - b.timestamp);
+                const limit = char.contextLimit || 500;
+                const historyMsgs = theaterMsgs.slice(-limit).map(m => ({
+                    role: m.role,
+                    content: m.type === 'image' ? '[User sent an image]' : m.content,
+                }));
+
+                const transitionHint = transitionEvent
+                    ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸剧场格式。)`
+                    : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸剧场格式。)`;
+
+                const resp = await fetch(
+                    `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                        body: JSON.stringify({
+                            model: apiConfig.model,
+                            messages: [
+                                { role: 'system', content: systemPrompt },
+                                ...historyMsgs,
+                                { role: 'user', content: `（去${loc.name}吧。）` + transitionHint },
+                            ],
+                            temperature: 0.85,
+                        }),
+                    },
+                );
+
+                if (!resp.ok) throw new Error('API Error');
+                const data = await safeResponseJson(resp);
+                const raw = data.choices[0].message.content;
+                const extracted = extractThinking(raw);
+                const whisperResult = extractInnerWhispers(extracted.content);
+
+                await DB.saveMessage({
+                    charId: char.id, role: 'assistant', type: 'text',
+                    content: whisperResult.content,
+                    metadata: {
+                        source: 'theater', branchId: tlId,
+                        locationId: prevLocation.id,
+                        isTransition: true,
+                        transitionTo: loc.id,
+                        thinking: extracted.thinking,
+                    },
+                });
+
+                if (whisperResult.whispers.length > 0) {
+                    setActiveWhispers(whisperResult.whispers);
+                }
+
+                await refreshTimelineMessages();
+            } catch (e) {
+                console.error('[Theater] Transition narrative error:', e);
+                addToast('转场叙事生成失败', 'error');
+            } finally {
+                setIsAiLoading(false);
+            }
+        }
+
+        // ④ 视觉转场 → 切换到新地点
+        setTransitionLocationName(loc.name);
+        setIsTransitioning(true);
+        // 等 2 秒让用户看到转场动画
+        await new Promise(r => setTimeout(r, 2000));
+        setCurrentLocation(loc);
+        // 再等 0.5 秒让新背景 crossfade in
+        await new Promise(r => setTimeout(r, 500));
+        setIsTransitioning(false);
+        setTransitionLocationName('');
+
+    }, [char, session, currentLocation, currentTimelineId, apiConfig, userProfile, addToast]);
 
     /** Helper: persist session state into the current timeline object */
     const persistSessionToTimeline = (sess: TheaterSessionState, tlId: string | null, locationName?: string) => {
@@ -461,7 +618,7 @@ const TheaterApp: React.FC = () => {
             const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
             const userPov = char.datePerspective || 'second';
             const charPov = char.dateCharPerspective || 'third';
-            systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov);
+            systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, sess.timeSlot);
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -544,6 +701,9 @@ const TheaterApp: React.FC = () => {
                     const directorPrompt = buildDirectorPrompt(
                         char.name, userProfile.name, currentLocation,
                         session.timeSlot, eventType, session.eventHistory,
+                        undefined, // recentMemories
+                        locations.map(l => l.name), // ★ 已有地点列表
+                        true, // ★ 允许建议换场景
                     );
 
                     const dirResponse = await fetch(`${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -577,12 +737,18 @@ const TheaterApp: React.FC = () => {
             pity: updatedPity,
             eventHistory: directorEvent ? [...session.eventHistory, directorEvent] : session.eventHistory,
             lastActiveAt: Date.now(),
+            timeSlot: getInitialTimeSlot(), // ★ 每次对话刷新实时时间
         };
         setSession(updatedSession);
         persistSessionToTimeline(updatedSession, currentTimelineId, currentLocation.name);
 
         if (directorEvent) {
             setCurrentEvent(directorEvent);
+        }
+
+        // ── 导演建议换场景 ──
+        if (directorEvent?.locationSuggestion) {
+            setPendingLocationSuggestion(directorEvent.locationSuggestion);
         }
 
         // 4. Call main API (character roleplay)
@@ -606,7 +772,7 @@ const TheaterApp: React.FC = () => {
             const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
             const userPov = char.datePerspective || 'second';
             const charPov = char.dateCharPerspective || 'third';
-            systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov);
+            systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, session.timeSlot);
             systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
 
             // Build history
@@ -696,6 +862,46 @@ const TheaterApp: React.FC = () => {
         setLocations(prev => prev.filter(l => l.id !== id));
         addToast('已删除自定义地点', 'info');
     }, [addToast]);
+
+    // ── 接受导演建议的换场景 ──
+    const handleAcceptLocationSuggestion = useCallback(async () => {
+        if (!pendingLocationSuggestion || !char) return;
+        const suggestion = pendingLocationSuggestion;
+        setPendingLocationSuggestion(null);
+
+        // 查找已有地点（模糊匹配名称）
+        let targetLoc = locations.find(l =>
+            l.name === suggestion.name ||
+            l.name.includes(suggestion.name) ||
+            suggestion.name.includes(l.name)
+        );
+
+        if (!targetLoc) {
+            // ── 自动创建新地点 ──
+            const newId = `dir_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            targetLoc = {
+                id: newId,
+                name: suggestion.name,
+                nameEn: suggestion.nameEn,
+                description: suggestion.description,
+                tags: suggestion.tags as any[],
+                bgGradient: getAutoGradient(suggestion.tags),
+                isPreset: false,
+                visitCount: 0,
+                // bgImage 留空，用户之后可以上传
+            };
+            dbAddCustomLocation(targetLoc);
+            setLocations(prev => [...prev, targetLoc!]);
+            addToast(`发现新地点「${suggestion.name}」`, 'success');
+        }
+
+        // 触发换地点流程（复用 handleSelectLocation）
+        await handleSelectLocation(targetLoc);
+    }, [pendingLocationSuggestion, char, locations, handleSelectLocation, addToast]);
+
+    const handleDeclineLocationSuggestion = useCallback(() => {
+        setPendingLocationSuggestion(null);
+    }, []);
 
     // ══════════════════════════════════════════════
     //  Summary System (ported from DateApp)
@@ -877,6 +1083,9 @@ const TheaterApp: React.FC = () => {
         setCurrentTimelineId(null);
         setTheaterMessages([]);
         setCurrentEvent(null);
+        setIsTransitioning(false);
+        setTransitionLocationName('');
+        setPendingLocationSuggestion(null);
     };
 
     // ══════════════════════════════════════════════
@@ -1218,6 +1427,11 @@ const TheaterApp: React.FC = () => {
                     }}
                     onChangeThreshold={(t) => updateCharacter(char.id, { theaterSummaryAutoThreshold: t })}
                     onOpenSummarySettings={openSummarySettings}
+                    isTransitioning={isTransitioning}
+                    transitionLocationName={transitionLocationName}
+                    pendingLocationSuggestion={pendingLocationSuggestion}
+                    onAcceptLocationSuggestion={handleAcceptLocationSuggestion}
+                    onDeclineLocationSuggestion={handleDeclineLocationSuggestion}
                 />
 
                 {/* Exit Sync Modal */}

@@ -171,9 +171,7 @@ export function createPityCounter(): PityCounter {
 const TIME_ORDER: TimeSlot[] = ['morning', 'afternoon', 'evening', 'night'];
 const LOCATION_CHANGES_PER_ADVANCE = 2; // Every 2 location changes → advance 1 time slot
 
-/**
- * Determine the next time slot based on how many locations have been visited.
- */
+/** @deprecated 已弃用，改用 getInitialTimeSlot() 实时感知。保留仅为向后兼容。 */
 export function advanceTimeSlot(current: TimeSlot, locationChangeCount: number): TimeSlot {
     const currentIdx = TIME_ORDER.indexOf(current);
     // How many advances have been earned
@@ -210,4 +208,24 @@ export function is520EventActive(): boolean {
 
 export function generateSessionId(): string {
     return `theater_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ── Auto Gradient for Director-Created Locations ──
+
+/** 根据地点 tags 自动生成 CSS 渐变背景 */
+const TAG_GRADIENT_MAP: Record<string, string> = {
+    romantic: 'linear-gradient(135deg, #2d1b3d 0%, #5c2d6e 50%, #c44569 100%)',
+    daily:    'linear-gradient(135deg, #2c3e50 0%, #4a6572 50%, #a8b6c0 100%)',
+    adventure:'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #e94560 100%)',
+    quiet:    'linear-gradient(135deg, #2d2d2d 0%, #4a4a4a 50%, #8b7355 100%)',
+    crowded:  'linear-gradient(135deg, #e44d26 0%, #f16529 40%, #ffd700 100%)',
+    outdoor:  'linear-gradient(135deg, #0c2461 0%, #1e90ff 40%, #a8d870 100%)',
+    indoor:   'linear-gradient(135deg, #3d2b1f 0%, #78593a 50%, #c49b6c 100%)',
+};
+
+export function getAutoGradient(tags: string[]): string {
+    for (const tag of tags) {
+        if (TAG_GRADIENT_MAP[tag]) return TAG_GRADIENT_MAP[tag];
+    }
+    return 'linear-gradient(135deg, #1a1a2e 0%, #243B55 50%, #4a69bd 100%)';
 }

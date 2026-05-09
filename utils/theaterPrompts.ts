@@ -3,7 +3,7 @@
  * 导演（副 API）生成结构化事件 JSON，主 API 基于事件演绎角色。
  */
 
-import type { EventType, DirectorEvent, TheaterLocation, TimeSlot } from '../types';
+import type { EventType, DirectorEvent, TheaterLocation, TimeSlot, TransitionEvent, LocationSuggestion } from '../types';
 import { TIME_SLOT_LABELS } from '../types/theater';
 
 // ── Director Prompt (for Secondary API) ──
@@ -29,6 +29,8 @@ export function buildDirectorPrompt(
     eventType: EventType,
     recentEvents: DirectorEvent[],
     recentMemories?: string,
+    existingLocationNames?: string[],
+    allowLocationSuggestion?: boolean,
 ): string {
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
     const recentEventsText = recentEvents.length > 0
@@ -37,6 +39,30 @@ export function buildDirectorPrompt(
 
     const memoryBlock = recentMemories
         ? `\n### 可用记忆片段（如果事件类型是 callback，请融入以下记忆）\n${recentMemories}\n`
+        : '';
+
+    const locationListBlock = existingLocationNames && existingLocationNames.length > 0
+        ? `\n### 已有地点列表（如果建议换场景，优先从这里选；也可以创造新地点）\n${existingLocationNames.map(n => `- ${n}`).join('\n')}\n`
+        : '';
+
+    const locationSuggestionBlock = allowLocationSuggestion
+        ? `
+### 场景切换建议（可选）
+如果你觉得当前地点的故事已经自然走到了该换场景的时刻（角色自然提议去某处、气氛需要转换、发生了需要离开的事件），
+你**可以**在 JSON 中额外添加一个 "locationSuggestion" 字段。
+**不是每次都需要**——只在剧情真的需要场景转换时才加。
+
+"locationSuggestion" 格式：
+{
+  "name": "海边栈道",
+  "nameEn": "Seaside Boardwalk",
+  "reason": "聊到想看海，自然地提议去海边",
+  "description": "面朝大海的木质栈道，海风吹着头发……（100-200字场景氛围描写）",
+  "tags": ["romantic", "outdoor"],
+  "travelMethod": "打车"
+}
+tags 只能从以下选择：romantic, daily, adventure, quiet, crowded, outdoor, indoor
+`
         : '';
 
     return `你是一个互动小说的"导演"。你不扮演任何角色，你的工作是设计场景和事件。
@@ -49,10 +75,10 @@ export function buildDirectorPrompt(
 
 ### 最近发生的事件
 ${recentEventsText}
-${memoryBlock}
+${memoryBlock}${locationListBlock}
 ### 你的任务
 设计一个 **${EVENT_TYPE_DESCRIPTIONS[eventType]}**
-
+${locationSuggestionBlock}
 ### 输出格式（严格 JSON，不要添加任何其他内容）
 \`\`\`json
 {
@@ -119,15 +145,19 @@ export function buildInitialScenePrompt(
     timeSlot: TimeSlot,
     charName: string,
     userName: string,
+    fromLocationName?: string,
 ): string {
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
+    const arrivalContext = fromLocationName
+        ? `${userName}和${charName}刚从 ${fromLocationName} 来到 ${location.name}。`
+        : `${userName}和${charName}刚刚来到 ${location.name}。`;
 
     return `### 场景：感知新地点
 当前时段: ${timeLabel.icon} ${timeLabel.zh}
 地点: ${location.name}
 
 ### 任务
-${userName}和${charName}刚刚来到 ${location.name}。
+${arrivalContext}
 ${location.description}
 
 请用**第三人称**写一段到场描写（3-5行）。
@@ -245,10 +275,159 @@ export function parseDirectorResponse(raw: string): DirectorEvent | null {
                 ? parsed.suggestedBeats.map(String)
                 : [],
             timestamp: Date.now(),
+            locationSuggestion: parsed.locationSuggestion ? {
+                name: String(parsed.locationSuggestion.name || ''),
+                nameEn: parsed.locationSuggestion.nameEn ? String(parsed.locationSuggestion.nameEn) : undefined,
+                reason: String(parsed.locationSuggestion.reason || ''),
+                description: String(parsed.locationSuggestion.description || ''),
+                tags: Array.isArray(parsed.locationSuggestion.tags)
+                    ? parsed.locationSuggestion.tags.filter((t: string) =>
+                        ['romantic','daily','adventure','quiet','crowded','outdoor','indoor'].includes(t))
+                    : ['daily'],
+                travelMethod: String(parsed.locationSuggestion.travelMethod || '步行'),
+            } as LocationSuggestion : undefined,
         };
     } catch (e) {
         console.error('[TheaterDirector] Unexpected error parsing director response:', e);
         console.error('[TheaterDirector] Raw (first 300 chars):', raw.slice(0, 300));
         return null;
     }
+}
+
+// ── Transition Director Prompt (场景切换转场) ──
+
+/**
+ * Build prompt for the director to generate a transition scene.
+ * Called when user selects a new location OR accepts a director-suggested location.
+ */
+export function buildTransitionDirectorPrompt(
+    charName: string,
+    userName: string,
+    fromLocation: TheaterLocation,
+    toLocation: TheaterLocation,
+    timeSlot: TimeSlot,
+    recentEvents: DirectorEvent[],
+): string {
+    const timeLabel = TIME_SLOT_LABELS[timeSlot];
+    const recentText = recentEvents.length > 0
+        ? recentEvents.slice(-3).map((e, i) => `  ${i + 1}. [${e.sceneType}] ${e.event}`).join('\n')
+        : '  (无)';
+
+    return `你是一个互动小说的"导演"。你的任务是设计一段**场景转换过渡**。
+
+### 当前状态
+- 现在位于：${fromLocation.name}（${fromLocation.description.slice(0, 80)}…）
+- 即将前往：${toLocation.name}（${toLocation.description.slice(0, 80)}…）
+- 时段：${timeLabel.icon} ${timeLabel.zh}
+- 角色：${charName}（AI角色），${userName}（用户）
+
+### 最近事件
+${recentText}
+
+### 你的任务
+设计从「${fromLocation.name}」到「${toLocation.name}」的转场。包括：
+1. 离开当前地点的一个画面/细节
+2. 合理的交通方式（步行/打车/地铁/骑车/公交等，根据两个地点的距离和性质判断）
+3. 路上的一个小场景或画面（3-5句即可，不要太长）
+4. 到达新地点时的第一感受
+
+### 输出格式（严格 JSON）
+\`\`\`json
+{
+  "departure": "（30-60字：离开旧地点的画面/动作）",
+  "travelMethod": "步行",
+  "travelScene": "（60-100字：路上的场景和互动，要有画面感）",
+  "arrivalMood": "（一个词：期待/好奇/紧张/放松/兴奋）",
+  "suggestedBeats": ["到达后的第一反应", "可以注意的环境细节"]
+}
+\`\`\`
+
+### 规则
+1. 转场要自然——像电影里的转场镜头，不是瞬移
+2. 路上可以有小互动，但不要太戏剧化
+3. 交通方式要合理（深夜去便利店大概率是步行，去海边可能要打车）
+4. 只输出 JSON`;
+}
+
+/**
+ * Parse transition director response into TransitionEvent.
+ */
+export function parseTransitionResponse(raw: string): TransitionEvent | null {
+    try {
+        let cleaned = raw.replace(/<(?:think|thought|reasoning)[^>]*>[\s\S]*?<\/(?:think|thought|reasoning)>/gi, '').trim();
+        if (!cleaned) cleaned = raw.trim();
+
+        let jsonStr: string | null = null;
+        const codeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+        if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
+        if (!jsonStr) {
+            const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
+            if (s !== -1 && e > s) jsonStr = cleaned.slice(s, e + 1);
+        }
+        if (!jsonStr) return null;
+
+        let parsed: any;
+        try { parsed = JSON.parse(jsonStr); } catch {
+            let repaired = jsonStr;
+            repaired = repaired.replace(/,\s*"[^"]*$/, '').replace(/,\s*$/, '');
+            const ob = (repaired.match(/{/g) || []).length;
+            const cb = (repaired.match(/}/g) || []).length;
+            const oq = (repaired.match(/\[/g) || []).length;
+            const cq = (repaired.match(/]/g) || []).length;
+            for (let i = cq; i < oq; i++) repaired += ']';
+            for (let i = cb; i < ob; i++) repaired += '}';
+            try { parsed = JSON.parse(repaired); } catch { return null; }
+        }
+
+        if (!parsed.departure || !parsed.travelScene) return null;
+
+        return {
+            departure: String(parsed.departure),
+            travelMethod: String(parsed.travelMethod || '步行'),
+            travelScene: String(parsed.travelScene),
+            arrivalMood: String(parsed.arrivalMood || '期待'),
+            suggestedBeats: Array.isArray(parsed.suggestedBeats) ? parsed.suggestedBeats.map(String) : [],
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Build the transition scene injection for the main API.
+ * Tells the character AI to write a complete departure → travel → arrival narrative.
+ */
+export function buildTransitionSceneInjection(
+    transition: TransitionEvent,
+    fromLocation: TheaterLocation,
+    toLocation: TheaterLocation,
+    timeSlot: TimeSlot,
+): string {
+    const timeLabel = TIME_SLOT_LABELS[timeSlot];
+
+    return `
+### 【约会剧场 · 转场指令】
+你们正在从 **${fromLocation.name}** 出发，前往 **${toLocation.name}**。
+当前时段：${timeLabel.icon}${timeLabel.zh}
+
+**离开的画面**：
+${transition.departure}
+
+**交通方式**：${transition.travelMethod}
+
+**路上**：
+${transition.travelScene}
+
+**到达心情**：${transition.arrivalMood}
+
+**导演提示**：
+${transition.suggestedBeats.map(b => `- ${b}`).join('\n')}
+
+### 写作要求
+1. 写一段完整的从离开到到达的叙事（中等长度，8-12行）
+2. 包含三个部分：①离开时的片刻 ②路上的互动或画面 ③到达新地点的第一感受
+3. 保持你的角色性格，用你自己的方式演绎这段转场
+4. 每一行都必须以 [emotion] 开头
+5. 转场叙事之后**不要**再写对话——到达即结束
+`;
 }

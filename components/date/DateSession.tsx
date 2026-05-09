@@ -58,7 +58,7 @@ interface DateSessionProps {
     peekStatus: string;  // Initial text from the Peek phase
     initialState?: DateState; // Resume state
     onSendMessage: (text: string, directorHint?: string) => Promise<{ content: string; whispers: InnerWhisper[] }>; // Returns AI content + optional whispers
-    onReroll: () => Promise<string>;
+    onReroll: () => Promise<{ content: string; whispers: InnerWhisper[] }>;
     onExit: (currentState: DateState, syncMode: DateExitSyncMode) => void;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
@@ -384,12 +384,22 @@ const DateSession: React.FC<DateSessionProps> = ({
     const handleRerollClick = async () => {
         if (isTyping) return;
         setIsTyping(true);
+        clearWhispers();
         try {
-            const aiContent = await onReroll();
-            const items = parseDialogue(aiContent, 'normal');
+            const result = await onReroll();
+            const items = parseDialogue(result.content, 'normal');
             setDialogueBatch(items);
             setDialogueQueue(items);
             if (items.length > 0) processNextDialogue(items[0], items.slice(1));
+            // Schedule whisper reveal after reroll (same as handleSend)
+            if (result.whispers.length > 0) {
+                const totalChars = items.reduce((sum, item) => sum + item.text.length, 0);
+                const estimatedPlayMs = totalChars * 20 + items.length * 500;
+                whisperRevealTimer.current = setTimeout(() => {
+                    setActiveWhispers(result.whispers);
+                    setWhispersVisible(true);
+                }, Math.min(estimatedPlayMs, 8000));
+            }
         } catch(e) {
             // Error handled in parent
         } finally {

@@ -1742,6 +1742,71 @@
     animation: theater-slide-up 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* ── Quick Punctuation Toolbar ── */
+.theater-vn-punct-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 2px;
+    margin-bottom: 10px;
+}
+
+.theater-vn-punct-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
+}
+
+.theater-vn-punct-btn:active {
+    transform: scale(0.94);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.theater-vn-punct-hero {
+    border-color: rgba(255, 107, 157, 0.25);
+    background: rgba(255, 107, 157, 0.08);
+    color: rgba(255, 107, 157, 0.85);
+}
+
+.theater-vn-punct-hero:active {
+    background: rgba(255, 107, 157, 0.18);
+}
+
+.theater-vn-punct-icon {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    line-height: 1;
+}
+
+.theater-vn-punct-label {
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    opacity: 0.7;
+}
+
+.theater-vn-punct-hint {
+    font-size: 9px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.18);
+    letter-spacing: 0.5px;
+    margin-left: auto;
+    white-space: nowrap;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .theater-vn-input-row {
     display: flex;
     gap: 10px;
@@ -2085,6 +2150,150 @@
 @keyframes theater-bg-fade-out {
     from { opacity: 1; }
     to { opacity: 0; }
+}
+
+/* ══════════════════════════════════════════════
+   Scene Transition Overlay — 电影转场
+   ══════════════════════════════════════════════ */
+
+.theater-transition-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: theater-transition-in 0.8s ease-out;
+}
+
+.theater-transition-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    animation: theater-transition-text 1.5s ease-out;
+}
+
+.theater-transition-location {
+    font-size: 22px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.85);
+    letter-spacing: 6px;
+    text-align: center;
+}
+
+.theater-transition-sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.25);
+    letter-spacing: 4px;
+    text-transform: uppercase;
+}
+
+.theater-transition-line {
+    width: 40px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 107, 157, 0.4), transparent);
+}
+
+@keyframes theater-transition-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes theater-transition-text {
+    0% { opacity: 0; transform: translateY(15px); }
+    30% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 1; }
+}
+
+/* ── Director Location Suggestion Card ── */
+
+.theater-vn-location-suggest {
+    margin-top: 12px;
+    padding: 14px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 107, 157, 0.15);
+    background: rgba(255, 107, 157, 0.06);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    animation: theater-whisper-fadein 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.theater-vn-suggest-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.theater-vn-suggest-icon {
+    font-size: 16px;
+}
+
+.theater-vn-suggest-label {
+    font-size: 13px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.75);
+    letter-spacing: 0.5px;
+}
+
+.theater-vn-suggest-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.theater-vn-suggest-accept {
+    flex: 1;
+    padding: 10px 0;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 107, 157, 0.3);
+    background: rgba(255, 107, 157, 0.12);
+    color: rgba(255, 107, 157, 0.9);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.25s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.theater-vn-suggest-accept:active {
+    transform: scale(0.96);
+    background: rgba(255, 107, 157, 0.25);
+}
+
+.theater-vn-suggest-decline {
+    flex: 1;
+    padding: 10px 0;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.25s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.theater-vn-suggest-decline:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Discovered Location Badge (地图票根) ── */
+
+.theater-ticket-discovered-badge {
+    font-size: 8px;
+    font-weight: 500;
+    color: rgba(255, 200, 50, 0.8);
+    background: rgba(255, 200, 50, 0.1);
+    border: 1px solid rgba(255, 200, 50, 0.2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
 }
 
 /* ── Responsive ── */

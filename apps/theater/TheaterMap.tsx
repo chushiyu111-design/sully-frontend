@@ -207,7 +207,10 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
                                         {visitLabel && (
                                             <span className="theater-ticket-visit-badge">{visitLabel}</span>
                                         )}
-                                        {!loc.isPreset && !visitLabel && (
+                                        {!loc.isPreset && loc.id.startsWith('dir_') && !visitLabel && (
+                                            <span className="theater-ticket-discovered-badge">✨ 剧情发现</span>
+                                        )}
+                                        {!loc.isPreset && !loc.id.startsWith('dir_') && !visitLabel && (
                                             <span className="theater-ticket-custom-badge">自定义</span>
                                         )}
                                     </div>

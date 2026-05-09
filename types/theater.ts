@@ -45,6 +45,44 @@ export interface DirectorEvent {
     npcHint?: string;            // NPC 提示（可选）
     suggestedBeats: string[];    // 建议发展方向（辅助主 API）
     timestamp?: number;          // 触发时间
+    /** 导演建议的场景切换（可选，仅在导演认为该换场景时出现） */
+    locationSuggestion?: LocationSuggestion;
+}
+
+// ── Location Suggestion (导演建议换场景) ──
+
+/** 导演事件中可选的场景切换建议 */
+export interface LocationSuggestion {
+    /** 目标地点名称（可以是已有地点名，也可以是全新名称） */
+    name: string;
+    /** 英文副标题（可选） */
+    nameEn?: string;
+    /** 为什么要去这里（给系统用，不给用户看） */
+    reason: string;
+    /** 地点氛围描述（100-200字，如果是新地点则用于创建） */
+    description: string;
+    /** 地点标签 */
+    tags: LocationTag[];
+    /** 交通方式 */
+    travelMethod: string;
+    /** 备用 CSS 渐变（根据 tags 自动生成，不需要导演提供） */
+    bgGradient?: string;
+}
+
+// ── Transition Event (转场事件) ──
+
+/** 导演生成的转场事件（用户主动换地点 或 导演建议换地点时） */
+export interface TransitionEvent {
+    /** 离开当前地点的氛围 */
+    departure: string;
+    /** 交通方式 */
+    travelMethod: string;
+    /** 路上的场景描写 */
+    travelScene: string;
+    /** 到达时的心情/氛围 */
+    arrivalMood: string;
+    /** 给角色扮演者的提示 */
+    suggestedBeats: string[];
 }
 
 // ── Pity System ──

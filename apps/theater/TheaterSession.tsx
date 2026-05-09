@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { resolveTheaterBg } from '../../utils/db/theaterStore';
-import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../../types';
+import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot, LocationSuggestion } from '../../types';
 import type { InnerWhisper } from '../../utils/thinkingExtractor';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 import { useOS } from '../../context/OSContext';
@@ -53,6 +53,13 @@ interface TheaterSessionProps {
     onToggleAutoHideSummary?: (enabled: boolean) => void;
     onChangeThreshold?: (threshold: number) => void;
     onOpenSummarySettings?: () => void;
+    // Transition
+    isTransitioning?: boolean;
+    transitionLocationName?: string;
+    // Director Location Suggestion
+    pendingLocationSuggestion?: LocationSuggestion | null;
+    onAcceptLocationSuggestion?: () => void;
+    onDeclineLocationSuggestion?: () => void;
 }
 
 // ── Helpers ──
@@ -154,6 +161,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
     onOpenSummarySettings,
     activeWhispers = [], onWhisperClick,
+    isTransitioning, transitionLocationName,
+    pendingLocationSuggestion, onAcceptLocationSuggestion, onDeclineLocationSuggestion,
 }) => {
     const { addToast, registerBackHandler } = useOS();
     const { ttsConfig } = useConfig();
@@ -176,6 +185,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const [showSettings, setShowSettings] = useState(false);
     const [hideDialog, setHideDialog] = useState(false);
     const [input, setInput] = useState('');
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [eventCollapsed, setEventCollapsed] = useState(false);
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
     const prevPagesLenRef = useRef(0);
@@ -334,8 +344,32 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         onWhisperClick(w);
     };
 
+    // ── Quick punctuation insert ──
+    const insertAtCursor = useCallback((before: string, after: string = '') => {
+        const el = textareaRef.current;
+        if (!el) return;
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const val = el.value;
+        const selectedText = val.slice(start, end);
+        const inserted = before + selectedText + after;
+        const newVal = val.slice(0, start) + inserted + val.slice(end);
+        setInput(newVal);
+        // Position cursor between before/after (or after 'before' if no 'after')
+        requestAnimationFrame(() => {
+            el.focus();
+            const cursorPos = start + before.length + selectedText.length;
+            el.setSelectionRange(cursorPos, cursorPos);
+        });
+    }, []);
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+        // Ctrl+Enter or Cmd+Enter → send
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            handleSend();
+        }
+        // Plain Enter → newline (default behavior, no preventDefault)
     };
 
     // ── Toggle auto ──
@@ -370,6 +404,18 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                         className="max-h-full max-w-full object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)] transition-all duration-300 origin-bottom"
                         style={{ transform: `translate(${spriteConfig.x}%, ${spriteConfig.y}%) scale(${spriteConfig.scale})` }}
                     />
+                </div>
+            )}
+
+            {/* ════════ Transition Overlay ════════ */}
+            {isTransitioning && (
+                <div className="theater-transition-overlay">
+                    <div className="theater-transition-content">
+                        <div className="theater-transition-line" />
+                        <div className="theater-transition-location">{transitionLocationName}</div>
+                        <div className="theater-transition-sub">场景切换中</div>
+                        <div className="theater-transition-line" />
+                    </div>
                 </div>
             )}
 
@@ -496,6 +542,33 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                         </div>
                     )}
 
+                    {/* Director Location Suggestion Card */}
+                    {pendingLocationSuggestion && !isLoading && done && isLastPage && (
+                        <div className="theater-vn-location-suggest" onClick={e => e.stopPropagation()}>
+                            <div className="theater-vn-suggest-header">
+                                <span className="theater-vn-suggest-icon">🚶</span>
+                                <span className="theater-vn-suggest-label">
+                                    想带你去 → {pendingLocationSuggestion.name}
+                                </span>
+                            </div>
+                            <div className="theater-vn-suggest-actions">
+                                <button
+                                    className="theater-vn-suggest-accept"
+                                    onClick={onAcceptLocationSuggestion}
+                                >
+                                    跟他走
+                                </button>
+                                <button
+                                    className="theater-vn-suggest-decline"
+                                    onClick={onDeclineLocationSuggestion}
+                                >
+                                    再待会儿
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+
                     {/* Bottom Control Bar */}
                     <div className="theater-vn-controls" onClick={e => e.stopPropagation()}>
                         <button className="theater-vn-ctrl-btn" onClick={(e) => { e.stopPropagation(); setShowLog(true); }}>
@@ -530,12 +603,45 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             {/* ════════ Input Area ════════ */}
             {showInput && (
                 <div className="theater-vn-input-area" onClick={e => e.stopPropagation()}>
+                    {/* Quick punctuation toolbar */}
+                    <div className="theater-vn-punct-bar">
+                        <button
+                            className="theater-vn-punct-btn theater-vn-punct-hero"
+                            onClick={() => insertAtCursor('\u201C', '\u201D')}
+                            title="插入台词引号"
+                        >
+                            <span className="theater-vn-punct-icon">{'\u201C\u201D'}</span>
+                            <span className="theater-vn-punct-label">台词</span>
+                        </button>
+                        <button
+                            className="theater-vn-punct-btn"
+                            onClick={() => insertAtCursor('\u2026\u2026')}
+                            title="插入省略号"
+                        >
+                            <span className="theater-vn-punct-icon">……</span>
+                        </button>
+                        <button
+                            className="theater-vn-punct-btn"
+                            onClick={() => insertAtCursor('\u2014\u2014')}
+                            title="插入破折号"
+                        >
+                            <span className="theater-vn-punct-icon">——</span>
+                        </button>
+                        <span className="theater-vn-punct-hint">引号内 = 台词 · 其余 = 动作</span>
+                    </div>
                     <div className="theater-vn-input-row">
                         <textarea
+                            ref={textareaRef}
                             value={input}
-                            onChange={e => setInput(e.target.value)}
+                            onChange={e => {
+                                setInput(e.target.value);
+                                // Auto-grow height
+                                const el = e.target;
+                                el.style.height = '44px';
+                                el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+                            }}
                             onKeyDown={handleKeyDown}
-                            placeholder={isLoading ? '等待回应…' : '说点什么…'}
+                            placeholder={isLoading ? '等待回应…' : '说了什么，做了什么…'}
                             disabled={isLoading}
                             autoFocus
                         />

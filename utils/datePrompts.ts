@@ -5,6 +5,7 @@
  */
 
 import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot } from '../types';
+import { TIME_SLOT_LABELS } from '../types/theater';
 import { ContextBuilder } from './context';
 import { buildTheaterSceneInjection, build520ConfessionHint } from './theaterPrompts';
 
@@ -348,8 +349,12 @@ export const buildTheaterScene = (
     userName: string,
     dateEmotions: string[],
     userPov: DatePerspective,
-    charPov: CharPerspective
+    charPov: CharPerspective,
+    timeSlot?: TimeSlot,
 ) => {
+    const timeContext = timeSlot
+        ? `\n3. **Time**: 当前时段 — ${TIME_SLOT_LABELS[timeSlot].icon} ${TIME_SLOT_LABELS[timeSlot].zh}。请让描写自然反映这个时间的光线、氛围和节奏。`
+        : '';
     const perspectivePrompt = getDualPerspectivePrompt(userPov, charPov, charName, userName);
 
     return `
@@ -386,7 +391,7 @@ ${buildInnerWhisperInstruction(userName)}
 
 ### 场景上下文
 1. **Location**: 你们现在**面对面**。
-2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
+2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。${timeContext}
 `;
 };
 
@@ -459,7 +464,7 @@ export function buildFullDateSystemPrompt(opts: DateSystemPromptOpts): string {
     const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
     const userPov = (char.datePerspective || 'second') as DatePerspective;
     const charPov = (char.dateCharPerspective || 'third') as CharPerspective;
-    prompt += buildTheaterScene(charName, userName, dateEmotions, userPov, charPov);
+    prompt += buildTheaterScene(charName, userName, dateEmotions, userPov, charPov, opts.timeSlot);
 
     // 8. Tail (rp_core_live + CoT + output format)
     prompt += buildDateTail(charName, userName, userPov, charPov);

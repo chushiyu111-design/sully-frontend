@@ -8,9 +8,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, PanInfo } from 'framer-motion';
 
-const DEFAULT_BALL_ICON = '/theater-ball-bandaid.png';
+const DEFAULT_BALL_ICON = '/theater-ball-default.png';
 const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
-const ICON_MAX_SIZE = 96; // resize uploaded images to 96x96
+const ICON_MAX_SIZE = 192; // resize uploaded images to 192x192 (high-DPI clarity for 56px ball)
 
 
 
@@ -29,7 +29,7 @@ const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resol
             const sx = (img.width - size) / 2;
             const sy = (img.height - size) / 2;
             ctx.drawImage(img, sx, sy, size, size, 0, 0, ICON_MAX_SIZE, ICON_MAX_SIZE);
-            resolve(canvas.toDataURL('image/webp', 0.8));
+            resolve(canvas.toDataURL('image/webp', 0.92));
         };
         img.onerror = reject;
         img.src = reader.result as string;

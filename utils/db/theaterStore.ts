@@ -108,8 +108,14 @@ export function saveCustomLocations(locations: TheaterLocation[]): void {
     }
 }
 
+const MAX_CUSTOM_LOCATIONS = 20;
+
 export function addCustomLocation(location: TheaterLocation): void {
     const existing = getCustomLocations();
+    if (existing.length >= MAX_CUSTOM_LOCATIONS) {
+        console.warn('[TheaterStore] Max custom locations reached');
+        return;
+    }
     existing.push(location);
     saveCustomLocations(existing);
 }

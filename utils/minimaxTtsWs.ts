@@ -193,16 +193,17 @@ export class MinimaxTtsWs {
             console.log('[TTS WS] Connecting...');
             this.ws = new WebSocket(wsUrl);
 
-            // 10 秒连接超时
+            // 25 秒连接超时（浏览器↔Worker WSS 已建立，等待 Worker 转发上游 MiniMax connected_success）
+            // 网络差的用户（校园网/公司网/移动 4G）握手链路可能需要 15-20s
             this.connectTimeout = setTimeout(() => {
                 if (this.state === 'connecting') {
-                    const err = new Error('[TTS WS] 连接超时 (10s)');
+                    const err = new Error('[TTS WS] 连接超时 (25s)');
                     this.connectReject?.(err);
                     this.connectResolve = null;
                     this.connectReject = null;
                     this.close();
                 }
-            }, 10000);
+            }, 25000);
 
             this.ws.onopen = () => {
                 console.log('[TTS WS] WebSocket opened, waiting for connected_success...');
@@ -320,14 +321,14 @@ export class MinimaxTtsWs {
                 this.startReject = null;
             });
 
-            // 10 秒超时
+            // 20 秒超时（task_start 需要等 MiniMax 分配音色资源）
             this.startTimeout = setTimeout(() => {
                 if (this.startReject) {
-                    this.startReject(new Error('[TTS WS] task_start 超时 (10s)'));
+                    this.startReject(new Error('[TTS WS] task_start 超时 (20s)'));
                     this.startResolve = null;
                     this.startReject = null;
                 }
-            }, 10000);
+            }, 20000);
         });
     }
 

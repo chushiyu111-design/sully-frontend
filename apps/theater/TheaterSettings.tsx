@@ -120,6 +120,17 @@ const TheaterSettings: React.FC<TheaterSettingsProps> = ({ char, location, isOpe
 
     const handleTouchEnd = useCallback(() => { pinchRef.current = null; }, []);
 
+    // Resolve bg image from IndexedDB if needed (must be before any early return!)
+    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        resolveTheaterBg(location?.bgImage).then(url => {
+            if (!cancelled) setResolvedBg(url);
+        });
+        return () => { cancelled = true; };
+    }, [isOpen, location?.bgImage]);
+
     // ── Save ──
     const handleSave = () => {
         updateCharacter(char.id, { spriteConfig: tempConfig });
@@ -167,17 +178,6 @@ const TheaterSettings: React.FC<TheaterSettingsProps> = ({ char, location, isOpe
     };
 
     if (!isOpen) return null;
-
-    // Resolve bg image from IndexedDB if needed
-    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
-    useEffect(() => {
-        if (!isOpen) return;
-        let cancelled = false;
-        resolveTheaterBg(location?.bgImage).then(url => {
-            if (!cancelled) setResolvedBg(url);
-        });
-        return () => { cancelled = true; };
-    }, [isOpen, location?.bgImage]);
 
     const bgStyle = resolvedBg
         ? `url(${resolvedBg}) center/cover`

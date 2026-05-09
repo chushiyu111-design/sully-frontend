@@ -141,7 +141,14 @@ export const useChatAI = ({
                     console.error('Failed to load full history from DB, using React state:', e);
                 }
             }
-            const promptContextMsgs = contextMsgs.filter(m => m.metadata?.source !== 'date' || m.metadata?.isDateContextBridge);
+            const promptContextMsgs = contextMsgs.filter(m => {
+                const source = m.metadata?.source;
+                if (source === 'date' || source === 'theater') {
+                    // Only include date/theater messages that are explicit context bridges
+                    return !!m.metadata?.isDateContextBridge;
+                }
+                return true;
+            });
 
             // 0.1 Gamygdala — 加载角色目标（并行，静默降级）
             const goalsPromise = loadCharacterGoals(char.id).catch(e => {

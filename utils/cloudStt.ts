@@ -77,21 +77,36 @@ export async function transcribe(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        console.log(`🎤 [CloudSTT] Sending to ${config.provider} (${model})...`);
+        console.log(`🎤 [CloudSTT] Sending to ${config.provider} (${model}), url=${url}`);
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                // 注意：FormData 自动设置 Content-Type 含 boundary，不能手动设
-            },
-            body: formData,
-            signal: controller.signal,
-        });
+        let response: Response;
+        try {
+            response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    // 注意：FormData 自动设置 Content-Type 含 boundary，不能手动设
+                },
+                body: formData,
+                signal: controller.signal,
+            });
+        } catch (fetchErr: any) {
+            // 网络错误 / CORS 拦截 — fetch 会 throw TypeError
+            const isCors = fetchErr instanceof TypeError;
+            const detail = fetchErr?.message || String(fetchErr);
+            console.error(`🎤 [CloudSTT] fetch 失败 (provider=${config.provider}, url=${url}):`, fetchErr);
+            if (isCors) {
+                throw new Error(
+                    `[${config.provider}] 网络/CORS 错误: 浏览器无法直连 ${url}。` +
+                    `请检查网络或使用后端代理。(${detail})`
+                );
+            }
+            throw new Error(`[${config.provider}] 网络请求失败: ${detail}`);
+        }
 
         if (!response.ok) {
             const errText = await response.text().catch(() => '');
-            throw new Error(`STT API 错误 (${response.status}): ${errText.slice(0, 200)}`);
+            throw new Error(`[${config.provider}] STT API ${response.status}: ${errText.slice(0, 300)}`);
         }
 
         const data = await response.json();
@@ -118,7 +133,7 @@ export async function transcribe(
         return result;
     } catch (err: any) {
         if (err.name === 'AbortError') {
-            throw new Error(`STT 请求超时 (${timeoutMs / 1000}s)`);
+            throw new Error(`[${config.provider}] STT 请求超时 (${timeoutMs / 1000}s)，目标: ${url}`);
         }
         throw err;
     } finally {

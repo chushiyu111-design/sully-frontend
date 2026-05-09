@@ -145,8 +145,9 @@ const WeChatInputBar: React.FC<WeChatInputBarProps> = ({
                     addToast('未识别到有效语音', 'info');
                 }
             } catch (err: any) {
-                console.error('[WeChatInputBar] STT failed:', err);
-                addToast('语音转文字失败，已发送为语音消息', 'info');
+                const reason = err?.message || String(err);
+                console.error('[WeChatInputBar] STT failed:', reason, err);
+                addToast(`语音转文字失败: ${reason.slice(0, 120)}`, 'error');
                 onVoiceMessage?.(result.blob, Math.max(1, result.duration));
             } finally { setIsConverting(false); }
         } else {

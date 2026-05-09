@@ -13,6 +13,7 @@ import { useConfig } from '../../context/ConfigContext';
 import { useTheaterBgm } from '../../hooks/useTheaterBgm';
 import TheaterSettings from './TheaterSettings';
 import TheaterFloatingBall from './TheaterFloatingBall';
+import InlineLocationSheet from './InlineLocationSheet';
 
 const EVENT_TYPE_ZH: Record<string, string> = {
     ambient: '氛围', encounter: '偶遇', romantic: '浪漫',
@@ -32,7 +33,15 @@ interface TheaterSessionProps {
     isAiLoading: boolean;
     messages: Message[];
     onSendMessage: (text: string, directorHint?: string) => Promise<void>;
-    onChangeLocation: () => void;
+    /** Location switching (inline, no exit) */
+    locations: TheaterLocation[];
+    visitedLocationIds: string[];
+    onSelectLocation: (loc: TheaterLocation) => void;
+    onAddLocation: (loc: TheaterLocation) => void;
+    onDeleteCustomLocation: (id: string) => void;
+    showLocationSheet: boolean;
+    onCloseLocationSheet: () => void;
+    onOpenLocationSheet: () => void;
     onExit: () => void;
     // Inner Whispers (内心低语)
     activeWhispers?: InnerWhisper[];
@@ -153,7 +162,11 @@ function useTypewriter(text: string, speed = 30) {
 const TheaterSession: React.FC<TheaterSessionProps> = ({
     char, userProfile, location, timeSlot,
     is520: _is520, currentEvent, isDirectorLoading, isAiLoading,
-    messages, onSendMessage, onChangeLocation, onExit,
+    messages, onSendMessage,
+    locations, visitedLocationIds,
+    onSelectLocation, onAddLocation, onDeleteCustomLocation,
+    showLocationSheet, onCloseLocationSheet, onOpenLocationSheet,
+    onExit,
     timelineLabel, onForkFromMessage,
     isSummaryGenerating, hasPendingSummary, canManualSummary, canAutoSummary,
     summaryDisabledReason,
@@ -722,8 +735,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             {/* Floating Ball */}
             <TheaterFloatingBall
                 charId={char.id}
-                onChangeLocation={onChangeLocation}
                 onOpenSettings={() => setShowSettings(true)}
+                onOpenFullLocationSheet={onOpenLocationSheet}
                 bgmStatus={bgm.status}
                 bgmEnabled={bgm.enabled}
                 bgmVolume={bgm.volume}
@@ -745,6 +758,19 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 theaterSummaryAutoEnabled={char.theaterSummaryAutoEnabled}
                 theaterSummaryAutoHideEnabled={char.theaterSummaryAutoHideEnabled}
                 theaterSummaryAutoThreshold={char.theaterSummaryAutoThreshold}
+            />
+
+            {/* Inline Location Sheet */}
+            <InlineLocationSheet
+                isOpen={showLocationSheet}
+                onClose={onCloseLocationSheet}
+                locations={locations}
+                currentLocationId={location.id}
+                visitedLocationIds={visitedLocationIds}
+                timeSlot={timeSlot}
+                onSelectLocation={onSelectLocation}
+                onAddLocation={onAddLocation}
+                onDeleteCustomLocation={onDeleteCustomLocation}
             />
         </div>
     );

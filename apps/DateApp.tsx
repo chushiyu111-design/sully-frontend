@@ -11,7 +11,7 @@ import DateSession,{ DateExitSyncMode } from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { buildDatePreamble,buildTheaterScene,buildDateTail } from '../utils/datePrompts';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../utils/thinkingExtractor';
-import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge } from '../utils/dateSummaryPrompts';
+import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge,formatMessagesForSummary } from '../utils/dateSummaryPrompts';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
 
@@ -25,12 +25,10 @@ type SummaryDraft = {
     sessionStartMsgId: number;
     promptSnapshot: string;
     lastCoveredMsgId: number;
-    bridgeOnSave?: boolean;
-    bridgeOnly?: boolean;
-    bridgeAlreadySaved?: boolean;
-    sourceSummaryMsgId?: number;
     exitState?: DateState;
     fromPendingAuto?: boolean;
+    /** Set only during exit flow — after saving, also create bridge + finishExit */
+    bridgeOnSave?: boolean;
 };
 
 const isDateSummaryMessage = (m: Message) => m.metadata?.source === 'date' && m.metadata?.isSummary === true;
@@ -356,76 +354,130 @@ const DateApp: React.FC = () => {
         }
     };
 
+    /**
+     * Generate a comprehensive exit summary:
+     * Combines existing auto-summaries + unsummarized raw messages into one complete summary.
+     */
+    const generateExitSummaryDraft = async (): Promise<SummaryDraft | null> => {
+        if (!char || summaryGeneratingRef.current) return null;
+        const secondaryConfig = getSecondaryApiConfig();
+        const selectedApi = hasCompleteApiConfig(secondaryConfig) ? secondaryConfig : apiConfig;
+        if (!hasCompleteApiConfig(selectedApi)) { addToast('请先配置 API', 'error'); return null; }
+
+        summaryGeneratingRef.current = true;
+        setIsSummaryGenerating(true);
+        try {
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const sessionMessages = getCurrentSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) { addToast('还没有可总结的见面内容', 'info'); return null; }
+
+            const sessionStartMsgId = sessionMessages[0].id;
+            const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+
+            const savedSummaries = allMsgs
+                .filter(isDateSummaryMessage)
+                .filter(s => s.metadata?.sessionStartMsgId === sessionStartMsgId
+                    || (Array.isArray(s.metadata?.coveredMsgIds) && s.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number))))
+                .sort((a, b) => a.timestamp - b.timestamp);
+
+            const coveredByExistingSummaries = new Set<number>();
+            for (const s of savedSummaries) {
+                if (Array.isArray(s.metadata?.coveredMsgIds)) {
+                    for (const id of s.metadata.coveredMsgIds) {
+                        if (typeof id === 'number') coveredByExistingSummaries.add(id);
+                    }
+                }
+            }
+
+            const unsummarizedMessages = sessionMessages.filter(m => !coveredByExistingSummaries.has(m.id));
+
+            const promptSnapshot = char.dateSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
+            let exitPromptContent = '';
+
+            if (savedSummaries.length > 0) {
+                const summaryBlocks = savedSummaries.map((s, i) => `### 已总结片段 ${i + 1}\n${s.content}`).join('\n\n');
+                exitPromptContent += `【之前的阶段总结】\n${summaryBlocks}\n\n`;
+            }
+
+            if (unsummarizedMessages.length > 0) {
+                const rawBlock = formatMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
+                exitPromptContent += `【未总结的新记录】\n${rawBlock}\n\n`;
+            } else if (savedSummaries.length > 0) {
+                exitPromptContent += '（所有内容均已在上方总结中覆盖）\n\n';
+            }
+
+            if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
+
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次线下见面写最终总结。
+请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的总结。
+
+当前时间: ${buildTimeLabel()}
+
+${exitPromptContent}
+【输出要求】
+- 使用 Markdown。
+- 写成 ${char.name} 之后能自然记住的事实与情绪脉络。
+- 保留关键事件、关系变化、未说出口的情绪、值得之后线上承接的小细节。
+- 不要生成新的剧情，不要改写已经发生的事实。
+- 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
+
+            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
+                body: JSON.stringify({
+                    model: selectedApi.model,
+                    messages: [
+                        { role: 'system', content: '你负责把线下见面的所有记录整理成一份完整的最终总结。只输出总结正文。' },
+                        { role: 'user', content: fullPrompt },
+                    ],
+                    temperature: 0.45,
+                }),
+            });
+            if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
+            const data = await safeResponseJson(response);
+            const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+            const content = extracted.content.trim();
+            if (!content) throw new Error('Exit summary content empty');
+
+            const allCoveredMsgIds = sessionMessages.map(m => m.id);
+            return {
+                content, summaryType: 'manual', coveredMsgIds: allCoveredMsgIds,
+                sessionStartMsgId, promptSnapshot,
+                lastCoveredMsgId: allCoveredMsgIds[allCoveredMsgIds.length - 1],
+            };
+        } catch (e: any) {
+            addToast(`总结生成失败: ${e.message || e}`, 'error');
+            return null;
+        } finally {
+            summaryGeneratingRef.current = false;
+            setIsSummaryGenerating(false);
+        }
+    };
+
     const saveSummaryDraft = async (draft: SummaryDraft) => {
         if (!char) return;
-        if (draft.bridgeAlreadySaved) {
-            if (char.dateSummaryAutoHideEnabled && draft.sourceSummaryMsgId) {
-                await hideSummarizedDateMessages(draft, draft.sourceSummaryMsgId);
-            }
-            setActiveSummaryDraft(null);
-            addToast('已复用已保存总结同步到主聊天', 'success');
-            if (draft.exitState) finishExitSession(draft.exitState);
-            return;
-        }
-
-        if (draft.bridgeOnly) {
-            const bridgeMsgId = await DB.saveMessage({
-                charId: char.id,
-                role: 'system',
-                type: 'text',
-                content: draft.content,
-                metadata: {
-                    source: 'date',
-                    hiddenFromUser: true,
-                    isDateContextBridge: true,
-                    bridgeType: 'summary',
-                    coveredMsgIds: draft.coveredMsgIds,
-                    sessionStartMsgId: draft.sessionStartMsgId,
-                    promptSnapshot: draft.promptSnapshot,
-                    summarySourceMsgId: draft.sourceSummaryMsgId,
-                },
-            });
-            if (char.dateSummaryAutoHideEnabled) {
-                await hideSummarizedDateMessages(draft, draft.sourceSummaryMsgId || bridgeMsgId);
-            }
-            setActiveSummaryDraft(null);
-            await loadDateMessages();
-            addToast('已复用已保存总结同步到主聊天', 'success');
-            if (draft.exitState) finishExitSession(draft.exitState);
-            return;
-        }
-
+        // Save summary as pure summary — NO bridge flag in metadata.
         const savedSummaryId = await DB.saveMessage({
-            charId: char.id,
-            role: 'system',
-            type: 'text',
-            content: draft.content,
+            charId: char.id, role: 'system', type: 'text', content: draft.content,
             metadata: {
-                source: 'date',
-                hiddenFromUser: true,
-                isSummary: true,
-                summaryType: draft.summaryType,
-                coveredMsgIds: draft.coveredMsgIds,
-                sessionStartMsgId: draft.sessionStartMsgId,
-                promptSnapshot: draft.promptSnapshot,
-                ...(draft.bridgeOnSave ? { isDateContextBridge: true, bridgeType: 'summary' } : {}),
+                source: 'date', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
+                coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
             },
         });
-
-        if (char.dateSummaryAutoHideEnabled) {
-            await hideSummarizedDateMessages(draft, savedSummaryId);
-        }
-        if (draft.summaryType === 'auto') {
-            updateCharacter(char.id, { dateSummaryLastAutoMsgId: draft.lastCoveredMsgId });
-        }
-        if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) {
-            setPendingAutoSummary(null);
-        }
-
+        if (char.dateSummaryAutoHideEnabled) await hideSummarizedDateMessages(draft, savedSummaryId);
+        if (draft.summaryType === 'auto') updateCharacter(char.id, { dateSummaryLastAutoMsgId: draft.lastCoveredMsgId });
+        if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
         await loadDateMessages();
-        addToast(draft.bridgeOnSave ? '总结已同步到主聊天' : '总结已保存', 'success');
-        if (draft.exitState) finishExitSession(draft.exitState);
+        // If this save was triggered from exit flow, create bridge then exit
+        if (draft.bridgeOnSave && draft.exitState) {
+            const bridged = await createBridgeFromSummary();
+            addToast(bridged ? '总结已同步到主聊天' : '总结已保存', 'success');
+            finishExitSession(draft.exitState);
+        } else {
+            addToast('总结已保存', 'success');
+            if (draft.exitState) finishExitSession(draft.exitState);
+        }
     };
 
     const closeSummaryModal = () => {
@@ -540,43 +592,55 @@ const DateApp: React.FC = () => {
         finishExitSession(finalState);
     };
 
-    const buildDraftFromSavedSummary = async (finalState: DateState): Promise<SummaryDraft | null> => {
-        if (!char) return null;
+    /** Remove all bridge messages created during this date session */
+    const cleanSessionBridges = async () => {
+        if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
         const sessionMessages = getCurrentSessionMessages(allMsgs);
-        if (sessionMessages.length === 0) return null;
+        if (sessionMessages.length === 0) return;
+        const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+        const sessionStartMsgId = sessionMessages[0].id;
+        const bridges = allMsgs.filter(m =>
+            m.metadata?.source === 'date' && m.metadata?.isDateContextBridge === true
+            && (m.metadata?.sessionStartMsgId === sessionStartMsgId
+                || (Array.isArray(m.metadata?.coveredMsgIds) && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number))))
+        );
+        if (bridges.length > 0) {
+            await DB.deleteMessages(bridges.map(m => m.id));
+            console.log(`[Date] Cleaned ${bridges.length} bridge messages on 'none' exit`);
+        }
+    };
 
+    /** Create a bridge message from an existing saved summary */
+    const createBridgeFromSummary = async (): Promise<boolean> => {
+        if (!char) return false;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentSessionMessages(allMsgs);
+        if (sessionMessages.length === 0) return false;
         const sessionStartMsgId = sessionMessages[0].id;
         const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
-        const savedSummaries = allMsgs
+        const savedSummary = allMsgs
             .filter(isDateSummaryMessage)
-            .sort((a, b) => b.timestamp - a.timestamp || b.id - a.id);
-        const savedSummary = savedSummaries.find(m => m.metadata?.sessionStartMsgId === sessionStartMsgId)
-            || savedSummaries.find(m => (
-                Array.isArray(m.metadata?.coveredMsgIds)
-                && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
-            ));
-
-        if (!savedSummary) return null;
-
+            .sort((a, b) => b.timestamp - a.timestamp || b.id - a.id)
+            .find(m => m.metadata?.sessionStartMsgId === sessionStartMsgId
+                || (Array.isArray(m.metadata?.coveredMsgIds) && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number))));
+        if (!savedSummary) return false;
+        const existingBridge = allMsgs.find(m =>
+            m.metadata?.source === 'date' && m.metadata?.isDateContextBridge === true && m.metadata?.summarySourceMsgId === savedSummary.id
+        );
+        if (existingBridge) return true;
         const coveredMsgIds = Array.isArray(savedSummary.metadata?.coveredMsgIds)
             ? savedSummary.metadata.coveredMsgIds.filter((id: unknown): id is number => typeof id === 'number')
             : sessionMessages.map(m => m.id);
-        const lastCoveredMsgId = coveredMsgIds[coveredMsgIds.length - 1] || savedSummary.id;
-
-        return {
-            content: savedSummary.content,
-            summaryType: savedSummary.metadata?.summaryType === 'auto' ? 'auto' : 'manual',
-            coveredMsgIds,
-            sessionStartMsgId,
-            promptSnapshot: typeof savedSummary.metadata?.promptSnapshot === 'string' ? savedSummary.metadata.promptSnapshot : '',
-            lastCoveredMsgId,
-            bridgeOnSave: true,
-            bridgeOnly: true,
-            bridgeAlreadySaved: savedSummary.metadata?.isDateContextBridge === true,
-            sourceSummaryMsgId: savedSummary.id,
-            exitState: finalState,
-        };
+        await DB.saveMessage({
+            charId: char.id, role: 'system', type: 'text', content: savedSummary.content,
+            metadata: {
+                source: 'date', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'summary',
+                coveredMsgIds, sessionStartMsgId, summarySourceMsgId: savedSummary.id,
+                promptSnapshot: savedSummary.metadata?.promptSnapshot || '',
+            },
+        });
+        return true;
     };
 
     const renderSummaryModal = () => {
@@ -821,7 +885,7 @@ const DateApp: React.FC = () => {
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
         const userPov = char.datePerspective || 'second';
         const charPov = char.dateCharPerspective || 'third';
-        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov);
+        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, undefined, char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -889,7 +953,7 @@ const DateApp: React.FC = () => {
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
         const userPovR = char.datePerspective || 'second';
         const charPovR = char.dateCharPerspective || 'third';
-        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotionsR, userPovR, charPovR);
+        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotionsR, userPovR, charPovR, undefined, char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPovR, charPovR);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -962,31 +1026,18 @@ const DateApp: React.FC = () => {
     const onExitSession = async (finalState: DateState, syncMode: DateExitSyncMode) => {
         if (!char) return;
         if (syncMode === 'none') {
+            await cleanSessionBridges();
             finishExitSession(finalState);
             return;
         }
-        if (syncMode === 'raw') {
-            await saveRawBridgeAndExit(finalState);
-            return;
-        }
-
+        if (syncMode === 'raw') { await saveRawBridgeAndExit(finalState); return; }
+        // syncMode === 'summary'
+        // Generate a comprehensive exit summary (auto-summaries + unsummarized messages)
         if (pendingAutoSummary) {
-            setActiveSummaryDraft({ ...pendingAutoSummary, bridgeOnSave: true, fromPendingAuto: true, exitState: finalState });
-            return;
+            await saveSummaryDraft({ ...pendingAutoSummary, fromPendingAuto: true, exitState: finalState });
         }
-
-        const savedSummaryDraft = await buildDraftFromSavedSummary(finalState);
-        if (savedSummaryDraft) {
-            setActiveSummaryDraft(savedSummaryDraft);
-            return;
-        }
-
-        const draft = await generateSummaryDraft('manual');
-        if (!draft) {
-            addToast('未同步总结，仅保存进度', 'info');
-            finishExitSession(finalState);
-            return;
-        }
+        const draft = await generateExitSummaryDraft();
+        if (!draft) { addToast('未同步总结，仅保存进度', 'info'); finishExitSession(finalState); return; }
         setActiveSummaryDraft({ ...draft, bridgeOnSave: true, exitState: finalState });
     };
 
@@ -1187,6 +1238,10 @@ const DateApp: React.FC = () => {
                     }}
                     onChangeThreshold={(threshold) => updateCharacter(char.id, { dateSummaryAutoThreshold: threshold })}
                     onOpenSummarySettings={openSummarySettings}
+                    wordCount={char.dateOutputWordCount}
+                    writingStyle={char.dateWritingStyle}
+                    onChangeWordCount={(count) => updateCharacter(char.id, { dateOutputWordCount: count })}
+                    onChangeWritingStyle={(style) => updateCharacter(char.id, { dateWritingStyle: style })}
                 />
 
                 {/* Global Message Edit Modal for Session Mode */}

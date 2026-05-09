@@ -150,6 +150,10 @@ export interface CharacterProfile {
     dateSummaryLastAutoMsgId?: number; // Last date message id covered by auto summary
     dateSummaryAutoHideEnabled?: boolean; // Hide summarized date messages, keeping only recent context
 
+    // Date output tuning
+    dateOutputWordCount?: number;          // Target reply word count (0 or undefined = default ~150)
+    dateWritingStyle?: string;             // Writing style preset key or custom prompt text
+
     // Theater (520) Summary System
     theaterSummaryPrompt?: string;           // User-customized theater summary prompt
     theaterSummaryAutoEnabled?: boolean;     // Auto theater summary toggle

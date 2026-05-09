@@ -12,7 +12,7 @@ import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
-import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge } from '../../utils/dateSummaryPrompts';
+import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
@@ -54,11 +54,9 @@ type SummaryDraft = {
     sessionStartMsgId: number;
     promptSnapshot: string;
     lastCoveredMsgId: number;
-    bridgeOnSave?: boolean;
-    bridgeOnly?: boolean;
-    bridgeAlreadySaved?: boolean;
-    sourceSummaryMsgId?: number;
     fromPendingAuto?: boolean;
+    /** Set only during exit flow — after saving, also create bridge + finishExit */
+    bridgeOnSave?: boolean;
 };
 
 const THEATER_SUMMARY_CONTEXT_KEEP_COUNT = 5;
@@ -186,6 +184,9 @@ const TheaterApp: React.FC = () => {
     const [transitionLocationName, setTransitionLocationName] = useState('');
     // ── Director Location Suggestion ──
     const [pendingLocationSuggestion, setPendingLocationSuggestion] = useState<LocationSuggestion | null>(null);
+
+    // ── Inline Location Sheet ──
+    const [showLocationSheet, setShowLocationSheet] = useState(false);
 
     const secondaryApiConfig = getSecondaryApiConfig();
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
@@ -472,7 +473,7 @@ const TheaterApp: React.FC = () => {
                         body: JSON.stringify({
                             model: secondaryConfig.model || apiConfig!.model,
                             messages: [{ role: 'user', content: prompt }],
-                            temperature: 0.7, max_tokens: 400,
+                            temperature: 0.7,
                         }),
                     },
                 );
@@ -713,7 +714,6 @@ const TheaterApp: React.FC = () => {
                             model: secondaryConfig.model || apiConfig.model,
                             messages: [{ role: 'user', content: directorPrompt }],
                             temperature: 0.7,
-                            max_tokens: 400,
                         }),
                     });
 
@@ -964,6 +964,110 @@ const TheaterApp: React.FC = () => {
         }
     };
 
+    /**
+     * Generate a comprehensive exit summary:
+     * Combines existing auto-summaries + unsummarized raw messages into one complete summary.
+     */
+    const generateExitSummaryDraft = async (): Promise<SummaryDraft | null> => {
+        if (!char || summaryGeneratingRef.current) return null;
+        const secondaryConfig = getSecondaryApiConfig();
+        const selectedApi = hasCompleteApiConfig(secondaryConfig) ? secondaryConfig : apiConfig;
+        if (!hasCompleteApiConfig(selectedApi)) { addToast('请先配置 API', 'error'); return null; }
+
+        summaryGeneratingRef.current = true;
+        setIsSummaryGenerating(true);
+        try {
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) { addToast('还没有可总结的剧场内容', 'info'); return null; }
+
+            const sessionStartMsgId = sessionMessages[0].id;
+            const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+
+            // Gather existing auto-summaries for this session
+            const savedSummaries = allMsgs
+                .filter(isTheaterSummaryMessage)
+                .filter(s => s.metadata?.sessionStartMsgId === sessionStartMsgId
+                    || (Array.isArray(s.metadata?.coveredMsgIds) && s.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number))))
+                .sort((a, b) => a.timestamp - b.timestamp);
+
+            // Gather IDs covered by existing summaries
+            const coveredByExistingSummaries = new Set<number>();
+            for (const s of savedSummaries) {
+                if (Array.isArray(s.metadata?.coveredMsgIds)) {
+                    for (const id of s.metadata.coveredMsgIds) {
+                        if (typeof id === 'number') coveredByExistingSummaries.add(id);
+                    }
+                }
+            }
+
+            // Find messages NOT yet covered by any summary
+            const unsummarizedMessages = sessionMessages.filter(m => !coveredByExistingSummaries.has(m.id));
+
+            // Build the prompt: summaries + new raw messages
+            const promptSnapshot = char.theaterSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
+            let exitPromptContent = '';
+
+            if (savedSummaries.length > 0) {
+                const summaryBlocks = savedSummaries.map((s, i) => `### 已总结片段 ${i + 1}\n${s.content}`).join('\n\n');
+                exitPromptContent += `【之前的阶段总结】\n${summaryBlocks}\n\n`;
+            }
+
+            if (unsummarizedMessages.length > 0) {
+                const rawBlock = formatMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
+                exitPromptContent += `【未总结的新记录】\n${rawBlock}\n\n`;
+            } else if (savedSummaries.length > 0) {
+                exitPromptContent += '（所有内容均已在上方总结中覆盖）\n\n';
+            }
+
+            if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
+
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次520约会剧场写最终总结。
+请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的总结。
+
+当前时间: ${new Date().toLocaleString()}
+
+${exitPromptContent}
+【输出要求】
+- 使用 Markdown。
+- 写成 ${char.name} 之后能自然记住的事实与情绪脉络。
+- 保留关键事件、关系变化、未说出口的情绪、值得之后线上承接的小细节。
+- 不要生成新的剧情，不要改写已经发生的事实。
+- 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
+
+            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
+                body: JSON.stringify({
+                    model: selectedApi.model,
+                    messages: [
+                        { role: 'system', content: '你负责把520约会剧场的所有记录整理成一份完整的最终总结。只输出总结正文。' },
+                    { role: 'user', content: fullPrompt },
+                    ],
+                    temperature: 0.45,
+                }),
+            });
+            if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
+            const data = await safeResponseJson(response);
+            const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+            const content = extracted.content.trim();
+            if (!content) throw new Error('Exit summary content empty');
+
+            const allCoveredMsgIds = sessionMessages.map(m => m.id);
+            return {
+                content, summaryType: 'manual', coveredMsgIds: allCoveredMsgIds,
+                sessionStartMsgId, promptSnapshot,
+                lastCoveredMsgId: allCoveredMsgIds[allCoveredMsgIds.length - 1],
+            };
+        } catch (e: any) {
+            addToast(`总结生成失败: ${e.message || e}`, 'error');
+            return null;
+        } finally {
+            summaryGeneratingRef.current = false;
+            setIsSummaryGenerating(false);
+        }
+    };
+
     const hideCoveredMsgIds = async (coveredMsgIds: number[], summaryMsgId: number) => {
         const idsToHide = coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - THEATER_SUMMARY_CONTEXT_KEEP_COUNT));
         if (idsToHide.length === 0) return;
@@ -974,28 +1078,12 @@ const TheaterApp: React.FC = () => {
 
     const saveSummaryDraft = async (draft: SummaryDraft) => {
         if (!char) return;
-        if (draft.bridgeAlreadySaved) {
-            if (char.theaterSummaryAutoHideEnabled && draft.sourceSummaryMsgId) await hideCoveredMsgIds(draft.coveredMsgIds, draft.sourceSummaryMsgId);
-            setActiveSummaryDraft(null);
-            addToast('已复用已保存总结同步到主聊天', 'success');
-            return;
-        }
-        if (draft.bridgeOnly) {
-            const bridgeMsgId = await DB.saveMessage({
-                charId: char.id, role: 'system', type: 'text', content: draft.content,
-                metadata: { source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'summary', coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot, summarySourceMsgId: draft.sourceSummaryMsgId },
-            });
-            if (char.theaterSummaryAutoHideEnabled) await hideCoveredMsgIds(draft.coveredMsgIds, draft.sourceSummaryMsgId || bridgeMsgId);
-            setActiveSummaryDraft(null);
-            addToast('已复用已保存总结同步到主聊天', 'success');
-            return;
-        }
+        // Save summary as pure summary — NO bridge flag in metadata.
         const savedId = await DB.saveMessage({
             charId: char.id, role: 'system', type: 'text', content: draft.content,
             metadata: {
                 source: 'theater', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
                 coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
-                ...(draft.bridgeOnSave ? { isDateContextBridge: true, bridgeType: 'summary' } : {}),
             },
         });
         if (char.theaterSummaryAutoHideEnabled) await hideCoveredMsgIds(draft.coveredMsgIds, savedId);
@@ -1003,7 +1091,14 @@ const TheaterApp: React.FC = () => {
         if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
         await refreshTimelineMessages();
-        addToast(draft.bridgeOnSave ? '总结已同步到主聊天' : '总结已保存', 'success');
+        // If this save was triggered from exit flow, create bridge then exit
+        if (draft.bridgeOnSave) {
+            const bridged = await createBridgeFromSummary();
+            addToast(bridged ? '总结已同步到主聊天' : '总结已保存', 'success');
+            finishExit();
+        } else {
+            addToast('总结已保存', 'success');
+        }
     };
 
     const discardSummaryDraft = () => {
@@ -1142,6 +1237,67 @@ const TheaterApp: React.FC = () => {
         addToast(`新世界线「${autoLabel}」已创建`, 'success');
     }, [char, session, currentTimelineId, currentLocation, addToast]);
 
+    /** Remove all bridge messages created during this theater session */
+    const cleanSessionBridges = async () => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        if (sessionMessages.length === 0) return;
+        const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+        const sessionStartMsgId = sessionMessages[0].id;
+        // Find bridge messages that belong to this session
+        const bridges = allMsgs.filter(m =>
+            m.metadata?.source === 'theater'
+            && m.metadata?.isDateContextBridge === true
+            && (
+                m.metadata?.sessionStartMsgId === sessionStartMsgId
+                || (Array.isArray(m.metadata?.coveredMsgIds) && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number)))
+            )
+        );
+        if (bridges.length > 0) {
+            await DB.deleteMessages(bridges.map(m => m.id));
+            console.log(`[Theater] Cleaned ${bridges.length} bridge messages on 'none' exit`);
+        }
+    };
+
+    /** Create a bridge message from an existing saved summary */
+    const createBridgeFromSummary = async (): Promise<boolean> => {
+        if (!char) return false;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        if (sessionMessages.length === 0) return false;
+        const sessionStartMsgId = sessionMessages[0].id;
+        const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+        // Find the latest saved summary for this session
+        const savedSummary = allMsgs
+            .filter(isTheaterSummaryMessage)
+            .sort((a, b) => b.timestamp - a.timestamp || b.id - a.id)
+            .find(m =>
+                m.metadata?.sessionStartMsgId === sessionStartMsgId
+                || (Array.isArray(m.metadata?.coveredMsgIds) && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number)))
+            );
+        if (!savedSummary) return false;
+        // Check if a bridge for this summary already exists
+        const existingBridge = allMsgs.find(m =>
+            m.metadata?.source === 'theater'
+            && m.metadata?.isDateContextBridge === true
+            && m.metadata?.summarySourceMsgId === savedSummary.id
+        );
+        if (existingBridge) return true; // Already bridged
+        const coveredMsgIds = Array.isArray(savedSummary.metadata?.coveredMsgIds)
+            ? savedSummary.metadata.coveredMsgIds.filter((id: unknown): id is number => typeof id === 'number')
+            : sessionMessages.map(m => m.id);
+        await DB.saveMessage({
+            charId: char.id, role: 'system', type: 'text', content: savedSummary.content,
+            metadata: {
+                source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'summary',
+                coveredMsgIds, sessionStartMsgId, summarySourceMsgId: savedSummary.id,
+                promptSnapshot: savedSummary.metadata?.promptSnapshot || '',
+            },
+        });
+        return true;
+    };
+
     const saveRawBridgeAndExit = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
@@ -1159,14 +1315,20 @@ const TheaterApp: React.FC = () => {
 
     const onExitSession = async (syncMode: TheaterExitSyncMode) => {
         if (!char) return;
-        if (syncMode === 'none') { finishExit(); return; }
-        if (syncMode === 'raw') { await saveRawBridgeAndExit(); return; }
-        // syncMode === 'summary'
-        if (pendingAutoSummary) {
-            setActiveSummaryDraft({ ...pendingAutoSummary, bridgeOnSave: true, fromPendingAuto: true });
+        if (syncMode === 'none') {
+            await cleanSessionBridges();
+            finishExit();
             return;
         }
-        const draft = await generateSummaryDraft('manual');
+        if (syncMode === 'raw') { await saveRawBridgeAndExit(); return; }
+        // syncMode === 'summary'
+        // Generate a comprehensive exit summary (auto-summaries + unsummarized messages)
+        // and show in modal for user review
+        if (pendingAutoSummary) {
+            // Save the pending auto summary first so it can be included
+            await saveSummaryDraft({ ...pendingAutoSummary, fromPendingAuto: true });
+        }
+        const draft = await generateExitSummaryDraft();
         if (!draft) { addToast('未同步总结，仅保存进度', 'info'); finishExit(); return; }
         setActiveSummaryDraft({ ...draft, bridgeOnSave: true });
     };
@@ -1408,7 +1570,14 @@ const TheaterApp: React.FC = () => {
                         setActiveWhispers([]);
                         await handleSendMessage(w.whisper, w.secret || undefined);
                     }}
-                    onChangeLocation={() => setMode('map')}
+                    locations={locations}
+                    visitedLocationIds={session?.visitedLocationIds || []}
+                    onSelectLocation={handleSelectLocation}
+                    onAddLocation={handleAddLocation}
+                    onDeleteCustomLocation={handleDeleteCustomLocation}
+                    showLocationSheet={showLocationSheet}
+                    onCloseLocationSheet={() => setShowLocationSheet(false)}
+                    onOpenLocationSheet={() => setShowLocationSheet(true)}
                     onExit={handleExit}
                     timelineLabel={currentTimelineId ? (charTimelines.find(t => t.timelineId === currentTimelineId)?.label || undefined) : undefined}
                     onForkFromMessage={(msg) => { setForkTargetMsg(msg); setForkLabel(''); setShowForkModal(true); }}

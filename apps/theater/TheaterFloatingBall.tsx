@@ -6,7 +6,7 @@
  */
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, useMotionValue, PanInfo } from 'framer-motion';
+import { motion, useMotionValue, AnimatePresence, PanInfo } from 'framer-motion';
 
 const DEFAULT_BALL_ICON = '/theater-ball-default.png';
 const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
@@ -39,10 +39,12 @@ const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resol
 });
 import type { BgmStatus } from '../../utils/theaterBgm';
 
+
 interface TheaterFloatingBallProps {
     charId: string;
-    onChangeLocation: () => void;
     onOpenSettings: () => void;
+    /** Location — open full sheet */
+    onOpenFullLocationSheet: () => void;
     /** BGM state */
     bgmStatus: BgmStatus;
     bgmEnabled: boolean;
@@ -72,6 +74,44 @@ interface TheaterFloatingBallProps {
 const BALL_SIZE = 56;
 const EDGE_PADDING = 10;
 
+/* ── Handheld device color tokens ── */
+const P = {
+    // Shell (outer casing) — cream plastic feel
+    shell: 'linear-gradient(155deg, #FFF0F3 0%, #FFE0EA 25%, #FFD1DC 55%, #FFC5D3 80%, #FFB8CC 100%)',
+    shellBorder: 'rgba(210,140,165,0.7)',
+    shellHighlight: 'rgba(255,255,255,0.7)',
+    shellInnerShadow: 'inset 0 2px 10px rgba(200,110,140,0.18), inset 0 -2px 6px rgba(255,255,255,0.7), inset 2px 0 6px rgba(255,255,255,0.3), inset -2px 0 6px rgba(200,130,160,0.08)',
+    shellEdge: '0 1px 0 rgba(255,255,255,0.8), inset 0 0 0 1px rgba(255,255,255,0.25)',
+    // Screen (inner display) — inset cream white
+    screenBg: 'linear-gradient(180deg, #FFFBFC 0%, #FFF5F8 40%, #FFF0F4 100%)',
+    screenBorder: 'rgba(190,130,155,0.45)',
+    screenInnerShadow: 'inset 0 2px 8px rgba(170,100,130,0.18), inset 0 0 4px rgba(180,120,150,0.1)',
+    screenPixelGrid: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,200,220,0.06) 3px, rgba(255,200,220,0.06) 4px), repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(255,200,220,0.06) 3px, rgba(255,200,220,0.06) 4px)',
+    // Status bar
+    statusBg: 'linear-gradient(180deg, rgba(255,215,230,0.7) 0%, rgba(255,225,238,0.5) 100%)',
+    // Buttons — jelly press feel
+    cardBg: 'linear-gradient(180deg, rgba(255,235,245,0.7) 0%, rgba(255,218,232,0.5) 100%)',
+    cardHover: 'rgba(255,200,220,0.7)',
+    cardBorder: 'rgba(255,165,190,0.45)',
+    cardInnerShadow: 'inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -1px 2px rgba(200,130,160,0.12)',
+    cardPressShadow: 'inset 0 2px 4px rgba(200,130,160,0.2), inset 0 1px 2px rgba(180,100,130,0.1)',
+    textPri: '#5A3040', textSec: '#B08090', accent: '#D4607A',
+    btnPink: '#FF7AA2', btnPinkBg: 'rgba(255,122,162,0.15)',
+    btnPinkSolid: 'linear-gradient(135deg, #FF8FAB 0%, #FF6B95 100%)',
+    toggleOn: '#FFB7C5', toggleOff: 'rgba(200,180,190,0.3)',
+    divider: 'rgba(255,143,171,0.18)',
+    // Shadows — thicker device shadow
+    deviceShadow: '0 14px 44px rgba(190,90,130,0.28), 0 6px 16px rgba(255,143,171,0.22), 0 2px 4px rgba(200,120,150,0.15)',
+    btnShadow: '0 2px 6px rgba(200,100,140,0.15)',
+    // Lock card
+    lockBg: 'rgba(255,230,240,0.55)',
+    lockBorder: 'rgba(255,175,200,0.35)',
+    lockText: 'rgba(170,110,140,0.65)',
+    // Control module
+    moduleBg: 'linear-gradient(180deg, rgba(255,238,245,0.6) 0%, rgba(255,225,238,0.4) 100%)',
+    moduleBorder: 'rgba(255,170,195,0.35)',
+} as const;
+
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
 
 const readPos = (key: string) => {
@@ -87,29 +127,20 @@ const defaultPos = () => ({
     y: typeof window !== 'undefined' ? Math.max(EDGE_PADDING, Math.round(window.innerHeight * 0.42)) : 200,
 });
 
-/* ── Placeholder menu item ── */
-const PlaceholderItem: React.FC<{ icon: React.ReactNode; label: string }> = ({ icon, label }) => (
-    <div className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 opacity-40 cursor-not-allowed">
-        <div className="flex items-center gap-2.5">
-            <span className="text-base">{icon}</span>
-            <span className="text-xs text-white/70">{label}</span>
-        </div>
-        <span className="text-[9px] text-white/30 tracking-wider">即将推出</span>
-    </div>
-);
+
 
 const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     charId,
-    onChangeLocation,
     onOpenSettings,
+    onOpenFullLocationSheet,
     bgmStatus, bgmEnabled, bgmVolume,
-    onBgmToggle, onBgmVolumeChange, onBgmRegenerate,
+    onBgmToggle, onBgmVolumeChange, onBgmRegenerate: _onBgmRegenerate,
     isSummaryGenerating, hasPendingSummary, canManualSummary, canAutoSummary,
     summaryDisabledReason,
     onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
-    onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
-    onOpenSummarySettings,
-    theaterSummaryAutoEnabled, theaterSummaryAutoHideEnabled, theaterSummaryAutoThreshold,
+    onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold: _onChangeThreshold,
+    onOpenSummarySettings: _onOpenSummarySettings,
+    theaterSummaryAutoEnabled, theaterSummaryAutoHideEnabled, theaterSummaryAutoThreshold: _theaterSummaryAutoThreshold,
 }) => {
     const storageKey = `theater_ball_pos_${charId}`;
     const iconKey = `${ICON_STORAGE_PREFIX}${charId}`;
@@ -118,6 +149,14 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     const [panelOpen, setPanelOpen] = useState(false);
     const [position, setPosition] = useState(() => readPos(storageKey) || defaultPos());
     const [dragging, setDragging] = useState(false);
+    const [memoryExpanded, setMemoryExpanded] = useState(false);
+
+    // Responsive panel width: 62-68% of screen, clamped 240–280 (mini remote)
+    const panelWidth = useMemo(() => {
+        const w = typeof window !== 'undefined' ? window.innerWidth : 375;
+        return Math.max(240, Math.min(280, Math.round(w * 0.65)));
+    }, []);
+
     const [customIcon, setCustomIcon] = useState<string | null>(() => {
         try { return localStorage.getItem(iconKey); } catch { return null; }
     });
@@ -166,17 +205,7 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
         return () => window.removeEventListener('resize', onResize);
     }, [storageKey]);
 
-    const panelPlacement = useMemo(() => ({
-        horizontal: position.x > window.innerWidth - 240 ? 'left' as const : 'right' as const,
-        vertical: position.y > window.innerHeight - 340 ? 'up' as const : 'down' as const,
-    }), [position]);
 
-    const panelStyle: React.CSSProperties = {
-        left: panelPlacement.horizontal === 'right' ? BALL_SIZE + 8 : undefined,
-        right: panelPlacement.horizontal === 'left' ? BALL_SIZE + 8 : undefined,
-        top: panelPlacement.vertical === 'down' ? -4 : undefined,
-        bottom: panelPlacement.vertical === 'up' ? -4 : undefined,
-    };
 
     const commitPos = (_: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
         const maxX = Math.max(EDGE_PADDING, window.innerWidth - BALL_SIZE - EDGE_PADDING);
@@ -215,19 +244,14 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                     onChange={handleIconUpload}
                 />
 
-                {/* Irregular glow keyframes */}
                 <style>{`
                   @keyframes theater-irregular-glow {
-                    0%, 100% {
-                      filter: drop-shadow(0 0 6px rgba(255,154,187,0.6))
-                             drop-shadow(0 0 14px rgba(255,107,157,0.3))
-                             drop-shadow(0 0 2px rgba(255,200,220,0.5));
-                    }
-                    50% {
-                      filter: drop-shadow(0 0 10px rgba(255,154,187,0.9))
-                             drop-shadow(0 0 22px rgba(255,107,157,0.5))
-                             drop-shadow(0 0 4px rgba(255,220,235,0.7));
-                    }
+                    0%, 100% { filter: drop-shadow(0 0 6px rgba(255,154,187,0.6)) drop-shadow(0 0 14px rgba(255,107,157,0.3)); }
+                    50% { filter: drop-shadow(0 0 10px rgba(255,154,187,0.9)) drop-shadow(0 0 22px rgba(255,107,157,0.5)); }
+                  }
+                  @keyframes heart-float {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-3px); }
                   }
                 `}</style>
                 {/* Ball — irregular shape, no clipping */}
@@ -254,232 +278,313 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                         }}
                     />
                 </button>
+            </motion.div>
 
-                {/* Panel */}
+                {/* ═══ Handheld Device Panel — Fixed Center ═══ */}
+                <AnimatePresence>
                 {panelOpen && (
-                    <div
-                        className="control-panel absolute w-56 rounded-2xl border p-3 text-white shadow-2xl"
+                    <motion.div
+                        key="theater-panel-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18 }}
                         style={{
-                            ...panelStyle,
-                            background: 'rgba(15, 5, 10, 0.85)',
-                            backdropFilter: 'blur(28px) saturate(1.4)',
-                            WebkitBackdropFilter: 'blur(28px) saturate(1.4)',
-                            borderColor: 'rgba(255,107,157,0.15)',
+                            position: 'fixed',
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'center',
+                            paddingTop: '12vh',
+                            zIndex: 1001,
+                            pointerEvents: 'none',
+                        }}
+                    >
+                    <motion.div
+                        initial={{ scale: 0.88, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.88, opacity: 0 }}
+                        transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+                        style={{
+                            width: panelWidth,
+                            maxHeight: '60vh',
+                            overflow: 'visible',
+                            pointerEvents: 'auto',
                         }}
                         onClick={e => e.stopPropagation()}
                     >
-                        {/* Header */}
-                        <div className="flex items-center justify-between mb-3 px-1">
-                            <span className="text-[11px] font-bold tracking-widest" style={{ color: 'rgba(255,107,157,0.8)' }}>✦ 520 工具箱</span>
-                            <button
-                                type="button"
-                                onClick={() => setPanelOpen(false)}
-                                className="w-6 h-6 rounded-full flex items-center justify-center"
-                                style={{ background: 'rgba(255,255,255,0.06)' }}
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="rgba(255,255,255,0.4)" width={12} height={12}>
+                        {/* ▸ LAYER 1: Device Shell (outer casing) */}
+                        <div style={{
+                            background: P.shell,
+                            borderRadius: 34,
+                            border: `3px solid ${P.shellBorder}`,
+                            boxShadow: `${P.deviceShadow}, ${P.shellInnerShadow}, ${P.shellEdge}`,
+                            padding: '12px 10px 14px',
+                            position: 'relative',
+                        }}>
+                            {/* Shell top highlight — cream plastic reflection */}
+                            <div style={{
+                                position: 'absolute', top: 5, left: 18, right: 18, height: 4,
+                                borderRadius: 3, background: `linear-gradient(90deg, transparent 0%, ${P.shellHighlight} 30%, ${P.shellHighlight} 70%, transparent 100%)`, opacity: 0.8,
+                            }} />
+                            {/* Shell left edge highlight */}
+                            <div style={{
+                                position: 'absolute', top: 30, left: 3, bottom: 30, width: 3,
+                                borderRadius: 2, background: 'rgba(255,255,255,0.35)',
+                            }} />
+                            {/* Bow decoration - top left, small, not blocking title */}
+                            <img src="/theater-panel-bow.png" alt="" draggable={false} style={{
+                                position: 'absolute', top: -16, left: 6, width: 36, height: 'auto',
+                                pointerEvents: 'none', filter: 'drop-shadow(0 2px 4px rgba(255,143,171,0.3))',
+                                zIndex: 2, opacity: 0.85,
+                            }} />
+                            {/* Close button - candy pill, top right */}
+                            <button type="button" onClick={() => setPanelOpen(false)} style={{
+                                position: 'absolute', top: -8, right: -6, zIndex: 3,
+                                width: 28, height: 28, border: '2.5px solid rgba(255,155,180,0.6)',
+                                borderRadius: '50%', cursor: 'pointer', display: 'flex',
+                                alignItems: 'center', justifyContent: 'center',
+                                background: 'linear-gradient(145deg, #FFC4D4 0%, #FF8FAB 50%, #FF6B95 100%)',
+                                boxShadow: '0 3px 10px rgba(255,107,149,0.35), inset 0 1px 2px rgba(255,255,255,0.4)',
+                            }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="#fff" width={11} height={11}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                                 </svg>
                             </button>
-                        </div>
 
-                        <div className="space-y-0.5">
-                            {/* Scene Switch — working */}
-                            <button
-                                type="button"
-                                onClick={() => { setPanelOpen(false); onChangeLocation(); }}
-                                className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-colors active:bg-white/10"
-                                style={{ background: 'rgba(255,255,255,0.04)' }}
-                            >
-                                <span className="text-base">🗺️</span>
-                                <span className="text-xs text-white/80 font-medium">场景切换</span>
-                            </button>
-
-                            {/* Settings — working */}
-                            <button
-                                type="button"
-                                onClick={() => { setPanelOpen(false); onOpenSettings(); }}
-                                className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 transition-colors active:bg-white/10"
-                                style={{ background: 'rgba(255,255,255,0.04)' }}
-                            >
-                                <span className="text-base">⚙️</span>
-                                <span className="text-xs text-white/80 font-medium">立绘设置</span>
-                            </button>
-
-                            {/* Divider */}
-                            <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
-
-                            {/* BGM — functional */}
-                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                                <button
-                                    type="button"
-                                    onClick={onBgmToggle}
-                                    className="w-full flex items-center justify-between gap-2 mb-1"
-                                >
-                                    <div className="flex items-center gap-2.5">
-                                        <span className="text-base">{bgmEnabled ? '🎵' : '🔇'}</span>
-                                        <span className="text-xs text-white/80 font-medium">氛围 BGM</span>
+                            {/* ▸ LAYER 2: Screen area (inset cream display) */}
+                            <div style={{
+                                background: P.screenBg,
+                                backgroundImage: P.screenPixelGrid,
+                                borderRadius: 20,
+                                border: `2px solid ${P.screenBorder}`,
+                                boxShadow: P.screenInnerShadow,
+                                padding: '0 0 10px',
+                                marginTop: 8,
+                                overflow: 'hidden',
+                            }}>
+                                {/* ── Status Bar ── */}
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '6px 12px 5px', background: P.statusBg,
+                                    borderBottom: `1px solid ${P.divider}`,
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <svg width="16" height="10" viewBox="0 0 16 10" fill="none">
+                                            <rect x="0" y="7" width="3" height="3" rx="0.5" fill={P.accent} opacity="1"/>
+                                            <rect x="4" y="4" width="3" height="6" rx="0.5" fill={P.accent} opacity="0.8"/>
+                                            <rect x="8" y="2" width="3" height="8" rx="0.5" fill={P.accent} opacity="0.6"/>
+                                            <rect x="12" y="0" width="3" height="10" rx="0.5" fill={P.accent} opacity="0.3"/>
+                                        </svg>
+                                        <span style={{ fontSize: 8, color: P.textSec }}>♡</span>
                                     </div>
-                                    <span className="text-[9px] tracking-wider" style={{
-                                        color: bgmStatus === 'generating' ? 'rgba(255,182,73,0.8)'
-                                            : bgmStatus === 'ready' ? 'rgba(130,255,170,0.7)'
-                                            : bgmStatus === 'error' ? 'rgba(255,100,100,0.7)'
-                                            : 'rgba(255,255,255,0.3)',
-                                    }}>
-                                        {bgmStatus === 'generating' ? '生成中…'
-                                            : bgmStatus === 'ready' ? '播放中'
-                                            : bgmStatus === 'error' ? '失败'
-                                            : bgmEnabled ? '等待' : '已关闭'}
+                                    <span style={{ fontSize: 11, fontWeight: 800, color: P.accent, letterSpacing: 1.5 }}>
+                                        恋爱控制器
                                     </span>
-                                </button>
-                                {bgmEnabled && (
-                                    <div className="flex items-center gap-2 mt-1">
-                                        <span className="text-[10px] text-white/30">🔈</span>
-                                        <input
-                                            type="range"
-                                            min={0}
-                                            max={100}
-                                            value={Math.round(bgmVolume * 100)}
-                                            onChange={e => onBgmVolumeChange(Number(e.target.value) / 100)}
-                                            className="flex-1 h-1 rounded-full appearance-none cursor-pointer"
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                        <span style={{ fontSize: 7, color: P.textSec }}>520</span>
+                                        <svg width="18" height="10" viewBox="0 0 18 10" fill="none">
+                                            <rect x="0.5" y="0.5" width="14" height="9" rx="2" stroke={P.accent} strokeWidth="1"/>
+                                            <rect x="15" y="3" width="2" height="4" rx="0.5" fill={P.accent} opacity="0.5"/>
+                                            <rect x="2" y="2" width="9" height="6" rx="1" fill={P.btnPink} opacity="0.7"/>
+                                        </svg>
+                                    </div>
+                                </div>
+
+                                {/* ── 2×2 Function Buttons ── */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '10px 10px 8px' }}>
+                                    {[
+                                        { icon: (
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                                                <circle cx="12" cy="12" r="3"/>
+                                            </svg>
+                                        ), label: '场景切换', onClick: () => { setPanelOpen(false); onOpenFullLocationSheet(); } },
+                                        { icon: (
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M20.38 3.46 16 2 12 4 8 2 3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6l-1 12h14l-1-12h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>
+                                            </svg>
+                                        ), label: '立绘设置', onClick: () => { setPanelOpen(false); onOpenSettings(); } },
+                                        { icon: (
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                                            </svg>
+                                        ), label: '恋爱BGM', onClick: () => onBgmToggle(), active: bgmEnabled },
+                                        { icon: (
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/>
+                                            </svg>
+                                        ), label: '记忆整理', onClick: () => setMemoryExpanded(v => !v), active: memoryExpanded },
+                                    ].map(item => (
+                                        <button key={item.label} type="button" onClick={item.onClick}
                                             style={{
-                                                background: `linear-gradient(to right, rgba(255,107,157,0.6) ${bgmVolume * 100}%, rgba(255,255,255,0.1) ${bgmVolume * 100}%)`,
-                                                accentColor: '#ff6b9d',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                                justifyContent: 'center', gap: 5, padding: '12px 6px',
+                                                borderRadius: 14,
+                                                background: item.active ? P.cardHover : P.cardBg,
+                                                border: `1.5px solid ${item.active ? P.btnPink : P.cardBorder}`,
+                                                boxShadow: item.active
+                                                    ? `0 0 12px rgba(255,122,162,0.2), ${P.cardPressShadow}`
+                                                    : `${P.btnShadow}, ${P.cardInnerShadow}`,
+                                                cursor: 'pointer', transition: 'all 0.18s',
                                             }}
-                                        />
-                                        <span className="text-[10px] text-white/30">🔊</span>
-                                    </div>
-                                )}
-                                {bgmStatus === 'ready' && bgmEnabled && (
-                                    <button
-                                        type="button"
-                                        onClick={onBgmRegenerate}
-                                        className="w-full mt-1.5 text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                                            onMouseDown={e => {
+                                                e.currentTarget.style.transform = 'scale(0.94) translateY(1px)';
+                                                e.currentTarget.style.boxShadow = P.cardPressShadow;
+                                            }}
+                                            onMouseUp={e => {
+                                                e.currentTarget.style.transform = 'scale(1)';
+                                                e.currentTarget.style.boxShadow = `${P.btnShadow}, ${P.cardInnerShadow}`;
+                                            }}
+                                            onMouseLeave={e => {
+                                                e.currentTarget.style.transform = 'scale(1)';
+                                                e.currentTarget.style.boxShadow = `${P.btnShadow}, ${P.cardInnerShadow}`;
+                                            }}>
+                                            {item.icon}
+                                            <span style={{ fontSize: 10, fontWeight: 700, color: P.textPri, letterSpacing: 0.5 }}>{item.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* ── Memory Sub-Panel (collapsible, animated) ── */}
+                                <AnimatePresence>
+                                {memoryExpanded && (
+                                    <motion.div
+                                        key="memory-sub-panel"
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        transition={{ duration: 0.22, ease: 'easeInOut' }}
+                                        style={{ overflow: 'hidden', padding: '0 10px' }}
                                     >
-                                        🔄 重新生成
-                                    </button>
+                                        <div style={{
+                                            borderRadius: 12, padding: '8px 10px 7px', marginBottom: 6,
+                                            background: P.moduleBg, border: `1px solid ${P.moduleBorder}`,
+                                            boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08), inset 0 -1px 0 rgba(255,255,255,0.4)',
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                                                <span style={{ fontSize: 9, color: P.textPri, fontWeight: 700 }}>记忆整理</span>
+                                            </div>
+                                            {/* Toggle: 自动总结 */}
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                                                <span style={{ fontSize: 8, color: P.textPri, fontWeight: 500 }}>自动总结</span>
+                                                {canAutoSummary ? (
+                                                    <button type="button" onClick={() => onToggleAutoSummary?.(!theaterSummaryAutoEnabled)}
+                                                        style={{ width: 30, height: 16, borderRadius: 8, background: theaterSummaryAutoEnabled ? P.toggleOn : P.toggleOff, border: 'none', cursor: 'pointer', position: 'relative' }}>
+                                                        <span style={{ position: 'absolute', top: 1.5, left: theaterSummaryAutoEnabled ? 15 : 1.5, width: 13, height: 13, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.15)', transition: 'left 0.2s' }} />
+                                                    </button>
+                                                ) : <span style={{ fontSize: 7, color: P.textSec }}>{summaryDisabledReason || '需副API'}</span>}
+                                            </div>
+                                            {/* Toggle: 旧回忆收纳 */}
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                                                <span style={{ fontSize: 8, color: P.textSec, fontWeight: 500 }}>旧回忆收纳</span>
+                                                <button type="button" onClick={() => onToggleAutoHideSummary?.(!theaterSummaryAutoHideEnabled)}
+                                                    style={{ width: 30, height: 16, borderRadius: 8, background: theaterSummaryAutoHideEnabled ? P.toggleOn : P.toggleOff, border: 'none', cursor: 'pointer', position: 'relative' }}>
+                                                    <span style={{ position: 'absolute', top: 1.5, left: theaterSummaryAutoHideEnabled ? 15 : 1.5, width: 13, height: 13, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.15)', transition: 'left 0.2s' }} />
+                                                </button>
+                                            </div>
+                                            {hasPendingSummary && (
+                                                <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                                                    <button type="button" onClick={onReviewPendingSummary} style={{ flex: 1, fontSize: 8, padding: '3px 0', borderRadius: 6, background: 'rgba(255,183,197,0.15)', color: P.btnPink, border: 'none', cursor: 'pointer', fontWeight: 600 }}>查看</button>
+                                                    <button type="button" onClick={onDiscardPendingSummary} style={{ fontSize: 8, padding: '3px 6px', borderRadius: 6, background: 'rgba(200,180,190,0.12)', color: P.textSec, border: 'none', cursor: 'pointer' }}>丢弃</button>
+                                                </div>
+                                            )}
+                                            {/* Primary action */}
+                                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                                <button type="button" onClick={onRequestSummary} disabled={isSummaryGenerating || !canManualSummary}
+                                                    style={{ width: '78%', fontSize: 9, padding: '5px 0', borderRadius: 10,
+                                                        background: P.btnPinkSolid, color: '#fff', border: 'none', cursor: 'pointer',
+                                                        fontWeight: 700, opacity: (isSummaryGenerating || !canManualSummary) ? 0.35 : 1,
+                                                        boxShadow: '0 2px 6px rgba(255,107,149,0.25)' }}>
+                                                    {isSummaryGenerating ? '整理中…' : '✦ 立即整理'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </motion.div>
                                 )}
+                                </AnimatePresence>
+
+                                {/* ── Mini BGM Status Bar ── */}
+                                <div style={{ padding: '0 10px 6px' }}>
+                                    <div style={{
+                                        borderRadius: 10, padding: '6px 10px',
+                                        background: P.moduleBg, border: `1px solid ${P.moduleBorder}`,
+                                        boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08), inset 0 -1px 0 rgba(255,255,255,0.4)',
+                                        display: 'flex', alignItems: 'center', gap: 6,
+                                    }}>
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill={P.btnPink} stroke="none"><path d="M9 18V5l12-2v13M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
+                                        <span style={{ flex: 1, fontSize: 8, color: P.textSec, fontStyle: 'italic', letterSpacing: 0.3 }}>
+                                            {bgmStatus === 'generating' ? '♪ 心动频率生成中…' : bgmStatus === 'ready' ? '♡ 心动频率播放中' : bgmEnabled ? '♪ 等待心动频率…' : '♪ 心动频率已静音'}
+                                        </span>
+                                        <input type="range" min={0} max={100} value={Math.round(bgmVolume * 100)}
+                                            onChange={e => onBgmVolumeChange(Number(e.target.value) / 100)}
+                                            style={{ width: 50, height: 3, borderRadius: 3, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer',
+                                                background: `linear-gradient(to right, ${P.btnPink} ${bgmVolume * 100}%, ${P.toggleOff} ${bgmVolume * 100}%)`,
+                                                accentColor: P.btnPink }} />
+                                    </div>
+                                </div>
                             </div>
-                            {/* Divider */}
-                            <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
+                            {/* End Screen */}
 
-                            {/* ── Summary Controls ── */}
-                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                                {/* Auto Summary Toggle */}
-                                <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-2.5">
-                                        <span className="text-base">📝</span>
-                                        <span className="text-xs text-white/80 font-medium">自动总结</span>
-                                    </div>
-                                    {canAutoSummary ? (
-                                        <button
-                                            type="button"
-                                            onClick={() => onToggleAutoSummary?.(!theaterSummaryAutoEnabled)}
-                                            className="w-9 h-5 rounded-full transition-colors relative"
-                                            style={{ background: theaterSummaryAutoEnabled ? 'rgba(130,255,170,0.4)' : 'rgba(255,255,255,0.1)' }}
-                                        >
-                                            <span className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow" style={{ left: theaterSummaryAutoEnabled ? 18 : 2 }} />
-                                        </button>
-                                    ) : (
-                                        <span className="text-[9px] text-white/30 tracking-wider">{summaryDisabledReason || '需副API'}</span>
-                                    )}
+                            {/* ── Sticker Slot (贴纸仓) ── */}
+                            <div style={{
+                                margin: '8px 6px 0', borderRadius: 14, padding: '7px 10px',
+                                background: 'linear-gradient(180deg, rgba(255,242,248,0.7) 0%, rgba(255,235,244,0.5) 100%)',
+                                border: `1.5px solid rgba(255,170,200,0.35)`,
+                                boxShadow: 'inset 0 1px 4px rgba(200,140,170,0.1), inset 0 -1px 0 rgba(255,255,255,0.5)',
+                                display: 'flex', alignItems: 'center', gap: 8,
+                            }}>
+                                <div style={{
+                                    width: 38, height: 38, borderRadius: 10,
+                                    background: 'rgba(255,245,250,0.8)', border: `1.5px dashed ${P.cardBorder}`,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    flexShrink: 0, overflow: 'hidden',
+                                    boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08)',
+                                }}>
+                                    <img src={ballIconUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
                                 </div>
-                                {/* Threshold */}
-                                {theaterSummaryAutoEnabled && (
-                                    <div className="flex items-center gap-2 mt-1 mb-1">
-                                        <span className="text-[10px] text-white/40">每</span>
-                                        <input
-                                            type="number"
-                                            min={8}
-                                            max={100}
-                                            value={theaterSummaryAutoThreshold || 20}
-                                            onChange={e => onChangeThreshold?.(Math.max(8, Number(e.target.value) || 20))}
-                                            className="w-12 text-center text-[11px] rounded-lg py-0.5 bg-white/5 text-white/70 border border-white/10 outline-none"
-                                        />
-                                        <span className="text-[10px] text-white/40">条触发</span>
-                                    </div>
-                                )}
-                                {/* Auto Hide Toggle */}
-                                <div className="flex items-center justify-between mt-1">
-                                    <span className="text-[10px] text-white/50">压缩旧记录</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => onToggleAutoHideSummary?.(!theaterSummaryAutoHideEnabled)}
-                                        className="w-9 h-5 rounded-full transition-colors relative"
-                                        style={{ background: theaterSummaryAutoHideEnabled ? 'rgba(130,255,170,0.4)' : 'rgba(255,255,255,0.1)' }}
-                                    >
-                                        <span className="absolute top-0.5 transition-all w-4 h-4 rounded-full bg-white shadow" style={{ left: theaterSummaryAutoHideEnabled ? 18 : 2 }} />
-                                    </button>
-                                </div>
-                                {/* Pending Summary */}
-                                {hasPendingSummary && (
-                                    <div className="flex gap-1.5 mt-2">
-                                        <button type="button" onClick={onReviewPendingSummary} className="flex-1 text-[10px] py-1.5 rounded-lg" style={{ background: 'rgba(130,255,170,0.15)', color: 'rgba(130,255,170,0.9)' }}>
-                                            查看待确认
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                    <span style={{ fontSize: 9, color: P.textPri, fontWeight: 600 }}>贴贴图片</span>
+                                    <div style={{ display: 'flex', gap: 4 }}>
+                                        <button type="button" onClick={() => fileInputRef.current?.click()}
+                                            style={{ flex: 1, padding: '4px 0', borderRadius: 8, fontSize: 9, fontWeight: 700,
+                                                background: P.btnPinkSolid, color: '#fff', border: 'none', cursor: 'pointer',
+                                                boxShadow: '0 1px 4px rgba(255,107,149,0.25)' }}>
+                                            换一张
                                         </button>
-                                        <button type="button" onClick={onDiscardPendingSummary} className="text-[10px] py-1.5 px-2 rounded-lg text-white/30" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                                            丢弃
-                                        </button>
+                                        {customIcon && (
+                                            <button type="button" onClick={handleResetIcon}
+                                                style={{ padding: '4px 8px', borderRadius: 8, fontSize: 9,
+                                                    background: 'rgba(255,240,248,0.6)', color: P.textSec, border: `1px solid ${P.divider}`, cursor: 'pointer' }}>
+                                                重置
+                                            </button>
+                                        )}
                                     </div>
-                                )}
-                                {/* Manual Summary + Settings */}
-                                <div className="flex gap-1.5 mt-2">
-                                    <button
-                                        type="button"
-                                        onClick={onRequestSummary}
-                                        disabled={isSummaryGenerating || !canManualSummary}
-                                        className="flex-1 text-[10px] py-1.5 rounded-lg transition-colors disabled:opacity-30"
-                                        style={{ background: 'rgba(255,107,157,0.15)', color: 'rgba(255,107,157,0.9)' }}
-                                    >
-                                        {isSummaryGenerating ? '生成中…' : '手动总结'}
-                                    </button>
-                                    <button type="button" onClick={onOpenSummarySettings} className="text-[10px] py-1.5 px-2 rounded-lg text-white/40" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                                        ⚙
-                                    </button>
                                 </div>
                             </div>
 
-                            {/* Remaining placeholders */}
-                            <PlaceholderItem icon="📸" label="记忆印记" />
-                            <PlaceholderItem icon="💭" label="心情读取" />
-                            <PlaceholderItem icon="📷" label="取景框" />
-
-                            {/* Divider */}
-                            <div className="my-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />
-
-                            {/* Custom Icon */}
-                            <div className="rounded-xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2.5">
-                                        <span className="text-base">🎨</span>
-                                        <span className="text-xs text-white/80 font-medium">悬浮球图标</span>
-                                    </div>
-                                </div>
-                                <div className="flex gap-2 mt-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="flex-1 text-[10px] py-1.5 rounded-lg transition-colors active:bg-white/10"
-                                        style={{ background: 'rgba(255,107,157,0.15)', color: 'rgba(255,107,157,0.9)' }}
-                                    >
-                                        上传图片
-                                    </button>
-                                    {customIcon && (
-                                        <button
-                                            type="button"
-                                            onClick={handleResetIcon}
-                                            className="flex-1 text-[10px] py-1.5 rounded-lg text-white/40 transition-colors active:bg-white/10"
-                                            style={{ background: 'rgba(255,255,255,0.06)' }}
-                                        >
-                                            恢复默认
-                                        </button>
-                                    )}
-                                </div>
+                            {/* ▸ Home Button — cream plastic inset */}
+                            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 10 }}>
+                                <button type="button" onClick={() => setPanelOpen(false)}
+                                    style={{
+                                        width: 34, height: 34, borderRadius: '50%',
+                                        background: 'linear-gradient(155deg, #FFF0F3 0%, #FFE0EA 40%, #FFD1DC 100%)',
+                                        border: `2.5px solid ${P.shellBorder}`,
+                                        boxShadow: 'inset 0 1px 3px rgba(255,255,255,0.6), inset 0 -1px 2px rgba(200,130,160,0.15), 0 3px 8px rgba(200,120,150,0.2)',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        animation: 'heart-float 2.5s ease-in-out infinite',
+                                    }}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={P.btnPink} width={15} height={15}>
+                                        <path d="m11.645 20.91-.007-.003-.022-.012a15.247 15.247 0 0 1-.383-.218 25.18 25.18 0 0 1-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0 1 12 5.052 5.5 5.5 0 0 1 16.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 0 1-4.244 3.17 15.247 15.247 0 0 1-.383.219l-.022.012-.007.004-.003.001a.752.752 0 0 1-.704 0l-.003-.001Z" />
+                                    </svg>
+                                </button>
                             </div>
                         </div>
-                    </div>
+                    </motion.div>
+                    </motion.div>
                 )}
-            </motion.div>
+                </AnimatePresence>
         </div>
     );
 });

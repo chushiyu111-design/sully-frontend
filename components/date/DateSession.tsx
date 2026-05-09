@@ -74,6 +74,11 @@ interface DateSessionProps {
     onToggleAutoHideSummary: (enabled: boolean) => void;
     onChangeThreshold: (threshold: number) => void;
     onOpenSummarySettings: () => void;
+    // Output tuning
+    wordCount?: number;
+    writingStyle?: string;
+    onChangeWordCount: (count: number | undefined) => void;
+    onChangeWritingStyle: (style: string | undefined) => void;
 }
 
 export type DateExitSyncMode = 'summary' | 'raw' | 'none';
@@ -100,7 +105,11 @@ const DateSession: React.FC<DateSessionProps> = ({
     onToggleAutoSummary,
     onToggleAutoHideSummary,
     onChangeThreshold,
-    onOpenSummarySettings}) => {
+    onOpenSummarySettings,
+    wordCount,
+    writingStyle,
+    onChangeWordCount,
+    onChangeWritingStyle}) => {
     const { addToast, registerBackHandler } = useOS();
     
     // Core VN State
@@ -518,6 +527,10 @@ const DateSession: React.FC<DateSessionProps> = ({
                 onToggleAutoHideSummary={onToggleAutoHideSummary}
                 onChangeThreshold={onChangeThreshold}
                 onOpenSettings={onOpenSummarySettings}
+                wordCount={wordCount}
+                writingStyle={writingStyle}
+                onChangeWordCount={onChangeWordCount}
+                onChangeWritingStyle={onChangeWritingStyle}
             />
 
             {/* Novel Mode View */}

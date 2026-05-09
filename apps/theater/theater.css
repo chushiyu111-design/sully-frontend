@@ -2316,3 +2316,406 @@
         padding: 8px 12px;
     }
 }
+
+/* ══════════════════════════════════════════════════════
+   Inline Location Sheet — 底部抽屉式场景选择器
+   粉色毛玻璃，在 session 内渲染
+   ══════════════════════════════════════════════════════ */
+
+/* Overlay */
+.tls-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 500;
+    background: rgba(0, 0, 0, 0.45);
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Sheet container */
+.tls-sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 510;
+    max-height: 72vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: 24px 24px 0 0;
+    background: linear-gradient(180deg, rgba(255, 240, 248, 0.97) 0%, rgba(255, 230, 240, 0.97) 100%);
+    backdrop-filter: blur(40px) saturate(1.4);
+    -webkit-backdrop-filter: blur(40px) saturate(1.4);
+    box-shadow: 0 -8px 40px rgba(200, 100, 140, 0.2), 0 -2px 10px rgba(255, 143, 171, 0.15);
+    border-top: 1.5px solid rgba(255, 200, 220, 0.6);
+}
+
+/* Drag handle */
+.tls-handle-bar {
+    display: flex;
+    justify-content: center;
+    padding: 10px 0 4px;
+    flex-shrink: 0;
+}
+
+.tls-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(200, 140, 170, 0.3);
+}
+
+/* Header */
+.tls-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 18px 8px;
+    flex-shrink: 0;
+}
+
+.tls-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tls-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #5A3040;
+    letter-spacing: 1px;
+}
+
+.tls-time-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    background: rgba(255, 200, 220, 0.4);
+    font-size: 11px;
+    font-weight: 600;
+    color: #B08090;
+}
+
+/* Current location indicator */
+.tls-current {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 16px 10px;
+    padding: 8px 14px;
+    border-radius: 12px;
+    background: rgba(255, 122, 162, 0.08);
+    border: 1px solid rgba(255, 122, 162, 0.15);
+    flex-shrink: 0;
+}
+
+.tls-current-pin { font-size: 12px; }
+.tls-current-label { font-size: 11px; color: #B08090; font-weight: 500; }
+.tls-current-name { font-size: 12px; color: #D4607A; font-weight: 700; letter-spacing: 0.5px; }
+
+/* Scrollable grid area */
+.tls-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 12px 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.tls-scroll::-webkit-scrollbar { display: none; }
+
+/* 2-column grid */
+.tls-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+/* Card */
+.tls-card {
+    border-radius: 14px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1.5px solid rgba(255, 180, 200, 0.3);
+    background: rgba(255, 255, 255, 0.6);
+    box-shadow: 0 2px 8px rgba(200, 120, 150, 0.08);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tls-card:active {
+    transform: scale(0.96);
+    box-shadow: 0 1px 4px rgba(200, 120, 150, 0.12);
+}
+
+.tls-card--current {
+    border-color: rgba(212, 96, 122, 0.4);
+    box-shadow: 0 0 0 2px rgba(212, 96, 122, 0.12), 0 2px 8px rgba(200, 120, 150, 0.1);
+    pointer-events: none;
+    opacity: 0.65;
+}
+
+/* Card image area */
+.tls-card-img {
+    position: relative;
+    height: 70px;
+    overflow: hidden;
+}
+
+.tls-card-img-bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+}
+
+.tls-card-img-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 20%, rgba(0, 0, 0, 0.55) 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 8px 10px;
+}
+
+.tls-card-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.5px;
+}
+
+.tls-card-name-en {
+    font-size: 8px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.6);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 1px;
+}
+
+.tls-card-current-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: rgba(212, 96, 122, 0.85);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+/* Card info area */
+.tls-card-info {
+    padding: 7px 10px 8px;
+}
+
+.tls-card-hint {
+    font-size: 9px;
+    color: #B08090;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.tls-card-tags {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+}
+
+.tls-card-tag {
+    font-size: 8px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 200, 220, 0.35);
+    color: #B08090;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+
+.tls-card-tag--custom {
+    background: rgba(255, 200, 50, 0.12);
+    color: rgba(200, 160, 50, 0.8);
+}
+
+/* Add new card */
+.tls-card--add {
+    border-style: dashed;
+    border-color: rgba(255, 170, 195, 0.35);
+    background: rgba(255, 240, 248, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 110px;
+}
+
+.tls-card-add-inner {
+    text-align: center;
+}
+
+.tls-card-add-icon {
+    font-size: 22px;
+    color: rgba(212, 96, 122, 0.4);
+    margin-bottom: 4px;
+}
+
+.tls-card-add-title {
+    font-size: 10px;
+    color: #B08090;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+/* Footer */
+.tls-footer {
+    flex-shrink: 0;
+    padding: 6px 16px max(env(safe-area-inset-bottom, 12px), 12px);
+}
+
+.tls-close-btn {
+    width: 100%;
+    padding: 10px 0;
+    border-radius: 12px;
+    border: 1px solid rgba(200, 160, 180, 0.3);
+    background: rgba(255, 230, 240, 0.5);
+    color: #B08090;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tls-close-btn:active {
+    transform: scale(0.97);
+    background: rgba(255, 210, 225, 0.6);
+}
+
+/* ══════════════════════════════════════════════════════
+   Floating Ball — Quick Location Pills (面板内快捷场景)
+   ══════════════════════════════════════════════════════ */
+
+.tlq-current {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: rgba(255, 122, 162, 0.1);
+    border: 1px solid rgba(255, 122, 162, 0.15);
+}
+
+.tlq-current-pin { font-size: 11px; }
+.tlq-current-label { font-size: 9px; color: rgba(180, 128, 144, 0.8); font-weight: 500; }
+.tlq-current-name {
+    font-size: 10px;
+    color: #D4607A;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.tlq-pills {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 8px;
+}
+
+.tlq-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 170, 195, 0.35);
+    background: rgba(255, 225, 238, 0.45);
+    cursor: pointer;
+    transition: all 0.18s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tlq-pill:active {
+    transform: scale(0.96);
+    background: rgba(255, 200, 220, 0.6);
+    border-color: rgba(255, 122, 162, 0.4);
+}
+
+.tlq-pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #FFB7C5, #FF8FAB);
+    flex-shrink: 0;
+}
+
+.tlq-pill-name {
+    font-size: 10px;
+    font-weight: 600;
+    color: #5A3040;
+    letter-spacing: 0.3px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tlq-pill-tags {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.tlq-pill-tag {
+    font-size: 7px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 200, 220, 0.4);
+    color: #B08090;
+    font-weight: 500;
+}
+
+.tlq-pill-arrow {
+    font-size: 10px;
+    color: rgba(180, 128, 144, 0.5);
+    flex-shrink: 0;
+}
+
+.tlq-show-all {
+    width: 100%;
+    padding: 7px 0;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 143, 171, 0.2);
+    background: linear-gradient(135deg, rgba(255, 143, 171, 0.1), rgba(255, 107, 149, 0.05));
+    color: #D4607A;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tlq-show-all:active {
+    transform: scale(0.97);
+    background: rgba(255, 143, 171, 0.18);
+}
+
+.tlq-empty {
+    text-align: center;
+    padding: 8px 0;
+    font-size: 9px;
+    color: rgba(180, 128, 144, 0.5);
+    font-style: italic;
+}

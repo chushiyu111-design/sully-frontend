@@ -116,6 +116,8 @@ export class MinimaxTtsWs {
     private sessionId: string = '';
     /** 防止 onTaskFinished 被重复触发（task_finished 事件 + onclose 安全网） */
     private taskFinishedEmitted = false;
+    /** Worker 代理发送的诊断错误信息（proxy_error 消息） */
+    private lastProxyError: string = '';
 
     // 用于 await 风格的 Promise resolve/reject
     private connectResolve: (() => void) | null = null;
@@ -183,6 +185,7 @@ export class MinimaxTtsWs {
                 this.close();
             }
             this.taskFinishedEmitted = false;
+            this.lastProxyError = '';
 
             this.connectResolve = resolve;
             this.connectReject = reject;
@@ -211,20 +214,12 @@ export class MinimaxTtsWs {
 
             this.ws.onmessage = (event) => this.handleMessage(event);
 
-            this.ws.onerror = (event) => {
-                console.error('[TTS WS] WebSocket error:', event);
-                this.callbacks.onError?.('WebSocket 连接错误');
-                if (this.connectReject) {
-                    this.connectReject(new Error('WebSocket 连接失败'));
-                    this.connectResolve = null;
-                    this.connectReject = null;
-                }
-                if (this.startReject) {
-                    this.startReject(new Error('WebSocket 连接中断'));
-                    this.startResolve = null;
-                    this.startReject = null;
-                }
-                this.setState('error');
+            this.ws.onerror = () => {
+                // WebSocket error events don't carry useful detail; the close
+                // event (which fires immediately after) provides code & reason.
+                console.error('[TTS WS] WebSocket error event fired (details in onclose)');
+                // Don't reject here — let onclose handle it with code + reason
+                // to avoid swallowing the proxy_error diagnostic message.
             };
 
             this.ws.onclose = (event) => {
@@ -236,6 +231,25 @@ export class MinimaxTtsWs {
                 if (this.startTimeout) {
                     clearTimeout(this.startTimeout);
                     this.startTimeout = null;
+                }
+
+                // 连接阶段异常关闭（Worker 代理拒绝、上游不可达等）
+                if (this.connectReject) {
+                    const reason = event.reason || `WebSocket closed (code=${event.code})`;
+                    // 使用 proxyError 提供更具体的诊断（如果有）
+                    const detail = this.lastProxyError || reason;
+                    this.connectReject(new Error(`[TTS WS] ${detail}`));
+                    this.connectResolve = null;
+                    this.connectReject = null;
+                    this.callbacks.onError?.(detail);
+                    this.setState('error');
+                    this.ws = null;
+                    return;
+                }
+                if (this.startReject) {
+                    this.startReject(new Error('WebSocket 连接中断'));
+                    this.startResolve = null;
+                    this.startReject = null;
                 }
 
                 // 如果等 finish 的 Promise 还没 resolve，现在 resolve 它
@@ -424,6 +438,15 @@ export class MinimaxTtsWs {
             data = JSON.parse(event.data);
         } catch {
             console.warn('[TTS WS] 无法解析消息:', event.data);
+            return;
+        }
+
+        // Worker 代理发送的诊断错误消息（上游连接失败等）
+        if (data.type === 'proxy_error') {
+            const errorMsg = data.error || 'Worker 代理错误';
+            console.error(`[TTS WS] 代理错误 (phase=${data.phase}): ${errorMsg}`);
+            this.lastProxyError = errorMsg;
+            // onclose 会紧随其后触发，由 onclose 负责 reject connectPromise
             return;
         }
 

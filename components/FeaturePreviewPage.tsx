@@ -100,7 +100,7 @@ const FEATURE_CATEGORIES: FeatureCategory[] = [
       { icon: BookOpenText, name: '交换日记', desc: '和 char 互写日记，你写一篇 ta 回一篇' },
       { icon: SealCheck, name: '时光契约', desc: '纪念日、日程和约定管理，设定了 ta 会记得' },
       { icon: Heart, name: '见面', desc: '和 char 约见面，选地点、选活动' },
-      { icon: Sparkle, name: '约会剧场', desc: '沉浸式约会剧情模式，像玩乙女游戏一样推进故事' },
+      { icon: Sparkle, name: '约会', desc: '让我们一起恋爱吧——沉浸式约会剧情模式，像玩乙女游戏一样推进故事' },
       { icon: House, name: '小小窝', desc: '和 char 共同生活的小房间，可以装修、放家具、换立绘' },
       { icon: PiggyBank, name: '存钱罐', desc: '和 char 一起攒钱，设立储蓄目标' },
       { icon: Books, name: '自习室', desc: '和 char 一起学习，互相陪伴和监督' },

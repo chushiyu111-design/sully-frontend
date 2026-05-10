@@ -118,8 +118,7 @@ const InlineLocationSheet: React.FC<InlineLocationSheetProps> = ({
                                     <span className="tls-title">切换场景</span>
                                 </div>
                                 <div className="tls-time-badge">
-                                    <span>{timeLabel.icon}</span>
-                                    <span>{timeLabel.zh}场</span>
+                                    <span>{timeLabel.zh}</span>
                                 </div>
                             </div>
 

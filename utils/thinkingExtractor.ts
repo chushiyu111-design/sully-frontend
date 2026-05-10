@@ -164,7 +164,7 @@ export function stripCoTResidual(content: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Inner Whispers (内心低语) — 520 约会剧场 CYOA 选项提取器
+// Inner Whispers (内心低语) — 约会 CYOA 选项提取器
 // ═══════════════════════════════════════════════════════════════
 
 /** A single whisper option surfaced from the AI's response */

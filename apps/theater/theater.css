@@ -1,5 +1,5 @@
 /**
- * Theater 520 — 约会剧场主题样式
+ * Theater 520 — 约会主题样式
  * 热粉甜蜜 + 毛玻璃 + 花瓣飘落 + 微动画
  */
 
@@ -698,12 +698,46 @@
     box-shadow:
         0 2px 10px rgba(255, 180, 210, 0.10),
         inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    transition: border-color 0.4s, box-shadow 0.4s;
 }
 
-.theater-time-icon {
-    font-size: 13px;
-    animation: theater-pulse 3s ease-in-out infinite;
+/* SVG icon inside time badge */
+.theater-time-slot-icon {
+    flex-shrink: 0;
+    opacity: 0.75;
+    transition: color 0.3s;
 }
+
+/* ── Time-slot color variants ── */
+.theater-time-badge--morning {
+    border-color: rgba(255, 180, 80, 0.35);
+    box-shadow: 0 2px 10px rgba(255, 180, 80, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.theater-time-badge--morning .theater-time-slot-icon { color: #E8963A; }
+
+.theater-time-badge--afternoon {
+    border-color: rgba(255, 140, 100, 0.30);
+    box-shadow: 0 2px 10px rgba(255, 140, 100, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.theater-time-badge--afternoon .theater-time-slot-icon { color: #E87040; }
+
+.theater-time-badge--evening {
+    border-color: rgba(200, 120, 180, 0.30);
+    box-shadow: 0 2px 10px rgba(200, 120, 180, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.theater-time-badge--evening .theater-time-slot-icon { color: #B86AA0; }
+
+.theater-time-badge--night {
+    border-color: rgba(120, 130, 200, 0.30);
+    box-shadow: 0 2px 10px rgba(120, 130, 200, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.theater-time-badge--night .theater-time-slot-icon { color: #6B6FC0; }
+
+/* Session dot color variants */
+.theater-map-session-dot--morning  { background: #E8963A; }
+.theater-map-session-dot--afternoon { background: #E87040; }
+.theater-map-session-dot--evening  { background: #B86AA0; }
+.theater-map-session-dot--night    { background: #6B6FC0; }
 
 /* ── Map Session Info + Tagline ── */
 

@@ -9,12 +9,15 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession,{ DateExitSyncMode } from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
-import { buildDatePreamble,buildTheaterScene,buildDateTail } from '../utils/datePrompts';
+import { buildDatePreamble,buildTheaterScene,buildDateTail,buildDateTimeBlock } from '../utils/datePrompts';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../utils/thinkingExtractor';
 import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge,formatMessagesForSummary } from '../utils/dateSummaryPrompts';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
 import { stripTranslationTags } from '../utils/chatParser';
+import { getInitialTimeSlot } from '../utils/theaterDirector';
+import { RealtimeContextManager } from '../utils/realtimeContext';
+import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../utils/dateEndingPrompts';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
@@ -585,10 +588,16 @@ ${exitPromptContent}
         }
     };
 
-    const finishExitSession = (finalState: DateState) => {
+    const finishExitSession = (finalState: DateState, isDateEnd?: boolean) => {
         if (char) {
-            updateCharacter(char.id, { savedDateState: finalState });
-            addToast('进度已保存', 'success');
+            if (isDateEnd) {
+                // 约会正式结束 — 清除存档，下次是全新约会
+                updateCharacter(char.id, { savedDateState: undefined });
+            } else {
+                // 暂时离开 — 保存进度
+                updateCharacter(char.id, { savedDateState: finalState });
+                addToast('进度已保存', 'success');
+            }
         }
         setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
@@ -827,7 +836,8 @@ ${exitPromptContent}
                 return `${m.role}: ${content}`;
             }).join('\n');
 
-            const timeStr = `${virtualTime.day} ${formatTime()}`;
+            const timeCtx = RealtimeContextManager.getTimeContext();
+            const timeStr = `${timeCtx.dateStr} ${timeCtx.dayOfWeek} ${timeCtx.timeStr} ${timeCtx.timeOfDay}`;
 
             // Build system prompt: dreamweaver + identity intro + core context
             let peekSystemPrompt = buildDatePreamble(c.name, userProfile.name);
@@ -910,11 +920,12 @@ ${exitPromptContent}
         let systemPrompt = buildDatePreamble(char.name, userProfile.name);
         systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
         systemPrompt += buildDateSummaryMemoryPrompt(allMsgs);
+        systemPrompt += buildDateTimeBlock();
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
         const userPov = char.datePerspective || 'second';
         const charPov = char.dateCharPerspective || 'third';
-        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, undefined, char.dateOutputWordCount, char.dateWritingStyle);
+        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, getInitialTimeSlot(), char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -986,11 +997,12 @@ ${exitPromptContent}
         let systemPrompt = buildDatePreamble(char.name, userProfile.name);
         systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
         systemPrompt += buildDateSummaryMemoryPrompt(allMsgs);
+        systemPrompt += buildDateTimeBlock();
         const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
         const userPovR = char.datePerspective || 'second';
         const charPovR = char.dateCharPerspective || 'third';
-        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotionsR, userPovR, charPovR, undefined, char.dateOutputWordCount, char.dateWritingStyle);
+        systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotionsR, userPovR, charPovR, getInitialTimeSlot(), char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPovR, charPovR);
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -1061,22 +1073,138 @@ ${exitPromptContent}
         addToast('已删除本次见面记录', 'success');
     };
 
-    const onExitSession = async (finalState: DateState, syncMode: DateExitSyncMode) => {
+    const onExitSession = async (finalState: DateState, syncMode: DateExitSyncMode, isDateEnd?: boolean) => {
         if (!char) return;
         if (syncMode === 'none') {
             await cleanSessionBridges();
-            finishExitSession(finalState);
+            finishExitSession(finalState, isDateEnd);
             return;
         }
-        if (syncMode === 'raw') { await saveRawBridgeAndExit(finalState); return; }
+        if (syncMode === 'raw') {
+            await saveRawBridgeAndExit(finalState);
+            if (isDateEnd && char) updateCharacter(char.id, { savedDateState: undefined });
+            return;
+        }
         // syncMode === 'summary'
-        // Generate a comprehensive exit summary (auto-summaries + unsummarized messages)
         if (pendingAutoSummary) {
             await saveSummaryDraft({ ...pendingAutoSummary, fromPendingAuto: true, exitState: finalState });
         }
         const draft = await generateExitSummaryDraft();
-        if (!draft) { addToast('未同步总结，仅保存进度', 'info'); finishExitSession(finalState); return; }
+        if (!draft) {
+            addToast('未同步总结，仅保存进度', 'info');
+            finishExitSession(finalState, isDateEnd);
+            return;
+        }
         setActiveSummaryDraft({ ...draft, bridgeOnSave: true, exitState: finalState });
+        if (isDateEnd && char) updateCharacter(char.id, { savedDateState: undefined });
+    };
+
+    // ====== Date Ending Three-Act Ceremony API Calls ======
+
+    const getEndingSessionContext = async (): Promise<string> => {
+        if (!char) return '';
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMsgs = getCurrentSessionMessages(allMsgs)
+            .filter(m => !m.metadata?.hiddenFromUser && !m.metadata?.isSummary);
+        return formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+    };
+
+    const handleGenerateGiftReaction = async (userGift: string): Promise<string> => {
+        if (!char) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildGiftExchangePrompt(char.name, userProfile.name, userGift, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    const handleGenerateFarewell = async (): Promise<string> => {
+        if (!char) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildFarewellPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    const handleGenerateMetaLetter = async (): Promise<string> => {
+        if (!char) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildMetaLetterPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.8,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    /** Save the meta letter to DB so it can be viewed in history */
+    const handleSaveMetaLetter = async (letterContent: string): Promise<void> => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentSessionMessages(allMsgs);
+        const sessionStartMsgId = sessionMessages.length > 0 ? sessionMessages[0].id : undefined;
+
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content: letterContent,
+            metadata: {
+                source: 'date',
+                isMetaLetter: true,
+                sessionStartMsgId,
+            },
+        });
     };
 
     const openHistory = async (c: CharacterProfile) => {
@@ -1286,6 +1414,10 @@ ${exitPromptContent}
                     onToggleTranslation={setDateTranslationEnabled}
                     onSetTranslateSourceLang={setDateTranslateSourceLang}
                     onSetTranslateTargetLang={setDateTranslateTargetLang}
+                    onGenerateGiftReaction={handleGenerateGiftReaction}
+                    onGenerateFarewell={handleGenerateFarewell}
+                    onGenerateMetaLetter={handleGenerateMetaLetter}
+                    onSaveMetaLetter={handleSaveMetaLetter}
                 />
 
                 {/* Global Message Edit Modal for Session Mode */}

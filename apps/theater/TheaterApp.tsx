@@ -1,18 +1,20 @@
 /**
- * TheaterApp — 520 约会剧场 主入口
+ * TheaterApp — 约会 主入口
  * 模式流转: select → map → session
  * 导演引擎 (副API) + 角色扮演 (主API) 双API架构
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import { ContextBuilder } from '../../utils/context';
 import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
-import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
+import { buildDatePreamble, buildTheaterScene, buildDateTail, buildDateTimeBlock } from '../../utils/datePrompts';
+import { withCharacterTtsVoice } from '../../utils/characterTts';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
+import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../../utils/dateEndingPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
 import { TIME_SLOT_LABELS } from '../../types/theater';
@@ -129,11 +131,11 @@ const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
         const label = s.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
         return `### 已总结片段 ${i + 1}（${label}）\n${s.content}`;
     }).join('\n\n');
-    return `\n\n### 【本次剧场的已总结上下文】\n以下是本次剧场中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
+    return `\n\n### 【本次约会的已总结上下文】\n以下是本次约会中较早内容的压缩总结。它们是刚才约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
 };
 
 const TheaterApp: React.FC = () => {
-    const { closeApp, characters, setActiveCharacterId, apiConfig, addToast, userProfile, updateCharacter } = useOS();
+    const { closeApp, characters, setActiveCharacterId, apiConfig, addToast, userProfile, updateCharacter, ttsConfig } = useOS();
 
     // ── Core State ──
     const [mode, setMode] = useState<Mode>('select');
@@ -159,6 +161,17 @@ const TheaterApp: React.FC = () => {
 
     // ── Exit Review ──
     const [showExitReview, setShowExitReview] = useState(false);
+
+    // ── Ending Ceremony State ──
+    type EndingPhase = 'none' | 'gift' | 'gift-reaction' | 'farewell' | 'fade' | 'letter' | 'done';
+    const [endingPhase, setEndingPhase] = useState<EndingPhase>('none');
+    const [giftInput, setGiftInput] = useState('');
+    const [endingLoading, setEndingLoading] = useState(false);
+    const [endingVnText, setEndingVnText] = useState('');
+    const [endingVnDisplayed, setEndingVnDisplayed] = useState('');
+    const [endingVnQueue, setEndingVnQueue] = useState<string[]>([]);
+    const [letterContent, setLetterContent] = useState('');
+    const letterRef = useRef<HTMLDivElement>(null);
 
     // ── Fork UI State ──
     const [showForkModal, setShowForkModal] = useState(false);
@@ -187,6 +200,12 @@ const TheaterApp: React.FC = () => {
 
     // ── Inline Location Sheet ──
     const [showLocationSheet, setShowLocationSheet] = useState(false);
+
+    // ── Theater TTS Config (for manual "听" button in session) ──
+    const characterTtsConfig = useMemo(
+        () => ttsConfig && char ? withCharacterTtsVoice(ttsConfig, char) : ttsConfig,
+        [ttsConfig, char?.id, char?.ttsVoiceId],
+    );
 
     const secondaryApiConfig = getSecondaryApiConfig();
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
@@ -494,6 +513,7 @@ const TheaterApp: React.FC = () => {
             try {
                 let systemPrompt = buildDatePreamble(char.name, userProfile.name);
                 systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+                systemPrompt += buildDateTimeBlock();
 
                 if (transitionEvent) {
                     systemPrompt += buildTransitionSceneInjection(
@@ -613,6 +633,7 @@ const TheaterApp: React.FC = () => {
             // Build system prompt (reuse date mode prompts)
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+            systemPrompt += buildDateTimeBlock();
             systemPrompt += `\n\n${scenePrompt}`;
 
             const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -757,6 +778,7 @@ const TheaterApp: React.FC = () => {
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
             systemPrompt += buildTheaterSummaryMemoryPrompt(allMsgs);
+            systemPrompt += buildDateTimeBlock();
 
             // Inject director event if triggered
             if (directorEvent) {
@@ -937,7 +959,7 @@ const TheaterApp: React.FC = () => {
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把约会记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.45,
@@ -1022,7 +1044,7 @@ const TheaterApp: React.FC = () => {
 
             if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
 
-            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次520约会剧场写最终总结。
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次约会写最终总结。
 请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的总结。
 
 当前时间: ${new Date().toLocaleString()}
@@ -1041,7 +1063,7 @@ ${exitPromptContent}
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场的所有记录整理成一份完整的最终总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把约会的所有记录整理成一份完整的最终总结。只输出总结正文。' },
                     { role: 'user', content: fullPrompt },
                     ],
                     temperature: 0.45,
@@ -1163,6 +1185,142 @@ ${exitPromptContent}
     };
 
     // ══════════════════════════════════════════════
+    //  Ending Ceremony (三幕散场仪式)
+    // ══════════════════════════════════════════════
+
+    // Typewriter for ending VN lines
+    useEffect(() => {
+        if (!endingVnText) { setEndingVnDisplayed(''); return; }
+        let i = 0;
+        setEndingVnDisplayed('');
+        const timer = setInterval(() => {
+            i++;
+            setEndingVnDisplayed(endingVnText.slice(0, i));
+            if (i >= endingVnText.length) clearInterval(timer);
+        }, 25);
+        return () => clearInterval(timer);
+    }, [endingVnText]);
+
+    const advanceEndingQueue = () => {
+        if (endingVnQueue.length === 0) return false;
+        setEndingVnText(endingVnQueue[0]);
+        setEndingVnQueue(q => q.slice(1));
+        return true;
+    };
+
+    /** Parse VN lines from raw AI response (strip [emotion] tags) */
+    const parseEndingLines = (raw: string): string[] =>
+        raw.split('\n').map(l => l.replace(/^\[.*?\]\s*/, '').trim()).filter(Boolean);
+
+    const handleStartEnding = () => {
+        setShowExitReview(false);
+        setEndingPhase('gift');
+    };
+
+    const handleSkipToSync = () => setEndingPhase('done');
+
+    const handleSendGift = async () => {
+        if (!giftInput.trim() || !char || !apiConfig?.baseUrl) return;
+        setEndingLoading(true);
+        try {
+            const sessionMsgs = getCurrentTheaterSessionMessages(theaterMessages, currentTimelineId || undefined);
+            const ctx = formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+            const prompt = buildGiftExchangePrompt(char.name, userProfile.name, giftInput.trim(), ctx);
+            const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.85 }),
+            });
+            if (!resp.ok) throw new Error('API Error');
+            const data = await safeResponseJson(resp);
+            const lines = parseEndingLines(data.choices[0].message.content);
+            setEndingPhase('gift-reaction');
+            if (lines.length > 0) {
+                setEndingVnText(lines[0]);
+                setEndingVnQueue(lines.slice(1));
+            }
+        } catch {
+            addToast('生成失败，已跳过', 'error');
+            triggerFarewell();
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const triggerFarewell = async () => {
+        if (!char || !apiConfig?.baseUrl) { triggerLetter(); return; }
+        setEndingPhase('farewell');
+        setEndingLoading(true);
+        try {
+            const sessionMsgs = getCurrentTheaterSessionMessages(theaterMessages, currentTimelineId || undefined);
+            const ctx = formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+            const prompt = buildFarewellPrompt(char.name, userProfile.name, ctx);
+            const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.85 }),
+            });
+            if (!resp.ok) throw new Error('API Error');
+            const data = await safeResponseJson(resp);
+            const lines = parseEndingLines(data.choices[0].message.content);
+            if (lines.length > 0) {
+                setEndingVnText(lines[0]);
+                setEndingVnQueue(lines.slice(1));
+            }
+        } catch {
+            addToast('生成失败，已跳过', 'error');
+            triggerLetter();
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const triggerLetter = async () => {
+        if (!char || !apiConfig?.baseUrl) { setEndingPhase('done'); return; }
+        setEndingPhase('fade');
+        setEndingLoading(true);
+        try {
+            const sessionMsgs = getCurrentTheaterSessionMessages(theaterMessages, currentTimelineId || undefined);
+            const ctx = formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+            const prompt = buildMetaLetterPrompt(char.name, userProfile.name, ctx);
+            const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.9 }),
+            });
+            if (!resp.ok) throw new Error('API Error');
+            const data = await safeResponseJson(resp);
+            const content = data.choices[0].message.content;
+            setLetterContent(content);
+            // Save letter to DB
+            await DB.saveMessage({
+                charId: char.id, role: 'assistant' as const, type: 'text',
+                content,
+                metadata: { source: 'theater', branchId: currentTimelineId, isMetaLetter: true },
+            });
+            setEndingPhase('letter');
+        } catch {
+            addToast('信件生成失败', 'error');
+            setEndingPhase('done');
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const handleExportLetter = async () => {
+        if (!letterRef.current || !char) return;
+        try {
+            const html2canvas = (await import('html2canvas')).default;
+            const canvas = await html2canvas(letterRef.current, { scale: 3, backgroundColor: null, useCORS: true });
+            const link = document.createElement('a');
+            link.download = `letter-from-${char.name}-${new Date().toISOString().slice(0,10)}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            addToast('已保存', 'success');
+        } catch { addToast('导出失败', 'error'); }
+    };
+
+    // ══════════════════════════════════════════════
     //  Exit & Sync
     // ══════════════════════════════════════════════
 
@@ -1171,6 +1329,11 @@ ${exitPromptContent}
         setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
         setShowExitReview(false);
+        setEndingPhase('none');
+        setGiftInput('');
+        setEndingVnText('');
+        setEndingVnQueue([]);
+        setLetterContent('');
         setMode('select');
         setSession(null);
         setChar(null);
@@ -1511,7 +1674,7 @@ ${exitPromptContent}
                                             <div className="theater-tl-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.label}</div>
                                             <div className="theater-tl-meta">
                                                 <span>{tl.locationName || '未开始'}</span>
-                                                {timeLabel && <><div className="theater-tl-meta-dot" /><span>{timeLabel.icon} {timeLabel.zh}</span></>}
+                                                {timeLabel && <><div className="theater-tl-meta-dot" /><span>{timeLabel.zh}</span></>}
                                                 <div className="theater-tl-meta-dot" /><span>{tl.messageCount} 条</span>
                                             </div>
                                             {tl.preview && <div className="theater-tl-preview" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.preview}</div>}
@@ -1601,37 +1764,125 @@ ${exitPromptContent}
                     pendingLocationSuggestion={pendingLocationSuggestion}
                     onAcceptLocationSuggestion={handleAcceptLocationSuggestion}
                     onDeclineLocationSuggestion={handleDeclineLocationSuggestion}
+                    characterTtsConfig={characterTtsConfig}
                 />
 
-                {/* Exit Sync Modal */}
-                <Modal isOpen={showExitReview} title="离开剧场" onClose={() => setShowExitReview(false)} footer={
-                    <div className="flex w-full flex-col gap-2">
-                        <button onClick={() => { setShowExitReview(false); onExitSession('summary'); }} className="w-full py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100">生成总结同步</button>
-                        <button onClick={() => { setShowExitReview(false); onExitSession('raw'); }} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">同步原始记录</button>
-                        <div className="flex gap-2">
-                            <button onClick={() => setShowExitReview(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
-                            <button onClick={() => { setShowExitReview(false); onExitSession('none'); }} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">暂不同步</button>
+                {/* ====== Date Ending Ceremony Overlays ====== */}
+                <style>{`
+                    @keyframes endFadeToBlack { from { opacity: 0; } to { opacity: 1; } }
+                    @keyframes endCardIn { from { opacity: 0; transform: translateY(30px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+                    @keyframes endLineReveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+                    @keyframes endBtnIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+                `}</style>
+
+                {/* Act 1: Gift Input */}
+                {endingPhase === 'gift' && (
+                    <div className="absolute inset-0 z-[300] flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)' }}>
+                        <button onClick={handleSkipToSync} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                        <div className="w-[85%] max-w-sm" style={{ animation: 'endCardIn 0.6s ease-out both' }}>
+                            <div className="text-center mb-6">
+                                <div className="text-white/60 text-sm font-light tracking-widest mb-1">交换礼物</div>
+                                <div className="text-white/30 text-xs font-light">送一样东西给{char?.name}吧</div>
+                            </div>
+                            <div className="bg-white/[0.08] backdrop-blur-xl rounded-2xl border border-white/[0.12] p-4">
+                                <textarea value={giftInput} onChange={e => setGiftInput(e.target.value)} placeholder="一首歌、一个拥抱、一句话、或者……" className="w-full bg-transparent text-white/90 text-sm font-light placeholder:text-white/25 resize-none outline-none h-24 leading-relaxed" autoFocus />
+                            </div>
+                            <button onClick={handleSendGift} disabled={!giftInput.trim() || endingLoading} className="w-full mt-4 py-3 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97] disabled:opacity-30" style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                {endingLoading ? '...' : '送出'}
+                            </button>
                         </div>
                     </div>
-                }>
-                    <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">离开时可以把这次剧场约会同步给主聊天。同步内容用户不会在聊天列表里看到，但角色之后会自然记得。</div>
-                    {session?.eventHistory && session.eventHistory.length > 0 && (
-                        <div className="theater-timeline mt-3">
-                            {session.eventHistory.map((evt, i) => (
-                                <div key={i} className="theater-timeline-item">
-                                    <div>
-                                        <div className="theater-timeline-location">{evt.sceneType.toUpperCase()}</div>
-                                        <div className="theater-timeline-event">{evt.event}</div>
-                                    </div>
-                                </div>
-                            ))}
+                )}
+
+                {/* Act 1b: Gift Reaction VN */}
+                {endingPhase === 'gift-reaction' && (
+                    <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+                        onClick={() => { if (!advanceEndingQueue()) triggerFarewell(); }}>
+                        <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                        <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">{endingVnDisplayed}</div>
+                            {endingVnDisplayed === endingVnText && endingVnQueue.length === 0 && <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>}
                         </div>
-                    )}
+                    </div>
+                )}
+
+                {/* Act 2: Farewell VN */}
+                {endingPhase === 'farewell' && (
+                    <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end" style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+                        onClick={() => { if (!advanceEndingQueue()) { setEndingPhase('fade'); setTimeout(() => triggerLetter(), 1800); } }}>
+                        <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                        <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            {endingLoading ? <div className="text-white/40 text-sm text-center py-4 animate-pulse">……</div> : <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">{endingVnDisplayed}</div>}
+                            {!endingLoading && endingVnDisplayed === endingVnText && endingVnQueue.length === 0 && endingVnText && <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>}
+                        </div>
+                    </div>
+                )}
+
+                {/* Fade to black */}
+                {endingPhase === 'fade' && (
+                    <div className="absolute inset-0 z-[310] bg-black" style={{ animation: 'endFadeToBlack 1.5s ease-in both' }}>
+                        {endingLoading && <div className="absolute inset-0 flex items-center justify-center"><div className="text-white/20 text-xs animate-pulse tracking-widest">……</div></div>}
+                    </div>
+                )}
+
+                {/* Act 3: Meta Letter */}
+                {endingPhase === 'letter' && (
+                    <div className="absolute inset-0 z-[320] bg-black flex items-center justify-center overflow-y-auto" style={{ padding: '24px 16px' }}>
+                        <button onClick={handleSkipToSync} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                        <div className="w-full max-w-md" style={{ animation: 'endCardIn 0.8s ease-out 0.3s both' }}>
+                            <div ref={letterRef} className="rounded-2xl p-8 relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #faf6f0, #f5efe6)', boxShadow: '0 8px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)' }}>
+                                <img src="/images/paper-texture.jpg" alt="" className="absolute inset-0 w-full h-full object-cover opacity-[0.06] mix-blend-multiply pointer-events-none" />
+                                <div className="relative z-10">
+                                    {letterContent.split('\n').filter(l => l.trim()).map((line, i) => (
+                                        <p key={i} className="text-[15px] leading-[2] mb-0" style={{ fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif", color: '#3d3530', animation: `endLineReveal 0.5s ease-out ${0.5 + i * 0.3}s both` }}>{line}</p>
+                                    ))}
+                                    <p className="text-right mt-6 text-sm" style={{ fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif", color: '#8a7e75', animation: `endLineReveal 0.5s ease-out ${0.5 + letterContent.split('\n').filter(l => l.trim()).length * 0.3}s both` }}>
+                                        {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex gap-3 mt-6 justify-center" style={{ animation: `endBtnIn 0.5s ease-out ${1 + letterContent.split('\n').filter(l => l.trim()).length * 0.3}s both` }}>
+                                <button onClick={handleExportLetter} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}>保存原图</button>
+                                <button onClick={() => setEndingPhase('done')} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>收好这封信</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Final: Sync Options */}
+                {endingPhase === 'done' && (
+                    <div className="absolute inset-0 z-[330] bg-black/90 flex items-center justify-center" style={{ backdropFilter: 'blur(12px)' }}>
+                        <div className="w-[85%] max-w-sm" style={{ animation: 'endCardIn 0.5s ease-out both' }}>
+                            <div className="text-center mb-6">
+                                <div className="text-white/50 text-sm font-light tracking-widest mb-1">散场后的事</div>
+                                <div className="text-white/25 text-xs font-light leading-relaxed mt-2">把这次约会的内容同步给主聊天吗？<br />同步后角色会自然记得今天的事。</div>
+                            </div>
+                            <div className="flex flex-col gap-2.5">
+                                <button onClick={() => { setEndingPhase('none'); onExitSession('summary'); }} className="w-full py-3.5 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(52,211,153,0.2)', color: 'rgba(52,211,153,0.9)', border: '1px solid rgba(52,211,153,0.3)' }}>生成总结同步</button>
+                                <button onClick={() => { setEndingPhase('none'); onExitSession('raw'); }} className="w-full py-3.5 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.1)' }}>同步原始记录</button>
+                                <button onClick={() => { setEndingPhase('none'); onExitSession('none'); }} className="w-full py-3 rounded-2xl text-sm font-light tracking-wider transition-all active:scale-[0.97]" style={{ color: 'rgba(255,255,255,0.3)' }}>暂不同步</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Exit Modal — Two choices: step away vs end date */}
+                <Modal isOpen={showExitReview} title="今天要怎样？" onClose={() => setShowExitReview(false)} footer={
+                    <div className="flex w-full flex-col gap-2">
+                        <button onClick={() => { setShowExitReview(false); onExitSession('none'); }} className="w-full py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">离开一下</button>
+                        <button onClick={handleStartEnding} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">结束今天的约会</button>
+                        <button onClick={() => setShowExitReview(false)} className="w-full py-2.5 text-slate-400 text-sm font-medium">留在这里</button>
+                    </div>
+                }>
+                    <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">
+                        <p className="mb-2"><strong>离开一下</strong> — 保存进度，下次继续</p>
+                        <p><strong>结束约会</strong> — 交换礼物、告别、然后散场</p>
+                    </div>
                 </Modal>
 
                 {/* Summary Preview Modal */}
                 {activeSummaryDraft && (
-                    <Modal isOpen={!!activeSummaryDraft} title="剧场总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
+                    <Modal isOpen={!!activeSummaryDraft} title="约会总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
                         <>
                             <button onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">复制</button>
                             <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>

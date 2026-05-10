@@ -5,6 +5,8 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { resolveTheaterBg } from '../../utils/db/theaterStore';
+import { MinimaxTts } from '../../utils/minimaxTts';
+import type { TtsConfig } from '../../types/tts';
 import type { CharacterProfile, UserProfile, Message, DirectorEvent, TheaterLocation, TimeSlot, LocationSuggestion } from '../../types';
 import type { InnerWhisper } from '../../utils/thinkingExtractor';
 import { TIME_SLOT_LABELS } from '../../types/theater';
@@ -66,6 +68,8 @@ interface TheaterSessionProps {
     pendingLocationSuggestion?: LocationSuggestion | null;
     onAcceptLocationSuggestion?: () => void;
     onDeclineLocationSuggestion?: () => void;
+    // TTS
+    characterTtsConfig?: TtsConfig;
 }
 
 // ── Helpers ──
@@ -173,6 +177,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     activeWhispers = [], onWhisperClick,
     isTransitioning, transitionLocationName,
     pendingLocationSuggestion, onAcceptLocationSuggestion, onDeclineLocationSuggestion,
+    characterTtsConfig,
 }) => {
     const { addToast, registerBackHandler } = useOS();
     const { ttsConfig } = useConfig();
@@ -299,6 +304,52 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         return activeSprites['normal'] || Object.values(activeSprites)[0] || null;
     }, [currentEmotion, activeSprites, hasSprites, dateEmotionKeys]);
 
+    // ── Theater TTS Playback ──
+    const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+    const ttsUrlRef = useRef<string | null>(null);
+    const [ttsPlaying, setTtsPlaying] = useState(false);
+    const [ttsSynthesizing, setTtsSynthesizing] = useState(false);
+    const ttsAbortRef = useRef<AbortController | null>(null);
+    // In-memory cache: text → audio blob (avoids re-synthesis within session)
+    const ttsCacheRef = useRef<Map<string, Blob>>(new Map());
+
+    const stopTtsAudio = useCallback(() => {
+        ttsAbortRef.current?.abort();
+        ttsAbortRef.current = null;
+        if (ttsAudioRef.current) {
+            ttsAudioRef.current.pause();
+            ttsAudioRef.current.currentTime = 0;
+            ttsAudioRef.current = null;
+        }
+        if (ttsUrlRef.current) {
+            URL.revokeObjectURL(ttsUrlRef.current);
+            ttsUrlRef.current = null;
+        }
+        setTtsPlaying(false);
+        setTtsSynthesizing(false);
+    }, []);
+
+    /** Play a blob (shared by cache-hit and fresh synthesis) */
+    const playTtsBlob = useCallback((blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        ttsUrlRef.current = url;
+        const audio = new Audio(url);
+        ttsAudioRef.current = audio;
+        setTtsSynthesizing(false);
+        setTtsPlaying(true);
+
+        audio.onended = () => {
+            URL.revokeObjectURL(url);
+            ttsUrlRef.current = null;
+            ttsAudioRef.current = null;
+            setTtsPlaying(false);
+        };
+        audio.onerror = () => stopTtsAudio();
+
+        skipToEnd();
+        audio.play().catch(() => stopTtsAudio());
+    }, [stopTtsAudio, skipToEnd]);
+
 
 
     // ── Back handler ──
@@ -316,18 +367,28 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const handleDialogClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
         if (!done) { skipToEnd(); return; }
+        // Stop any playing TTS when user clicks to advance
+        stopTtsAudio();
         if (isLastPage) { setShowInput(true); return; }
         setPageIndex(i => i + 1);
-    }, [done, skipToEnd, isLastPage]);
+    }, [done, skipToEnd, isLastPage, stopTtsAudio]);
+
+    // ── Go to previous page ──
+    const handlePrevPage = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        stopTtsAudio();
+        setPageIndex(i => Math.max(0, i - 1));
+    }, [stopTtsAudio]);
 
     // ── Skip all remaining pages ──
     const handleSkipAll = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
+        stopTtsAudio();
         if (pages.length > 0) {
             setPageIndex(pages.length - 1);
             skipToEnd();
         }
-    }, [pages.length, skipToEnd]);
+    }, [pages.length, skipToEnd, stopTtsAudio]);
 
     // ── Send message ──
     const handleSend = async () => {
@@ -378,9 +439,58 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         setAutoMode(v => !v);
     };
 
+    // ── Manual TTS: play current page on demand (with cache) ──
+    const handleManualTts = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentPage || !characterTtsConfig?.apiKey) return;
+
+        // If already playing, stop
+        if (ttsPlaying || ttsSynthesizing) {
+            stopTtsAudio();
+            return;
+        }
+
+        if (currentPage.type === 'user') return;
+
+        const cacheKey = currentPage.text;
+
+        // Check cache first
+        const cached = ttsCacheRef.current.get(cacheKey);
+        if (cached) {
+            playTtsBlob(cached);
+            return;
+        }
+
+        // Fresh synthesis
+        const controller = new AbortController();
+        ttsAbortRef.current = controller;
+        setTtsSynthesizing(true);
+
+        (async () => {
+            try {
+                const result = await MinimaxTts.synthesizeSync(
+                    currentPage.text,
+                    characterTtsConfig,
+                    undefined,
+                    controller.signal,
+                );
+                if (controller.signal.aborted || !result?.blob) return;
+
+                // Store in cache
+                ttsCacheRef.current.set(cacheKey, result.blob);
+                playTtsBlob(result.blob);
+            } catch (err) {
+                if (!controller.signal.aborted) {
+                    console.error('[TheaterTTS] Manual synthesis failed:', err);
+                    setTtsSynthesizing(false);
+                }
+            }
+        })();
+    }, [currentPage, characterTtsConfig, ttsPlaying, ttsSynthesizing, stopTtsAudio, playTtsBlob]);
+
     // ── Render ──
     return (
-        <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none flex flex-col">
+        <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none flex flex-col" onClick={handleDialogClick}>
             {/* Background — dual-layer crossfade */}
             {bgLayers.back && (
                 <div
@@ -419,8 +529,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 </div>
             )}
 
-            {/* Top Bar — minimal */}
-            <div className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 shrink-0">
+            {/* Top Bar — minimal (stopPropagation to avoid page advance) */}
+            <div className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 shrink-0" onClick={e => e.stopPropagation()}>
                 <button onClick={onExit} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="rgba(255,255,255,0.6)" width={16} height={16}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -434,8 +544,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                             {timelineLabel}
                         </span>
                     )}
-                    <div className="theater-time-badge" style={{ padding: '4px 10px', fontSize: 11 }}>
-                        <span>{timeLabel.icon}</span>
+                    <div className={`theater-time-badge theater-time-badge--${timeSlot}`} style={{ padding: '4px 10px', fontSize: 11 }}>
+                        <span className="theater-time-slot-icon" style={{ width: 12, height: 12 }}><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{timeSlot === 'morning' && <><path d="M12 2v3" /><path d="M4.93 4.93l2.12 2.12" /><path d="M19.07 4.93l-2.12 2.12" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="M12 16a4 4 0 0 1-4-4" /><path d="M12 16a4 4 0 0 0 4-4" /><line x1="2" y1="18" x2="22" y2="18" strokeDasharray="2 2" /></>}{timeSlot === 'afternoon' && <><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="M4.93 4.93l1.41 1.41" /><path d="M17.66 17.66l1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="M6.34 17.66l-1.41 1.41" /><path d="M19.07 4.93l-1.41 1.41" /></>}{timeSlot === 'evening' && <><path d="M12 10a4 4 0 0 1 4 4" /><path d="M12 10a4 4 0 0 0-4 4" /><line x1="2" y1="16" x2="22" y2="16" /><path d="M12 3v4" /><path d="M5.5 5.5l2 2" /><path d="M18.5 5.5l-2 2" /></>}{timeSlot === 'night' && <><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /><path d="M17 5l.5 1.5L19 7l-1.5.5L17 9l-.5-1.5L15 7l1.5-.5L17 5z" strokeWidth="1.2" /></>}</svg></span>
                         <span>{timeLabel.zh}</span>
                     </div>
                 </div>
@@ -545,6 +655,12 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
                     {/* Bottom Control Bar */}
                     <div className="theater-vn-controls" onClick={e => e.stopPropagation()}>
+                        {pageIndex > 0 && (
+                            <button className="theater-vn-ctrl-btn" onClick={handlePrevPage}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                                <span>上页</span>
+                            </button>
+                        )}
                         <button className="theater-vn-ctrl-btn" onClick={(e) => { e.stopPropagation(); setShowLog(true); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                             <span>回顾</span>
@@ -557,6 +673,16 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061A1.125 1.125 0 0 1 3 16.811V8.69ZM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061a1.125 1.125 0 0 1-1.683-.977V8.69Z" /></svg>
                             <span>跳过</span>
                         </button>
+                        {characterTtsConfig?.apiKey && currentPage && currentPage.type !== 'user' && (
+                            <button className={`theater-vn-ctrl-btn ${ttsPlaying || ttsSynthesizing ? 'active' : ''}`} onClick={handleManualTts}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill={ttsPlaying ? 'currentColor' : 'none'}/>
+                                    {!ttsSynthesizing && <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>}
+                                    {ttsSynthesizing && <path d="M15 10v4" strokeDasharray="2 2"><animate attributeName="stroke-dashoffset" from="0" to="4" dur="0.6s" repeatCount="indefinite"/></path>}
+                                </svg>
+                                <span>{ttsSynthesizing ? '合成…' : ttsPlaying ? '播放' : '听'}</span>
+                            </button>
+                        )}
                         <button className={`theater-vn-ctrl-btn ${autoMode ? 'active' : ''}`} onClick={toggleAuto}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
                             <span>自动</span>

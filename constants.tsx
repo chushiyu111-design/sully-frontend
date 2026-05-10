@@ -90,7 +90,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
-  { id: AppID.Theater, name: '约会剧场', icon: 'Theater', color: 'rose' },
+  { id: AppID.Theater, name: '约会', icon: 'Theater', color: 'rose' },
   { id: AppID.Trajectory, name: '轨迹', icon: 'Trajectory', color: 'indigo' },
   { id: AppID.Crosstime, name: '跨时空对话', icon: 'Crosstime', color: 'violet' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },

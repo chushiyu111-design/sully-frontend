@@ -22,7 +22,7 @@ const buildDateContextBridgePrompt = (messages: Message[], char: CharacterProfil
 
     const blocks = bridges.map((m, index) => {
         const typeLabel = m.metadata?.bridgeType === 'raw' ? '原始记录' : '总结';
-        const sourceLabel = m.metadata?.source === 'theater' ? '约会剧场' : '线下见面';
+        const sourceLabel = m.metadata?.source === 'theater' ? '约会' : '线下见面';
         return `### ${sourceLabel}${typeLabel} ${index + 1}
 时间: ${ChatPrompts.formatDate(m.timestamp)}
 ${m.content}`;
@@ -30,7 +30,7 @@ ${m.content}`;
 
     return `
 ### 【线下见面记忆】
-以下内容是你（${char.name}）和${userProfile.name}之前线下见面/约会剧场发生过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
+以下内容是你（${char.name}）和${userProfile.name}之前线下见面/约会发生过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
 请把这些内容当作你真实经历过、自然记得的共同经历：可以在合适时机顺着提起，也可以被它影响语气和情绪。
 这些内容不是当前正在发生的现场动作，也不是当前聊天窗口里的新消息；现在的交流媒介已经切回线上文字聊天。
 不要说"我看到了总结/记录"，不要复述系统说明，不要继续使用见面模式的 [emotion] 格式。

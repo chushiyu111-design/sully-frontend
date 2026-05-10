@@ -4,7 +4,7 @@ import React, {
     useRef,
     useState,
 } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAudioPlayer } from '../../hooks/useAudioPlayer';
 import { useLyrics } from '../../hooks/useLyrics';
 import { AppID } from '../../types';

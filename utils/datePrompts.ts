@@ -22,8 +22,8 @@ export interface DateWritingStylePreset {
 export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     {
         key: 'natural',
-        label: '自然',
-        desc: '不刻意，不表演，就是两个人待在一起',
+        label: '不期而遇',
+        desc: '没有预设的剧本，就是碰巧在一起',
         prompt: `【文风：自然】
 像两个人真的在一起时那样——
 - 不需要每一刻都有戏剧性，大部分时间就是普通的、松弛的相处
@@ -34,8 +34,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'cinematic',
-        label: '分镜',
-        desc: '每一行都是一个镜头，画面驱动叙事',
+        label: '光影浮生',
+        desc: '每一行都有景别，光落在该落的地方',
         prompt: `【文风：分镜】
 每一行都是一个镜头——
 - 有景别意识：远景交代环境，中景捕捉互动，特写放大细节
@@ -46,8 +46,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'literary',
-        label: '细腻',
-        desc: '铺陈感官和情绪的层次与转折',
+        label: '细水长文',
+        desc: '把感官铺开，让情绪慢慢转弯',
         prompt: `【文风：细腻】
 叙述可以更深、更慢、更有层次——
 - 允许铺陈感官细节：触感、气味、温度、光线的质地
@@ -58,8 +58,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'minimal',
-        label: '克制',
-        desc: '惜字如金，留白大于描写',
+        label: '留白克制',
+        desc: '说三分藏七分，沉默比语言重',
         prompt: `【文风：克制】
 少即是多——
 - 每一行尽可能短：一个动作、一句话、一个表情
@@ -71,8 +71,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'sweet',
-        label: '心动',
-        desc: '放大微妙瞬间，捕捉一闪而过的情绪',
+        label: '怦然刹那',
+        desc: '放大心跳加速的那 0.5 秒',
         prompt: `【文风：心动】
 放大所有微妙的情绪细节——
 - 捕捉那些一闪而过的瞬间：不经意的触碰、视线的交汇、呼吸的变化
@@ -83,8 +83,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'hardcore',
-        label: '沉浸',
-        desc: '完全活在角色里，真实到不讨好',
+        label: '入木三分',
+        desc: '不修饰、不讨好，每一刻都带着重量',
         prompt: `【文风：沉浸】
 完全活在角色里——
 - 动作描写具体、有重量感：不是「走过来」而是「拖着步子蹭过来」
@@ -96,8 +96,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'poetic',
-        label: '散文',
-        desc: '用感受代替叙述，意境先行',
+        label: '浮光掠影',
+        desc: '不讲故事，只留感觉在空气里',
         prompt: `【文风：散文】
 用感受代替叙述——
 - 感官通感：光可以有温度、声音可以有形状、沉默可以有颜色
@@ -109,8 +109,8 @@ export const DATE_WRITING_STYLE_PRESETS: DateWritingStylePreset[] = [
     },
     {
         key: 'daily',
-        label: '日常',
-        desc: '不需要发生什么大事，窝在一起就好',
+        label: '岁月静好',
+        desc: '什么都不用发生，窝在一起就好',
         prompt: `【文风：日常】
 不需要发生什么大事——
 - 重心不在剧情推进，而在两个人共处同一空间的细碎感

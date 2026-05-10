@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion, useWillChange } from 'motion/react';
+import { AnimatePresence, motion, useWillChange } from 'framer-motion';
 import { useApp } from '../../context/AppContext';
 import { useAudioPlayer } from '../../hooks/useAudioPlayer';
 import { AppID } from '../../types';

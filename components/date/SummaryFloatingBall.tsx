@@ -2,7 +2,8 @@ import React,{ memo,useEffect,useMemo,useRef,useState } from 'react';
 import { motion,useMotionValue,PanInfo } from 'framer-motion';
 import { GearSix,NotePencil,X,WarningCircle } from '@phosphor-icons/react';
 import { CharacterProfile } from '../../types';
-import { DATE_WRITING_STYLE_PRESETS, DATE_DEFAULT_WORD_COUNT } from '../../utils/datePrompts';
+import { DATE_DEFAULT_WORD_COUNT } from '../../utils/datePrompts';
+import WritingStyleSheet, { getStyleDisplayLabel } from './WritingStyleSheet';
 
 interface SummaryFloatingBallProps {
     char: CharacterProfile;
@@ -23,6 +24,13 @@ interface SummaryFloatingBallProps {
     writingStyle?: string;
     onChangeWordCount: (count: number | undefined) => void;
     onChangeWritingStyle: (style: string | undefined) => void;
+    // Translation
+    translationEnabled?: boolean;
+    translateSourceLang?: string;
+    translateTargetLang?: string;
+    onToggleTranslation?: (enabled: boolean) => void;
+    onSetTranslateSourceLang?: (lang: string) => void;
+    onSetTranslateTargetLang?: (lang: string) => void;
 }
 
 const BALL_SIZE = 56;
@@ -69,10 +77,17 @@ const SummaryFloatingBall: React.FC<SummaryFloatingBallProps> = memo(({
     writingStyle,
     onChangeWordCount,
     onChangeWritingStyle,
+    translationEnabled,
+    translateSourceLang,
+    translateTargetLang,
+    onToggleTranslation,
+    onSetTranslateSourceLang,
+    onSetTranslateTargetLang,
 }) => {
     const storageKey = `date_summary_ball_pos_${char.id}`;
     const constraintsRef = useRef<HTMLDivElement>(null);
     const [panelOpen, setPanelOpen] = useState(false);
+    const [styleSheetOpen, setStyleSheetOpen] = useState(false);
     const [position, setPosition] = useState(() => readStoredPosition(storageKey) || getDefaultPosition());
     const [dragging, setDragging] = useState(false);
     const x = useMotionValue(position.x);
@@ -291,39 +306,73 @@ const SummaryFloatingBall: React.FC<SummaryFloatingBallProps> = memo(({
                             </div>
                         </div>
 
-                        {/* --- Output Tuning: Writing Style --- */}
+                        {/* --- Output Tuning: Writing Style (compact) --- */}
                         <div className="mb-3">
                             <div className="text-[11px] font-bold text-white/80 mb-2">文风</div>
-                            <div className="grid grid-cols-4 gap-1">
-                                {DATE_WRITING_STYLE_PRESETS.map(preset => {
-                                    const isActive = writingStyle === preset.key;
-                                    return (
-                                        <button
-                                            key={preset.key}
-                                            type="button"
-                                            onClick={() => onChangeWritingStyle(isActive ? undefined : preset.key)}
-                                            className={`px-1 py-1.5 rounded-lg text-center transition-all active:scale-95 ${
-                                                isActive
-                                                    ? 'bg-emerald-400/20 border border-emerald-300/30 text-emerald-200'
-                                                    : 'bg-white/5 border border-white/5 text-white/60 hover:bg-white/10'
-                                            }`}
-                                            title={preset.desc}
-                                        >
-                                            <div className="text-[10px] font-bold leading-tight">{preset.label}</div>
-                                        </button>
-                                    );
-                                })}
+                            <button
+                                type="button"
+                                onClick={() => setStyleSheetOpen(true)}
+                                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:bg-white/[0.08] active:scale-[0.98] transition-all"
+                            >
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <span className="text-[11px] text-white/45">🖊</span>
+                                    <span className={`text-[12px] font-bold truncate ${
+                                        writingStyle ? 'text-emerald-300/85' : 'text-white/40'
+                                    }`}>
+                                        {getStyleDisplayLabel(writingStyle)}
+                                    </span>
+                                </div>
+                                <span className="text-[10px] text-white/35 font-medium flex-shrink-0">切换 ›</span>
+                            </button>
+                        </div>
+
+                        {/* --- Translation Toggle --- */}
+                        <div className="mb-3 border-t border-white/10 pt-3">
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                                <div className="text-[11px] font-bold text-white/80">翻译</div>
+                                <button
+                                    type="button"
+                                    onClick={() => onToggleTranslation?.(!translationEnabled)}
+                                    className={`relative h-6 w-11 rounded-full transition-colors ${translationEnabled ? 'bg-sky-500' : 'bg-white/20'}`}
+                                >
+                                    <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${translationEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                                </button>
                             </div>
-                            {writingStyle && !DATE_WRITING_STYLE_PRESETS.some(p => p.key === writingStyle) && (
-                                <div className="mt-1.5 flex items-center justify-between bg-white/5 rounded-lg px-2 py-1">
-                                    <span className="text-[10px] text-white/50">自定义文风</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => onChangeWritingStyle(undefined)}
-                                        className="text-[9px] text-white/40 hover:text-white/70 underline"
-                                    >
-                                        清除
-                                    </button>
+                            {translationEnabled && (
+                                <div className="space-y-2.5 animate-fade-in">
+                                    <div>
+                                        <div className="text-[10px] font-bold text-white/45 mb-1.5">选（原文语言）</div>
+                                        <div className="flex flex-wrap gap-1">
+                                            {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
+                                                <button
+                                                    key={`src-${lang}`}
+                                                    type="button"
+                                                    onClick={() => onSetTranslateSourceLang?.(lang)}
+                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${translateSourceLang === lang ? 'bg-white/25 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                                                >
+                                                    {lang}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-[10px] font-bold text-white/45 mb-1.5">译（翻译目标）</div>
+                                        <div className="flex flex-wrap gap-1">
+                                            {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
+                                                <button
+                                                    key={`tgt-${lang}`}
+                                                    type="button"
+                                                    onClick={() => onSetTranslateTargetLang?.(lang)}
+                                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${translateTargetLang === lang ? 'bg-sky-500/80 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                                                >
+                                                    {lang}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="text-[10px] text-center text-white/35 bg-white/5 rounded-lg py-1.5">
+                                        选<span className="font-bold text-white/70">{translateSourceLang || '?'}</span>{' '}译<span className="font-bold text-sky-300/80">{translateTargetLang || '?'}</span>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -351,6 +400,14 @@ const SummaryFloatingBall: React.FC<SummaryFloatingBallProps> = memo(({
                     </div>
                 )}
             </motion.div>
+
+            {/* Writing Style Sheet (secondary bottom sheet) */}
+            <WritingStyleSheet
+                isOpen={styleSheetOpen}
+                currentStyle={writingStyle}
+                onSelect={onChangeWritingStyle}
+                onClose={() => setStyleSheetOpen(false)}
+            />
         </div>
     );
 });

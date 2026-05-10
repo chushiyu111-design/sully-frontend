@@ -150,11 +150,12 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     const [position, setPosition] = useState(() => readPos(storageKey) || defaultPos());
     const [dragging, setDragging] = useState(false);
     const [memoryExpanded, setMemoryExpanded] = useState(false);
+    const [stickerOpen, setStickerOpen] = useState(false);
 
-    // Responsive panel width: 62-68% of screen, clamped 240–280 (mini remote)
+    // Responsive panel width: narrower, like a mini phone device
     const panelWidth = useMemo(() => {
         const w = typeof window !== 'undefined' ? window.innerWidth : 375;
-        return Math.max(240, Math.min(280, Math.round(w * 0.65)));
+        return Math.max(220, Math.min(260, Math.round(w * 0.58)));
     }, []);
 
     const [customIcon, setCustomIcon] = useState<string | null>(() => {
@@ -316,38 +317,38 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                         {/* ▸ LAYER 1: Device Shell (outer casing) */}
                         <div style={{
                             background: P.shell,
-                            borderRadius: 34,
-                            border: `3px solid ${P.shellBorder}`,
+                            borderRadius: 28,
+                            border: `2.5px solid ${P.shellBorder}`,
                             boxShadow: `${P.deviceShadow}, ${P.shellInnerShadow}, ${P.shellEdge}`,
-                            padding: '12px 10px 14px',
+                            padding: '10px 8px 10px',
                             position: 'relative',
                         }}>
                             {/* Shell top highlight — cream plastic reflection */}
                             <div style={{
-                                position: 'absolute', top: 5, left: 18, right: 18, height: 4,
-                                borderRadius: 3, background: `linear-gradient(90deg, transparent 0%, ${P.shellHighlight} 30%, ${P.shellHighlight} 70%, transparent 100%)`, opacity: 0.8,
+                                position: 'absolute', top: 4, left: 16, right: 16, height: 3,
+                                borderRadius: 2, background: `linear-gradient(90deg, transparent 0%, ${P.shellHighlight} 30%, ${P.shellHighlight} 70%, transparent 100%)`, opacity: 0.8,
                             }} />
                             {/* Shell left edge highlight */}
                             <div style={{
-                                position: 'absolute', top: 30, left: 3, bottom: 30, width: 3,
+                                position: 'absolute', top: 24, left: 2, bottom: 24, width: 2.5,
                                 borderRadius: 2, background: 'rgba(255,255,255,0.35)',
                             }} />
-                            {/* Bow decoration - top left, small, not blocking title */}
+                            {/* Bow decoration — small hanging ornament */}
                             <img src="/theater-panel-bow.png" alt="" draggable={false} style={{
-                                position: 'absolute', top: -16, left: 6, width: 36, height: 'auto',
-                                pointerEvents: 'none', filter: 'drop-shadow(0 2px 4px rgba(255,143,171,0.3))',
-                                zIndex: 2, opacity: 0.85,
+                                position: 'absolute', top: -14, left: 4, width: 28, height: 'auto',
+                                pointerEvents: 'none', filter: 'drop-shadow(0 2px 3px rgba(255,143,171,0.25))',
+                                zIndex: 2, opacity: 0.8,
                             }} />
-                            {/* Close button - candy pill, top right */}
+                            {/* Close side-key — small round button, top right */}
                             <button type="button" onClick={() => setPanelOpen(false)} style={{
-                                position: 'absolute', top: -8, right: -6, zIndex: 3,
-                                width: 28, height: 28, border: '2.5px solid rgba(255,155,180,0.6)',
+                                position: 'absolute', top: -6, right: -5, zIndex: 3,
+                                width: 22, height: 22, border: '2px solid rgba(255,155,180,0.5)',
                                 borderRadius: '50%', cursor: 'pointer', display: 'flex',
                                 alignItems: 'center', justifyContent: 'center',
                                 background: 'linear-gradient(145deg, #FFC4D4 0%, #FF8FAB 50%, #FF6B95 100%)',
-                                boxShadow: '0 3px 10px rgba(255,107,149,0.35), inset 0 1px 2px rgba(255,255,255,0.4)',
+                                boxShadow: '0 2px 8px rgba(255,107,149,0.3), inset 0 1px 2px rgba(255,255,255,0.35)',
                             }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="#fff" width={11} height={11}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="#fff" width={9} height={9}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                                 </svg>
                             </button>
@@ -356,92 +357,100 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                             <div style={{
                                 background: P.screenBg,
                                 backgroundImage: P.screenPixelGrid,
-                                borderRadius: 20,
-                                border: `2px solid ${P.screenBorder}`,
+                                borderRadius: 16,
+                                border: `1.5px solid ${P.screenBorder}`,
                                 boxShadow: P.screenInnerShadow,
-                                padding: '0 0 10px',
-                                marginTop: 8,
+                                padding: '0 0 8px',
+                                marginTop: 6,
                                 overflow: 'hidden',
                             }}>
-                                {/* ── Status Bar ── */}
+                                {/* ── LCD Screen Display ── */}
                                 <div style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                    padding: '6px 12px 5px', background: P.statusBg,
-                                    borderBottom: `1px solid ${P.divider}`,
+                                    margin: '8px 8px 0', borderRadius: 12, padding: '10px 12px 9px',
+                                    background: 'linear-gradient(180deg, #FEFCFD 0%, #FFF8FA 50%, #FFF3F7 100%)',
+                                    border: `1.5px solid rgba(200,150,170,0.3)`,
+                                    boxShadow: 'inset 0 2px 6px rgba(180,110,140,0.12), inset 0 -1px 3px rgba(255,255,255,0.6), inset 1px 0 3px rgba(255,255,255,0.3)',
+                                    backgroundImage: P.screenPixelGrid,
+                                    position: 'relative',
                                 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <svg width="16" height="10" viewBox="0 0 16 10" fill="none">
-                                            <rect x="0" y="7" width="3" height="3" rx="0.5" fill={P.accent} opacity="1"/>
-                                            <rect x="4" y="4" width="3" height="6" rx="0.5" fill={P.accent} opacity="0.8"/>
-                                            <rect x="8" y="2" width="3" height="8" rx="0.5" fill={P.accent} opacity="0.6"/>
-                                            <rect x="12" y="0" width="3" height="10" rx="0.5" fill={P.accent} opacity="0.3"/>
-                                        </svg>
-                                        <span style={{ fontSize: 8, color: P.textSec }}>♡</span>
+                                    {/* Scanline overlay */}
+                                    <div style={{ position:'absolute', inset:0, borderRadius:12, background:'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(220,180,200,0.03) 2px, rgba(220,180,200,0.03) 3px)', pointerEvents:'none' }}/>
+                                    <div style={{ textAlign:'center', fontSize:10, fontWeight:800, color:P.accent, letterSpacing:2.5, marginBottom:4 }}>
+                                        LOVE REMOTE
                                     </div>
-                                    <span style={{ fontSize: 11, fontWeight: 800, color: P.accent, letterSpacing: 1.5 }}>
-                                        恋爱控制器
-                                    </span>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                                        <span style={{ fontSize: 7, color: P.textSec }}>520</span>
-                                        <svg width="18" height="10" viewBox="0 0 18 10" fill="none">
-                                            <rect x="0.5" y="0.5" width="14" height="9" rx="2" stroke={P.accent} strokeWidth="1"/>
-                                            <rect x="15" y="3" width="2" height="4" rx="0.5" fill={P.accent} opacity="0.5"/>
-                                            <rect x="2" y="2" width="9" height="6" rx="1" fill={P.btnPink} opacity="0.7"/>
-                                        </svg>
+                                    <div style={{ textAlign:'center', fontSize:8, color:P.textSec, letterSpacing:0.8, marginBottom:3 }}>
+                                        ♡ 恋爱控制器
+                                    </div>
+                                    <div style={{ height:1, background:`linear-gradient(90deg, transparent, ${P.divider}, transparent)`, margin:'4px 0' }}/>
+                                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                                        <span style={{ fontSize:7, color:P.textSec, letterSpacing:0.3 }}>
+                                            {bgmStatus === 'generating' ? '♫ 生成心动频率…' : bgmStatus === 'ready' ? '♫ 心动频率播放中' : bgmEnabled ? '♫ 等待心动…' : '♫ 心动频率已静音'}
+                                        </span>
+                                        <div style={{ display:'flex', alignItems:'center', gap:2 }}>
+                                            <span style={{ fontSize:7, color:P.textSec }}>520</span>
+                                            <svg width="14" height="8" viewBox="0 0 18 10" fill="none">
+                                                <rect x="0.5" y="0.5" width="14" height="9" rx="2" stroke={P.accent} strokeWidth="1"/>
+                                                <rect x="15" y="3" width="2" height="4" rx="0.5" fill={P.accent} opacity="0.5"/>
+                                                <rect x="2" y="2" width="9" height="6" rx="1" fill={P.btnPink} opacity="0.7"/>
+                                            </svg>
+                                        </div>
                                     </div>
                                 </div>
 
-                                {/* ── 2×2 Function Buttons ── */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '10px 10px 8px' }}>
+                                {/* ── 2×2 Jelly Keys ── */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: '8px 8px 6px' }}>
                                     {[
                                         { icon: (
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
                                                 <circle cx="12" cy="12" r="3"/>
                                             </svg>
-                                        ), label: '场景切换', onClick: () => { setPanelOpen(false); onOpenFullLocationSheet(); } },
+                                        ), label: '场景', onClick: () => { setPanelOpen(false); onOpenFullLocationSheet(); } },
                                         { icon: (
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M20.38 3.46 16 2 12 4 8 2 3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6l-1 12h14l-1-12h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>
                                             </svg>
-                                        ), label: '立绘设置', onClick: () => { setPanelOpen(false); onOpenSettings(); } },
+                                        ), label: '立绘', onClick: () => { setPanelOpen(false); onOpenSettings(); } },
                                         { icon: (
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
                                             </svg>
-                                        ), label: '恋爱BGM', onClick: () => onBgmToggle(), active: bgmEnabled },
+                                        ), label: '音乐', onClick: () => onBgmToggle(), active: bgmEnabled },
                                         { icon: (
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/>
                                             </svg>
-                                        ), label: '记忆整理', onClick: () => setMemoryExpanded(v => !v), active: memoryExpanded },
+                                        ), label: '记忆', onClick: () => setMemoryExpanded(v => !v), active: memoryExpanded },
                                     ].map(item => (
                                         <button key={item.label} type="button" onClick={item.onClick}
                                             style={{
                                                 display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                                justifyContent: 'center', gap: 5, padding: '12px 6px',
-                                                borderRadius: 14,
-                                                background: item.active ? P.cardHover : P.cardBg,
-                                                border: `1.5px solid ${item.active ? P.btnPink : P.cardBorder}`,
+                                                justifyContent: 'center', gap: 3, padding: '9px 4px',
+                                                borderRadius: 12,
+                                                background: item.active
+                                                    ? 'linear-gradient(180deg, rgba(255,190,210,0.6) 0%, rgba(255,160,190,0.4) 100%)'
+                                                    : 'linear-gradient(180deg, rgba(255,240,248,0.8) 0%, rgba(255,225,238,0.5) 100%)',
+                                                border: `1.5px solid ${item.active ? 'rgba(255,120,162,0.5)' : 'rgba(255,175,200,0.4)'}`,
                                                 boxShadow: item.active
-                                                    ? `0 0 12px rgba(255,122,162,0.2), ${P.cardPressShadow}`
-                                                    : `${P.btnShadow}, ${P.cardInnerShadow}`,
-                                                cursor: 'pointer', transition: 'all 0.18s',
+                                                    ? P.cardPressShadow
+                                                    : `0 3px 6px rgba(200,110,140,0.12), ${P.cardInnerShadow}`,
+                                                cursor: 'pointer', transition: 'all 0.15s',
+                                                transform: item.active ? 'translateY(1px)' : 'none',
                                             }}
                                             onMouseDown={e => {
-                                                e.currentTarget.style.transform = 'scale(0.94) translateY(1px)';
+                                                e.currentTarget.style.transform = 'scale(0.93) translateY(1px)';
                                                 e.currentTarget.style.boxShadow = P.cardPressShadow;
                                             }}
                                             onMouseUp={e => {
                                                 e.currentTarget.style.transform = 'scale(1)';
-                                                e.currentTarget.style.boxShadow = `${P.btnShadow}, ${P.cardInnerShadow}`;
+                                                e.currentTarget.style.boxShadow = `0 3px 6px rgba(200,110,140,0.12), ${P.cardInnerShadow}`;
                                             }}
                                             onMouseLeave={e => {
                                                 e.currentTarget.style.transform = 'scale(1)';
-                                                e.currentTarget.style.boxShadow = `${P.btnShadow}, ${P.cardInnerShadow}`;
+                                                e.currentTarget.style.boxShadow = `0 3px 6px rgba(200,110,140,0.12), ${P.cardInnerShadow}`;
                                             }}>
                                             {item.icon}
-                                            <span style={{ fontSize: 10, fontWeight: 700, color: P.textPri, letterSpacing: 0.5 }}>{item.label}</span>
+                                            <span style={{ fontSize: 9, fontWeight: 700, color: P.textPri, letterSpacing: 0.8 }}>{item.label}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -458,13 +467,13 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                         style={{ overflow: 'hidden', padding: '0 10px' }}
                                     >
                                         <div style={{
-                                            borderRadius: 12, padding: '8px 10px 7px', marginBottom: 6,
+                                            borderRadius: 10, padding: '7px 8px 6px', marginBottom: 4,
                                             background: P.moduleBg, border: `1px solid ${P.moduleBorder}`,
-                                            boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08), inset 0 -1px 0 rgba(255,255,255,0.4)',
+                                            boxShadow: 'inset 0 1px 2px rgba(200,140,170,0.06), inset 0 -1px 0 rgba(255,255,255,0.4)',
                                         }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
-                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
-                                                <span style={{ fontSize: 9, color: P.textPri, fontWeight: 700 }}>记忆整理</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 4 }}>
+                                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                                                <span style={{ fontSize: 8, color: P.textPri, fontWeight: 700 }}>记忆整理</span>
                                             </div>
                                             {/* Toggle: 自动总结 */}
                                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -505,21 +514,22 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                 )}
                                 </AnimatePresence>
 
-                                {/* ── Mini BGM Status Bar ── */}
-                                <div style={{ padding: '0 10px 6px' }}>
+                                {/* ── Mini Player Strip ── */}
+                                <div style={{ padding: '0 8px 6px' }}>
                                     <div style={{
-                                        borderRadius: 10, padding: '6px 10px',
-                                        background: P.moduleBg, border: `1px solid ${P.moduleBorder}`,
-                                        boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08), inset 0 -1px 0 rgba(255,255,255,0.4)',
-                                        display: 'flex', alignItems: 'center', gap: 6,
+                                        borderRadius: 9, padding: '5px 8px',
+                                        background: 'linear-gradient(180deg, rgba(255,242,248,0.5) 0%, rgba(255,232,242,0.35) 100%)',
+                                        border: `1px solid rgba(255,180,205,0.3)`,
+                                        boxShadow: 'inset 0 1px 2px rgba(200,140,170,0.06), inset 0 -1px 0 rgba(255,255,255,0.4)',
+                                        display: 'flex', alignItems: 'center', gap: 5,
                                     }}>
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill={P.btnPink} stroke="none"><path d="M9 18V5l12-2v13M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
-                                        <span style={{ flex: 1, fontSize: 8, color: P.textSec, fontStyle: 'italic', letterSpacing: 0.3 }}>
-                                            {bgmStatus === 'generating' ? '♪ 心动频率生成中…' : bgmStatus === 'ready' ? '♡ 心动频率播放中' : bgmEnabled ? '♪ 等待心动频率…' : '♪ 心动频率已静音'}
+                                        <svg width="9" height="9" viewBox="0 0 24 24" fill={P.btnPink} stroke="none"><path d="M9 18V5l12-2v13M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
+                                        <span style={{ flex: 1, fontSize: 7, color: P.textSec, fontStyle: 'italic', letterSpacing: 0.2 }}>
+                                            {bgmStatus === 'generating' ? '♪ 生成中…' : bgmStatus === 'ready' ? '♡ 播放中' : bgmEnabled ? '♪ 等待…' : '♪ 已静音'}
                                         </span>
                                         <input type="range" min={0} max={100} value={Math.round(bgmVolume * 100)}
                                             onChange={e => onBgmVolumeChange(Number(e.target.value) / 100)}
-                                            style={{ width: 50, height: 3, borderRadius: 3, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer',
+                                            style={{ width: 40, height: 2, borderRadius: 2, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer',
                                                 background: `linear-gradient(to right, ${P.btnPink} ${bgmVolume * 100}%, ${P.toggleOff} ${bgmVolume * 100}%)`,
                                                 accentColor: P.btnPink }} />
                                     </div>
@@ -527,55 +537,77 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                             </div>
                             {/* End Screen */}
 
-                            {/* ── Sticker Slot (贴纸仓) ── */}
+                            {/* ── 贴纸仓 (Collapsible) ── */}
                             <div style={{
-                                margin: '8px 6px 0', borderRadius: 14, padding: '7px 10px',
-                                background: 'linear-gradient(180deg, rgba(255,242,248,0.7) 0%, rgba(255,235,244,0.5) 100%)',
-                                border: `1.5px solid rgba(255,170,200,0.35)`,
-                                boxShadow: 'inset 0 1px 4px rgba(200,140,170,0.1), inset 0 -1px 0 rgba(255,255,255,0.5)',
-                                display: 'flex', alignItems: 'center', gap: 8,
+                                margin: '6px 6px 0', borderRadius: 12, overflow: 'hidden',
+                                border: `1.5px solid rgba(255,180,205,0.3)`,
+                                boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.06), inset 0 -1px 0 rgba(255,255,255,0.5)',
                             }}>
-                                <div style={{
-                                    width: 38, height: 38, borderRadius: 10,
-                                    background: 'rgba(255,245,250,0.8)', border: `1.5px dashed ${P.cardBorder}`,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    flexShrink: 0, overflow: 'hidden',
-                                    boxShadow: 'inset 0 1px 3px rgba(200,140,170,0.08)',
+                                <button type="button" onClick={() => setStickerOpen(v => !v)} style={{
+                                    width: '100%', display: 'flex', alignItems: 'center', gap: 6,
+                                    padding: '6px 10px', cursor: 'pointer', border: 'none',
+                                    background: 'linear-gradient(180deg, rgba(255,245,250,0.7) 0%, rgba(255,238,246,0.5) 100%)',
                                 }}>
-                                    <img src={ballIconUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
-                                </div>
-                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                                    <span style={{ fontSize: 9, color: P.textPri, fontWeight: 600 }}>贴贴图片</span>
-                                    <div style={{ display: 'flex', gap: 4 }}>
-                                        <button type="button" onClick={() => fileInputRef.current?.click()}
-                                            style={{ flex: 1, padding: '4px 0', borderRadius: 8, fontSize: 9, fontWeight: 700,
-                                                background: P.btnPinkSolid, color: '#fff', border: 'none', cursor: 'pointer',
-                                                boxShadow: '0 1px 4px rgba(255,107,149,0.25)' }}>
-                                            换一张
-                                        </button>
-                                        {customIcon && (
-                                            <button type="button" onClick={handleResetIcon}
-                                                style={{ padding: '4px 8px', borderRadius: 8, fontSize: 9,
-                                                    background: 'rgba(255,240,248,0.6)', color: P.textSec, border: `1px solid ${P.divider}`, cursor: 'pointer' }}>
-                                                重置
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
+                                    <span style={{ fontSize: 11 }}>🖼</span>
+                                    <span style={{ fontSize: 8, fontWeight: 700, color: P.textPri, flex: 1, textAlign: 'left' }}>贴纸仓</span>
+                                    <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke={P.textSec} strokeWidth="2" style={{ transform: stickerOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                                        <path d="M2 4l4 4 4-4"/>
+                                    </svg>
+                                </button>
+                                <AnimatePresence>
+                                {stickerOpen && (
+                                    <motion.div
+                                        initial={{ height: 0, opacity: 0 }}
+                                        animate={{ height: 'auto', opacity: 1 }}
+                                        exit={{ height: 0, opacity: 0 }}
+                                        transition={{ duration: 0.18 }}
+                                        style={{ overflow: 'hidden' }}
+                                    >
+                                        <div style={{ padding: '6px 10px 8px', display: 'flex', alignItems: 'center', gap: 8, borderTop: `1px solid ${P.divider}` }}>
+                                            <div style={{
+                                                width: 32, height: 32, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
+                                                background: 'rgba(255,248,252,0.8)', border: `1px dashed ${P.cardBorder}`,
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                boxShadow: 'inset 0 1px 2px rgba(200,140,170,0.06)',
+                                            }}>
+                                                <img src={ballIconUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} draggable={false} />
+                                            </div>
+                                            <div style={{ flex: 1, display: 'flex', gap: 4 }}>
+                                                <button type="button" onClick={() => fileInputRef.current?.click()}
+                                                    style={{ flex: 1, padding: '3px 0', borderRadius: 7, fontSize: 8, fontWeight: 700,
+                                                        background: P.btnPinkSolid, color: '#fff', border: 'none', cursor: 'pointer',
+                                                        boxShadow: '0 1px 3px rgba(255,107,149,0.2)' }}>
+                                                    换一张
+                                                </button>
+                                                {customIcon && (
+                                                    <button type="button" onClick={handleResetIcon}
+                                                        style={{ padding: '3px 6px', borderRadius: 7, fontSize: 8,
+                                                            background: 'rgba(255,245,250,0.6)', color: P.textSec, border: `1px solid ${P.divider}`, cursor: 'pointer' }}>
+                                                        重置
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                )}
+                                </AnimatePresence>
                             </div>
 
-                            {/* ▸ Home Button — cream plastic inset */}
-                            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 10 }}>
+                            {/* ▸ Home Key — physical device button */}
+                            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8, paddingBottom: 2 }}>
                                 <button type="button" onClick={() => setPanelOpen(false)}
                                     style={{
-                                        width: 34, height: 34, borderRadius: '50%',
-                                        background: 'linear-gradient(155deg, #FFF0F3 0%, #FFE0EA 40%, #FFD1DC 100%)',
-                                        border: `2.5px solid ${P.shellBorder}`,
-                                        boxShadow: 'inset 0 1px 3px rgba(255,255,255,0.6), inset 0 -1px 2px rgba(200,130,160,0.15), 0 3px 8px rgba(200,120,150,0.2)',
+                                        width: 30, height: 30, borderRadius: '50%',
+                                        background: 'linear-gradient(160deg, #FFF3F6 0%, #FFE8EF 30%, #FFD8E4 70%, #FFD0DE 100%)',
+                                        border: `2px solid rgba(210,140,165,0.55)`,
+                                        boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.7), inset 0 -2px 3px rgba(200,130,160,0.18), 0 2px 6px rgba(200,120,150,0.2), 0 0 0 3px rgba(255,200,220,0.15)',
                                         cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                                         animation: 'heart-float 2.5s ease-in-out infinite',
-                                    }}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={P.btnPink} width={15} height={15}>
+                                    }}
+                                    onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.92)'; e.currentTarget.style.boxShadow = 'inset 0 1px 3px rgba(200,130,160,0.25), 0 1px 2px rgba(200,120,150,0.1)'; }}
+                                    onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'inset 0 2px 4px rgba(255,255,255,0.7), inset 0 -2px 3px rgba(200,130,160,0.18), 0 2px 6px rgba(200,120,150,0.2), 0 0 0 3px rgba(255,200,220,0.15)'; }}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={P.btnPink} width={13} height={13}>
                                         <path d="m11.645 20.91-.007-.003-.022-.012a15.247 15.247 0 0 1-.383-.218 25.18 25.18 0 0 1-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0 1 12 5.052 5.5 5.5 0 0 1 16.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 0 1-4.244 3.17 15.247 15.247 0 0 1-.383.219l-.022.012-.007.004-.003.001a.752.752 0 0 1-.704 0l-.003-.001Z" />
                                     </svg>
                                 </button>

@@ -308,7 +308,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             const t = setTimeout(() => setEventCollapsed(true), 5000);
             return () => clearTimeout(t);
         }
-    }, [currentEvent]);
+    }, [currentEvent, eventCollapsed]);
 
     useEffect(() => {
         if (currentEvent) setEventCollapsed(false);
@@ -458,7 +458,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             {currentEvent && (
                 <div
                     className={`theater-event-overlay ${eventCollapsed ? 'collapsed' : ''}`}
-                    onClick={() => eventCollapsed && setEventCollapsed(false)}
+                    onClick={() => setEventCollapsed(c => !c)}
                     style={{ top: 100 }}
                 >
                     {!eventCollapsed && (

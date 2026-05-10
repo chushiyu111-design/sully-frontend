@@ -8,6 +8,8 @@ import { StatusBarMode,CustomStatusTemplate,StatusCardData } from './statusCard'
 export interface DialogueItem {
     text: string;
     emotion?: string;
+    /** Translated text (populated when translation is enabled) */
+    translationText?: string;
 }
 
 export interface DateState {

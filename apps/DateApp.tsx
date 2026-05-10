@@ -14,6 +14,7 @@ import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../uti
 import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge,formatMessagesForSummary } from '../utils/dateSummaryPrompts';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
+import { stripTranslationTags } from '../utils/chatParser';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
@@ -182,6 +183,34 @@ const DateApp: React.FC = () => {
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
     const canAutoSummary = hasCompleteApiConfig(secondaryApiConfig);
     const summaryDisabledReason = canManualSummary ? undefined : '请先配置主 API 或副 API';
+
+    // --- Translation State (persisted to localStorage per character) ---
+    const [dateTranslationEnabled, setDateTranslationEnabled] = useState(() => {
+        if (!char) return false;
+        try { return JSON.parse(localStorage.getItem(`date_translation_${char.id}`) || 'false'); } catch { return false; }
+    });
+    const [dateTranslateSourceLang, setDateTranslateSourceLang] = useState(() => {
+        if (!char) return '日本語';
+        return localStorage.getItem(`date_trans_src_${char.id}`) || '日本語';
+    });
+    const [dateTranslateTargetLang, setDateTranslateTargetLang] = useState(() => {
+        if (!char) return '中文';
+        return localStorage.getItem(`date_trans_tgt_${char.id}`) || '中文';
+    });
+
+    // Persist translation settings when they change
+    useEffect(() => {
+        if (!char) return;
+        localStorage.setItem(`date_translation_${char.id}`, JSON.stringify(dateTranslationEnabled));
+    }, [char?.id, dateTranslationEnabled]);
+    useEffect(() => {
+        if (!char) return;
+        localStorage.setItem(`date_trans_src_${char.id}`, dateTranslateSourceLang);
+    }, [char?.id, dateTranslateSourceLang]);
+    useEffect(() => {
+        if (!char) return;
+        localStorage.setItem(`date_trans_tgt_${char.id}`, dateTranslateTargetLang);
+    }, [char?.id, dateTranslateTargetLang]);
 
     // --- Data Loading ---
     const loadDateMessages = async () => {
@@ -874,7 +903,7 @@ ${exitPromptContent}
         // BUT, we must ensure the Opening (Assistant) is included in history.
         const historyMsgs = visibleHistory.slice(-limit, -1).map(m => ({
             role: m.role,
-            content: m.type === 'image' ? '[User sent an image]' : m.content
+            content: m.type === 'image' ? '[User sent an image]' : stripTranslationTags(m.content)
         }));
 
         // ====== Build full immersive theater system prompt ======
@@ -896,7 +925,13 @@ ${exitPromptContent}
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''})` }
+                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''}${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。规则：
+• 只有${char.name}的「台词/说的话」用${dateTranslateSourceLang}写，并用 <翻译><原文>[emotion] ${dateTranslateSourceLang}台词</原文><译文>${dateTranslateTargetLang}译文</译文></翻译> 包裹。
+• 叙述、动作描写、心理活动、环境描写 → 保持中文不变，不用 <翻译> 标签。
+• 译文不需要 [emotion] 标签。
+示例：
+<翻译><原文>[happy] 「おはよう！今日はいい天気だね」</原文><译文>「早上好！今天天气真好呢」</译文></翻译>
+[shy] 她的脸颂微微泛红，视线移向了窗外。]` : ''})` }
                 ],
                 temperature: 0.85
             })
@@ -910,8 +945,10 @@ ${exitPromptContent}
         const whisperResult = extractInnerWhispers(extracted.content);
         const content = whisperResult.content;
 
-        // 3. Save AI Response (thinking chain saved to metadata for dev debugging, hidden from UI)
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', thinking: extracted.thinking } });
+        // 3. Save AI Response — DB stores only 原文 (translation tags stripped)
+        // but we return the full content (with XML) for real-time bilingual rendering in DateSession
+        const contentForDb = stripTranslationTags(content);
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: contentForDb, metadata: { source: 'date', thinking: extracted.thinking } });
 
         // Refresh local state
         const freshMsgs = await DB.getMessagesByCharId(char.id);
@@ -942,7 +979,7 @@ ${exitPromptContent}
         const limit = char.contextLimit || 500;
         const historyMsgs = validMsgs.slice(-limit, -1).map(m => ({
             role: m.role,
-            content: m.type === 'image' ? '[User sent an image]' : m.content
+            content: m.type === 'image' ? '[User sent an image]' : stripTranslationTags(m.content)
         }));
 
         // ====== Build full immersive theater system prompt (reroll) ======
@@ -964,7 +1001,7 @@ ${exitPromptContent}
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。)` }
+                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。只有${char.name}的台词用${dateTranslateSourceLang}写并用 <翻译><原文>...<译文>...</翻译> 包裹；叙述/动作/心理描写保持中文不变。]` : ''})` }
                 ],
                 temperature: 0.9
             })
@@ -978,8 +1015,9 @@ ${exitPromptContent}
         const whisperResult = extractInnerWhispers(extracted.content);
         const content = whisperResult.content;
 
-        // Save AI Response (thinking chain saved to metadata for dev debugging, hidden from UI)
-        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date', thinking: extracted.thinking } });
+        // Save AI Response — DB stores only 原文 (translation stripped), return raw for real-time rendering
+        const contentForDbR = stripTranslationTags(content);
+        await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: contentForDbR, metadata: { source: 'date', thinking: extracted.thinking } });
 
         // Sync
         const freshMsgs = await DB.getMessagesByCharId(char.id);
@@ -1242,6 +1280,12 @@ ${exitPromptContent}
                     writingStyle={char.dateWritingStyle}
                     onChangeWordCount={(count) => updateCharacter(char.id, { dateOutputWordCount: count })}
                     onChangeWritingStyle={(style) => updateCharacter(char.id, { dateWritingStyle: style })}
+                    translationEnabled={dateTranslationEnabled}
+                    translateSourceLang={dateTranslateSourceLang}
+                    translateTargetLang={dateTranslateTargetLang}
+                    onToggleTranslation={setDateTranslationEnabled}
+                    onSetTranslateSourceLang={setDateTranslateSourceLang}
+                    onSetTranslateTargetLang={setDateTranslateTargetLang}
                 />
 
                 {/* Global Message Edit Modal for Session Mode */}

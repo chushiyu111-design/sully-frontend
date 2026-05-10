@@ -6,6 +6,7 @@ import { processImage } from '../../utils/file';
 import { getGuardedInputProps } from '../../utils/inputGuards';
 import { DEFAULT_DATE_SUMMARY_PROMPT } from '../../utils/dateSummaryPrompts';
 import { DATE_WRITING_STYLE_PRESETS, DATE_DEFAULT_WORD_COUNT } from '../../utils/datePrompts';
+import WritingStyleSheet, { isPresetKey } from './WritingStyleSheet';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -44,6 +45,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const [skinUrlInput, setSkinUrlInput] = useState('');
     const [skinUrlEmotionKey, setSkinUrlEmotionKey] = useState('');
     const [showUrlModal, setShowUrlModal] = useState(false);
+    const [styleSheetOpen, setStyleSheetOpen] = useState(false);
     const [urlTargetSkinId, setUrlTargetSkinId] = useState<string | null>(null); // null = default sprites
     const skinSets = char.dateSkinSets || [];
     const activeSkinId = char.activeSkinSetId || null;
@@ -325,67 +327,59 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     <h3 className="text-xs font-bold text-slate-400 uppercase mb-1">文风</h3>
                     <p className="text-[11px] text-slate-400 mb-4">选择一种内置文风，或自定义你想要的叙述风格。不选则使用默认风格。</p>
 
-                    {/* Preset grid */}
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                        {DATE_WRITING_STYLE_PRESETS.map(preset => {
-                            const isActive = selectedStyleKey === preset.key;
-                            return (
-                                <button
-                                    key={preset.key}
-                                    onClick={() => setSelectedStyleKey(isActive ? null : preset.key)}
-                                    className={`relative text-center p-2.5 rounded-xl border transition-all duration-200 active:scale-95 ${
-                                        isActive
-                                            ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
-                                            : 'border-slate-100 bg-slate-50 hover:border-slate-200'
-                                    }`}
-                                    title={preset.desc}
-                                >
-                                    <span className={`text-sm font-bold ${isActive ? 'text-primary' : 'text-slate-700'}`}>{preset.label}</span>
-                                    {isActive && (
-                                        <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary"></div>
-                                    )}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    {/* Custom option */}
-                    <button
-                        onClick={() => setSelectedStyleKey(selectedStyleKey === '__custom__' ? null : '__custom__')}
-                        className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
-                            selectedStyleKey === '__custom__'
-                                ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
-                                : 'border-slate-100 bg-slate-50 hover:border-slate-200'
-                        }`}
-                    >
-                        <span className={`text-sm font-bold ${selectedStyleKey === '__custom__' ? 'text-primary' : 'text-slate-700'}`}>自定义文风</span>
-                        <p className="text-[10px] text-slate-400 mt-0.5">用你自己的话描述想要的叙述风格</p>
-                    </button>
-
-                    {/* Custom textarea */}
-                    {selectedStyleKey === '__custom__' && (
-                        <div className="mt-3">
-                            <textarea
-                                value={customStyleText}
-                                onChange={e => setCustomStyleText(e.target.value)}
-                                rows={4}
-                                placeholder="例如：用短句，少用形容词，台词口语化，像聊天记录一样自然…"
-                                className="w-full resize-y rounded-xl border border-slate-100 bg-slate-50 p-3 text-[12px] leading-relaxed text-slate-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-                            />
-                        </div>
-                    )}
-
-                    {/* Current state indicator */}
-                    {selectedStyleKey && (
-                        <div className="mt-3 flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2">
-                            <span className="text-[10px] text-slate-400">当前选择:</span>
-                            <span className="text-[11px] font-bold text-slate-600">
+                    {/* Current style display + open sheet button */}
+                    <div className="flex items-center gap-3">
+                        <div className="flex-1 flex items-center gap-2 px-4 py-3 bg-slate-50 rounded-xl border border-slate-100">
+                            <span className="text-[13px]">🖊</span>
+                            <span className={`text-sm font-bold ${
+                                selectedStyleKey ? 'text-primary' : 'text-slate-400'
+                            }`}>
                                 {selectedStyleKey === '__custom__'
                                     ? '自定义'
-                                    : DATE_WRITING_STYLE_PRESETS.find(p => p.key === selectedStyleKey)?.label || selectedStyleKey
+                                    : selectedStyleKey
+                                        ? (DATE_WRITING_STYLE_PRESETS.find(p => p.key === selectedStyleKey)?.label || selectedStyleKey)
+                                        : '未选择'
                                 }
                             </span>
                         </div>
+                        <button
+                            type="button"
+                            onClick={() => setStyleSheetOpen(true)}
+                            className="px-5 py-3 bg-primary/10 text-primary text-sm font-bold rounded-xl hover:bg-primary/15 active:scale-95 transition-all"
+                        >
+                            选择文风
+                        </button>
+                    </div>
+
+                    {/* Show desc when a preset is selected */}
+                    {selectedStyleKey && selectedStyleKey !== '__custom__' && (() => {
+                        const preset = DATE_WRITING_STYLE_PRESETS.find(p => p.key === selectedStyleKey);
+                        return preset ? (
+                            <div className="mt-3 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                                <div className="text-[11px] text-slate-500 leading-relaxed">{preset.desc}</div>
+                            </div>
+                        ) : null;
+                    })()}
+
+                    {/* Show custom text preview */}
+                    {selectedStyleKey === '__custom__' && customStyleText && (
+                        <div className="mt-3 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                            <div className="text-[11px] text-slate-500 leading-relaxed line-clamp-3">{customStyleText}</div>
+                        </div>
+                    )}
+
+                    {/* Clear button */}
+                    {selectedStyleKey && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedStyleKey(null);
+                                setCustomStyleText('');
+                            }}
+                            className="mt-2 text-[11px] text-slate-400 hover:text-slate-600 underline"
+                        >
+                            清除文风选择
+                        </button>
                     )}
                 </section>
 
@@ -758,6 +752,29 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </div>
             )}
+
+            {/* Writing Style Sheet */}
+            <WritingStyleSheet
+                isOpen={styleSheetOpen}
+                currentStyle={
+                    selectedStyleKey === '__custom__'
+                        ? (customStyleText || undefined)
+                        : (selectedStyleKey || undefined)
+                }
+                onSelect={(style) => {
+                    if (!style) {
+                        setSelectedStyleKey(null);
+                        setCustomStyleText('');
+                    } else if (isPresetKey(style)) {
+                        setSelectedStyleKey(style);
+                        setCustomStyleText('');
+                    } else {
+                        setSelectedStyleKey('__custom__');
+                        setCustomStyleText(style);
+                    }
+                }}
+                onClose={() => setStyleSheetOpen(false)}
+            />
 
             <div className="p-4 border-t border-slate-200 bg-white/90 backdrop-blur-sm sticky bottom-0 z-20">
                 <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">

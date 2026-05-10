@@ -376,7 +376,7 @@ const Chat: React.FC = () => {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
                     .filter(m => !m.metadata?.hiddenFromUser)
-                    .filter(m => m.metadata?.source !== 'date')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'theater')
                     .filter(m => (m.type as string) !== 'health_signal')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'))
                     .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream');
@@ -514,7 +514,7 @@ const Chat: React.FC = () => {
     };
 
     const handleReroll = async () => {
-        const rerollableMessages = messages.filter(m => !m.metadata?.hiddenFromUser && m.metadata?.source !== 'date');
+        const rerollableMessages = messages.filter(m => !m.metadata?.hiddenFromUser && m.metadata?.source !== 'date' && m.metadata?.source !== 'theater');
         if (isTyping || rerollableMessages.length === 0) return;
 
         const lastMsg = rerollableMessages[rerollableMessages.length - 1];
@@ -1234,7 +1234,7 @@ const Chat: React.FC = () => {
 
     const displayMessages = useMemo(() => messages
         .filter(m => !m.metadata?.hiddenFromUser)
-        .filter(m => m.metadata?.source !== 'date')
+        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'theater')
         .filter(m => (m.type as string) !== 'health_signal')  // 半糖健康感知：永远不在聊天UI显示
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
         .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)

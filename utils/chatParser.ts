@@ -163,6 +163,110 @@ export function parseBilingual(
     return { hasBilingual: true, langA: a, langB: b };
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Translation XML Utilities — 见面/剧场翻译标签工具
+//  Philosophy: 先救再杀 — rescue content first, strip tags second.
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Strip `<翻译><原文>...<译文>...</翻译>` XML tags, keeping ONLY 原文 content.
+ * Tolerant of:
+ *   - Extra whitespace / newlines between tags
+ *   - Missing closing tags (unclosed `<翻译>` blocks)
+ *   - Stray orphan tags after extraction
+ * Safe to call on content that has no translation tags (returns unchanged).
+ */
+export function stripTranslationTags(content: string): string {
+    if (!content) return content;
+    // Fast path: no tags at all
+    if (!content.includes('<翻译>') && !content.includes('<原文>') && !content.includes('<译文>')) {
+        return content;
+    }
+
+    let result = content;
+
+    // 1. Well-formed blocks: extract 原文 only
+    result = result.replace(
+        /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g,
+        '$1'
+    );
+
+    // 2. Partially formed: <原文>content</原文> without outer <翻译> wrapper
+    result = result.replace(/<原文>([\s\S]*?)<\/原文>\s*(?:<译文>[\s\S]*?<\/译文>)?/g, '$1');
+
+    // 3. Unclosed <翻译> with 原文 inside (AI got cut off)
+    result = result.replace(/<翻译>\s*<原文>([\s\S]*?)(?:<\/原文>)?[\s\S]*$/g, '$1');
+
+    // 4. Kill any orphaned tags that survived
+    result = result.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '');
+
+    return result.trim();
+}
+
+/**
+ * Extract structured { original, translated } pairs from `<翻译>` XML blocks.
+ * Tolerant of:
+ *   - Multiple blocks in one string
+ *   - Blocks with only 原文 (no 译文) — translated defaults to ''
+ *   - Blocks with only 译文 (no 原文) — original defaults to the 译文 (rescue)
+ *   - Non-translation text between blocks — returned as { original: text, translated: '' }
+ *   - Completely malformed input — returns single { original: rawInput, translated: '' }
+ */
+export function extractTranslationPairs(
+    content: string
+): { original: string; translated: string }[] {
+    if (!content) return [];
+
+    // Fast path: no translation tags
+    if (!content.includes('<翻译>') && !content.includes('<原文>')) {
+        return [{ original: content, translated: '' }];
+    }
+
+    const pairs: { original: string; translated: string }[] = [];
+
+    // Well-formed pattern (tolerant whitespace)
+    const re = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*(?:<译文>([\s\S]*?)<\/译文>)?\s*<\/翻译>/g;
+    let lastIndex = 0;
+    let m;
+
+    while ((m = re.exec(content)) !== null) {
+        // Rescue any plain text before this block
+        const textBefore = content.slice(lastIndex, m.index).trim();
+        if (textBefore) {
+            // Strip orphan tags from inter-block text
+            const cleaned = textBefore.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim();
+            if (cleaned) pairs.push({ original: cleaned, translated: '' });
+        }
+
+        const original = m[1]?.trim() || '';
+        const translated = m[2]?.trim() || '';
+
+        if (original) {
+            pairs.push({ original, translated });
+        } else if (translated) {
+            // Rescue: no 原文 but has 译文 — use 译文 as display content
+            pairs.push({ original: translated, translated: '' });
+        }
+
+        lastIndex = m.index + m[0].length;
+    }
+
+    // Rescue any trailing text after the last block
+    const trailing = content.slice(lastIndex).trim();
+    if (trailing) {
+        const cleaned = trailing.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim();
+        if (cleaned) pairs.push({ original: cleaned, translated: '' });
+    }
+
+    // Fallback: if regex matched nothing, return entire content as single pair
+    if (pairs.length === 0) {
+        const fallback = content.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim();
+        return [{ original: fallback || content, translated: '' }];
+    }
+
+    return pairs;
+}
+
 export const ChatParser = {
     // Return cleaned content and perform side effects
     parseAndExecuteActions: async (

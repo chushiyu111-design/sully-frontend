@@ -1,6 +1,7 @@
 import React,{ useState,useEffect,useRef } from 'react';
 import { CharacterProfile,Message,DateState,DialogueItem,UserProfile } from '../../types';
 import { type InnerWhisper } from '../../utils/thinkingExtractor';
+import { extractTranslationPairs } from '../../utils/chatParser';
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
 import DateSettings from './DateSettings';
@@ -23,8 +24,67 @@ const cleanTextForDisplay = (text: string) => {
     return text.replace(/\[.*?\]/g, '').trim();
 };
 
+/**
+ * Parse dialogue text into DialogueItem[]. Supports:
+ * 1. Plain lines with [emotion] tags
+ * 2. <翻译><原文>...</原文><译文>...</译文></翻译> bilingual blocks
+ * Philosophy: 先救再杀 — always extract displayable content, never crash on malformed AI output.
+ */
 const parseDialogue = (fullText: string, initialEmotion: string = 'normal'): DialogueItem[] => {
     if (!fullText) return [];
+
+    // --- Phase 1: Translation-aware pre-pass ---
+    // If the text contains <翻译> blocks, use extractTranslationPairs to split
+    // into structured pairs first, then parse each pair's original for [emotion] tags.
+    const hasTranslationXml = fullText.includes('<翻译>') || fullText.includes('<原文>');
+    if (hasTranslationXml) {
+        const pairs = extractTranslationPairs(fullText);
+        const results: DialogueItem[] = [];
+        let currentEmotion = initialEmotion;
+
+        for (const pair of pairs) {
+            // Parse the original text for [emotion] tags — line by line
+            const origLines = pair.original.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            let translationAssigned = false; // Track per-pair: only attach translation to first content line
+
+            for (const line of origLines) {
+                if (isContextNoise(line)) continue;
+                const tagMatch = line.match(/^\[([a-zA-Z0-9_\-]+)\]\s*(.*)/);
+                let content = line;
+
+                if (tagMatch) {
+                    currentEmotion = tagMatch[1].toLowerCase();
+                    content = tagMatch[2];
+                } else {
+                    const standaloneTag = line.match(/^\[([a-zA-Z0-9_\-]+)\]$/);
+                    if (standaloneTag) {
+                        currentEmotion = standaloneTag[1].toLowerCase();
+                        continue;
+                    }
+                }
+
+                if (content) {
+                    // Attach translation to the first content line of this pair only
+                    const shouldAttachTranslation = !translationAssigned && !!pair.translated;
+                    results.push({
+                        text: content,
+                        emotion: currentEmotion,
+                        translationText: shouldAttachTranslation
+                            ? cleanTextForDisplay(pair.translated)
+                            : undefined,
+                    });
+                    if (shouldAttachTranslation) translationAssigned = true;
+                }
+            }
+            // If the pair's original had no parseable lines but translated exists, rescue it
+            if (origLines.length === 0 && pair.translated) {
+                results.push({ text: pair.translated, emotion: currentEmotion });
+            }
+        }
+        return results;
+    }
+
+    // --- Phase 2: Standard parsing (no translation XML) ---
     const lines = fullText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const results: DialogueItem[] = [];
     let currentEmotion = initialEmotion;
@@ -79,6 +139,13 @@ interface DateSessionProps {
     writingStyle?: string;
     onChangeWordCount: (count: number | undefined) => void;
     onChangeWritingStyle: (style: string | undefined) => void;
+    // Translation
+    translationEnabled?: boolean;
+    translateSourceLang?: string;
+    translateTargetLang?: string;
+    onToggleTranslation?: (enabled: boolean) => void;
+    onSetTranslateSourceLang?: (lang: string) => void;
+    onSetTranslateTargetLang?: (lang: string) => void;
 }
 
 export type DateExitSyncMode = 'summary' | 'raw' | 'none';
@@ -109,7 +176,13 @@ const DateSession: React.FC<DateSessionProps> = ({
     wordCount,
     writingStyle,
     onChangeWordCount,
-    onChangeWritingStyle}) => {
+    onChangeWritingStyle,
+    translationEnabled,
+    translateSourceLang,
+    translateTargetLang,
+    onToggleTranslation,
+    onSetTranslateSourceLang,
+    onSetTranslateTargetLang}) => {
     const { addToast, registerBackHandler } = useOS();
     
     // Core VN State
@@ -268,8 +341,12 @@ const DateSession: React.FC<DateSessionProps> = ({
         return char.sprites || {};
     }, [char.activeSkinSetId, char.dateSkinSets, char.sprites]);
 
+    // Track current translation text for VN mode display
+    const [currentTranslation, setCurrentTranslation] = useState('');
+
     const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[]) => {
         setCurrentText(item.text);
+        setCurrentTranslation(item.translationText || '');
         if (item.emotion && activeSprites) {
             const emotionKey = item.emotion.toLowerCase();
             if (dateEmotionKeys.includes(emotionKey)) {
@@ -531,6 +608,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                 writingStyle={writingStyle}
                 onChangeWordCount={onChangeWordCount}
                 onChangeWritingStyle={onChangeWritingStyle}
+                translationEnabled={translationEnabled}
+                translateSourceLang={translateSourceLang}
+                translateTargetLang={translateTargetLang}
+                onToggleTranslation={onToggleTranslation}
+                onSetTranslateSourceLang={onSetTranslateSourceLang}
+                onSetTranslateTargetLang={onSetTranslateTargetLang}
             />
 
             {/* Novel Mode View */}
@@ -560,11 +643,22 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         <p className={`whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
                                     ) : (
                                         <div>
-                                            {(msg.content || '').split('\n').map((line, idx) => {
-                                                const cleanLine = cleanTextForDisplay(line);
-                                                if (!cleanLine) return null;
-                                                return <p key={idx} className={`whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 mb-4 last:mb-0 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
-                                            })}
+                                            {(() => {
+                                                // Use parseDialogue to handle both plain text and <翻译> XML
+                                                const items = parseDialogue(msg.content || '', 'normal');
+                                                return items.map((item, idx) => {
+                                                    const cleanLine = cleanTextForDisplay(item.text);
+                                                    if (!cleanLine) return null;
+                                                    return (
+                                                        <div key={idx} className="mb-4 last:mb-0">
+                                                            <p className={`whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                            {item.translationText && (
+                                                                <p className={`whitespace-pre-wrap font-serif text-[14px] text-justify leading-relaxed tracking-wide pl-4 mt-1 ${char.dateLightReading ? 'text-stone-400 border-l-2 border-stone-200/50' : 'text-slate-400/60 border-l-2 border-white/5'}`}>{item.translationText}</p>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
                                         </div>
                                     )}
                                 </div>
@@ -586,6 +680,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                             <div className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer">
                                 <div className="absolute -top-3 left-6"><div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div></div>
                                 <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
+                                {/* Translation subtitle — fades in after typewriter finishes */}
+                                {!isTextAnimating && currentTranslation && (
+                                    <p className="text-white/40 text-[13px] leading-relaxed font-light tracking-wide mt-2 pt-2 border-t border-white/[0.06] animate-fade-in">
+                                        {currentTranslation}
+                                    </p>
+                                )}
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
                                 {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && !whispersVisible && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
                             </div>

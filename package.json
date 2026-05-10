@@ -12,7 +12,9 @@
     "audit:pages-git": "node ./scripts/audit-pages-git-build.mjs",
     "sync:pages-env": "node ./scripts/sync-pages-env.mjs",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "knip": "knip",
+    "knip:fix": "knip --fix"
   },
   "dependencies": {
     "@capacitor/android": "^6.0.0",
@@ -53,6 +55,7 @@
     "autoprefixer": "^10.4.24",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^28.1.0",
+    "knip": "^6.12.2",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.2.0",
     "typescript": "^5.3.3",

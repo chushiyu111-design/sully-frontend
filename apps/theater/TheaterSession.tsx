@@ -15,10 +15,7 @@ import TheaterSettings from './TheaterSettings';
 import TheaterFloatingBall from './TheaterFloatingBall';
 import InlineLocationSheet from './InlineLocationSheet';
 
-const EVENT_TYPE_ZH: Record<string, string> = {
-    ambient: '氛围', encounter: '偶遇', romantic: '浪漫',
-    callback: '回忆', conflict: '冲突', surprise: '惊喜',
-};
+
 
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
 
@@ -199,7 +196,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const [hideDialog, setHideDialog] = useState(false);
     const [input, setInput] = useState('');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [eventCollapsed, setEventCollapsed] = useState(false);
+
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
     const prevPagesLenRef = useRef(0);
     /** Track whether the component mounted with messages already present (i.e. resumed history) */
@@ -302,17 +299,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         return activeSprites['normal'] || Object.values(activeSprites)[0] || null;
     }, [currentEmotion, activeSprites, hasSprites, dateEmotionKeys]);
 
-    // ── Event overlay auto-collapse ──
-    useEffect(() => {
-        if (currentEvent && !eventCollapsed) {
-            const t = setTimeout(() => setEventCollapsed(true), 5000);
-            return () => clearTimeout(t);
-        }
-    }, [currentEvent, eventCollapsed]);
 
-    useEffect(() => {
-        if (currentEvent) setEventCollapsed(false);
-    }, [currentEvent?.event]);
 
     // ── Back handler ──
     useEffect(() => {
@@ -454,33 +441,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 </div>
             </div>
 
-            {/* Director Event Overlay */}
-            {currentEvent && (
-                <div
-                    className={`theater-event-overlay ${eventCollapsed ? 'collapsed' : ''}`}
-                    onClick={() => setEventCollapsed(c => !c)}
-                    style={{ top: 100 }}
-                >
-                    {!eventCollapsed && (
-                        <>
-                            <span className={`theater-event-type-badge ${currentEvent.sceneType}`}>
-                                {EVENT_TYPE_ZH[currentEvent.sceneType] || currentEvent.sceneType}
-                            </span>
-                            <p className="theater-event-text">{currentEvent.atmosphere}</p>
-                            {currentEvent.event && (
-                                <p className="theater-event-text" style={{ marginTop: 8, fontWeight: 600, color: 'rgba(255,255,255,0.95)' }}>
-                                    {currentEvent.event}
-                                </p>
-                            )}
-                        </>
-                    )}
-                    {eventCollapsed && (
-                        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
-                            {EVENT_TYPE_ZH[currentEvent.sceneType]} · 点击展开
-                        </span>
-                    )}
-                </div>
-            )}
+
 
             {/* ════════ VN Dialog Box — borderless ════════ */}
             {!showInput && (

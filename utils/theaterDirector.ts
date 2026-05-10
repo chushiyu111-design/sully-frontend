@@ -168,18 +168,6 @@ export function createPityCounter(): PityCounter {
 
 // ── Time Progression ──
 
-const TIME_ORDER: TimeSlot[] = ['morning', 'afternoon', 'evening', 'night'];
-const LOCATION_CHANGES_PER_ADVANCE = 2; // Every 2 location changes → advance 1 time slot
-
-/** @deprecated 已弃用，改用 getInitialTimeSlot() 实时感知。保留仅为向后兼容。 */
-export function advanceTimeSlot(current: TimeSlot, locationChangeCount: number): TimeSlot {
-    const currentIdx = TIME_ORDER.indexOf(current);
-    // How many advances have been earned
-    const advanceSteps = Math.floor(locationChangeCount / LOCATION_CHANGES_PER_ADVANCE);
-    const newIdx = Math.min(currentIdx + advanceSteps, TIME_ORDER.length - 1);
-    return TIME_ORDER[newIdx];
-}
-
 /**
  * Calculate the time slot for a new session start based on real-world hour.
  */

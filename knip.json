@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "index.html"
+  ],
+  "project": [
+    "**/*.{ts,tsx,js,jsx,mjs}"
+  ],
+  "ignore": [
+    "worker/**",
+    "functions/**",
+    "scripts/**",
+    "test/**"
+  ]
+}

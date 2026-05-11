@@ -933,7 +933,8 @@ ${exitPromptContent}
 <翻译><原文>[happy] 「おはよう！今日はいい天気だね」</原文><译文>「早上好！今天天气真好呢」</译文></翻译>
 [shy] 她的脸颂微微泛红，视线移向了窗外。]` : ''})` }
                 ],
-                temperature: 0.85
+                temperature: char.dateTemperature ?? 0.85,
+                max_tokens: 8192,
             })
         });
 
@@ -1003,7 +1004,8 @@ ${exitPromptContent}
                     ...historyMsgs,
                     { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。只有${char.name}的台词用${dateTranslateSourceLang}写并用 <翻译><原文>...<译文>...</翻译> 包裹；叙述/动作/心理描写保持中文不变。]` : ''})` }
                 ],
-                temperature: 0.9
+                temperature: Math.min((char.dateTemperature ?? 0.85) + 0.05, 2.0),
+                max_tokens: 8192,
             })
         });
 
@@ -1280,6 +1282,8 @@ ${exitPromptContent}
                     writingStyle={char.dateWritingStyle}
                     onChangeWordCount={(count) => updateCharacter(char.id, { dateOutputWordCount: count })}
                     onChangeWritingStyle={(style) => updateCharacter(char.id, { dateWritingStyle: style })}
+                    temperature={char.dateTemperature}
+                    onChangeTemperature={(temp) => updateCharacter(char.id, { dateTemperature: temp })}
                     translationEnabled={dateTranslationEnabled}
                     translateSourceLang={dateTranslateSourceLang}
                     translateTargetLang={dateTranslateTargetLang}

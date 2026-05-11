@@ -23,6 +23,8 @@ interface SummaryFloatingBallProps {
     writingStyle?: string;
     onChangeWordCount: (count: number | undefined) => void;
     onChangeWritingStyle: (style: string | undefined) => void;
+    temperature?: number;
+    onChangeTemperature: (temp: number | undefined) => void;
     translationEnabled?: boolean;
     translateSourceLang?: string;
     translateTargetLang?: string;
@@ -146,6 +148,7 @@ const SummaryFloatingBall: React.FC<SummaryFloatingBallProps> = memo(({
     onOpenSettings,
     wordCount, writingStyle,
     onChangeWordCount, onChangeWritingStyle,
+    temperature, onChangeTemperature,
     translationEnabled, translateSourceLang, translateTargetLang,
     onToggleTranslation, onSetTranslateSourceLang, onSetTranslateTargetLang,
 }) => {
@@ -356,6 +359,19 @@ const SummaryFloatingBall: React.FC<SummaryFloatingBallProps> = memo(({
                                         onChange={e => { const v = parseInt(e.target.value, 10); onChangeWordCount(v > 0 ? v : undefined); }}
                                         placeholder={String(DATE_DEFAULT_WORD_COUNT)} w={44} />
                                     <span style={{ fontSize: 9, color: C.textSec }}>字</span>
+                                </div>
+                            </div>
+
+                            <div style={{ height: 1, background: C.divider, margin: '7px 0' }} />
+
+                            {/* 温度 */}
+                            <div style={row}>
+                                <span style={label}>温度</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <Slot type="number" min={0} max={2.0} step={0.05}
+                                        value={temperature ?? 0.85}
+                                        onChange={e => { const v = parseFloat(e.target.value); onChangeTemperature(isFinite(v) ? Math.min(2, Math.max(0, v)) : undefined); }}
+                                        placeholder="0.85" w={44} />
                                 </div>
                             </div>
 

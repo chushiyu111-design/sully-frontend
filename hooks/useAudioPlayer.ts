@@ -139,53 +139,15 @@ function getAudio(): HTMLAudioElement | null {
 }
 
 function primeAudioPlayback(audio: HTMLAudioElement): void {
-    if (audioPlaybackPrimed) return;
-
-    audioPlaybackPrimed = true;
-
     try {
-        const previousMuted = audio.muted;
-        const previousVolume = audio.volume;
-        const hadSrc = audio.hasAttribute('src');
-        const primedSrc = SILENT_AUDIO_DATA_URI;
+        if (!audio.hasAttribute('src') || !audio.src) {
+            audio.src = SILENT_AUDIO_DATA_URI;
+        }
 
         audio.muted = true;
-        audio.volume = 0;
 
-        if (!hadSrc) {
-            audio.src = primedSrc;
-        }
-
-        const restore = () => {
-            audio.muted = previousMuted;
-            audio.volume = previousVolume;
-
-            if (!hadSrc) {
-                const currentSrc = audio.currentSrc || audio.getAttribute('src') || '';
-                if (currentSrc !== primedSrc) {
-                    return;
-                }
-
-                audio.pause();
-                audio.removeAttribute('src');
-                audio.load();
-            }
-        };
-
-        const playPromise = audio.play();
-        if (playPromise && typeof playPromise.then === 'function') {
-            playPromise
-                .then(() => restore())
-                .catch(() => {
-                    audioPlaybackPrimed = false;
-                    restore();
-                });
-            return;
-        }
-
-        restore();
+        audio.play().catch(() => {});
     } catch {
-        audioPlaybackPrimed = false;
     }
 }
 
@@ -248,10 +210,12 @@ async function playSongInternal(song: MusicPlayable, playlist?: MusicPlayable[])
             throw new Error('没有可用的播放链接');
         }
 
+        audio.pause();
         audio.src = targetUrl;
         audio.currentTime = 0;
         audio.load();
         await audio.play();
+        audio.muted = false;
         syncStateFromAudio({
             currentSong: clonePlayable(song),
             playlist: queue,
@@ -265,10 +229,12 @@ async function playSongInternal(song: MusicPlayable, playlist?: MusicPlayable[])
 
             if (fallbackUrl) {
                 try {
+                    audio.pause();
                     audio.src = fallbackUrl;
                     audio.currentTime = 0;
                     audio.load();
                     await audio.play();
+                    audio.muted = false;
                     syncStateFromAudio({
                         currentSong: clonePlayable(song),
                         playlist: queue,
@@ -281,6 +247,7 @@ async function playSongInternal(song: MusicPlayable, playlist?: MusicPlayable[])
                 }
             }
 
+            audio.muted = false;
             syncStateFromAudio({ isPlaying: false });
         }
     }

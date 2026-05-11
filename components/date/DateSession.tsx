@@ -120,11 +120,6 @@ interface DateSessionProps {
     onSendMessage: (text: string, directorHint?: string) => Promise<{ content: string; whispers: InnerWhisper[] }>; // Returns AI content + optional whispers
     onReroll: () => Promise<{ content: string; whispers: InnerWhisper[] }>;
     onExit: (currentState: DateState, syncMode: DateExitSyncMode, isDateEnd?: boolean) => void;
-    // Date Ending Ceremony
-    onGenerateGiftReaction?: (userGift: string) => Promise<string>;
-    onGenerateFarewell?: () => Promise<string>;
-    onGenerateMetaLetter?: () => Promise<string>;
-    onSaveMetaLetter?: (letterContent: string) => Promise<void>;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
     isSummaryGenerating: boolean;
@@ -192,11 +187,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     translateTargetLang,
     onToggleTranslation,
     onSetTranslateSourceLang,
-    onSetTranslateTargetLang,
-    onGenerateGiftReaction,
-    onGenerateFarewell,
-    onGenerateMetaLetter,
-    onSaveMetaLetter}) => {
+    onSetTranslateSourceLang,
+    onSetTranslateTargetLang}) => {
     const { addToast, registerBackHandler } = useOS();
     
     // Core VN State
@@ -218,21 +210,6 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
     const [showExitModal, setShowExitModal] = useState(false);
 
-    // Date Ending Ceremony State
-    type EndingPhase = 'none' | 'gift' | 'gift-reaction' | 'farewell' | 'fade' | 'letter' | 'done';
-    const [endingPhase, setEndingPhase] = useState<EndingPhase>('none');
-    const [giftInput, setGiftInput] = useState('');
-    const [_giftReactionItems, setGiftReactionItems] = useState<DialogueItem[]>([]);
-    const [giftReactionQueue, setGiftReactionQueue] = useState<DialogueItem[]>([]);
-    const [_farewellItems, setFarewellItems] = useState<DialogueItem[]>([]);
-    const [farewellQueue, setFarewellQueue] = useState<DialogueItem[]>([]);
-    const [letterContent, setLetterContent] = useState('');
-    const [endingLoading, setEndingLoading] = useState(false);
-    const [endingCurrentText, setEndingCurrentText] = useState('');
-    const [endingDisplayedText, setEndingDisplayedText] = useState('');
-    const [_endingCurrentEmotion, setEndingCurrentEmotion] = useState('normal');
-    const letterRef = useRef<HTMLDivElement>(null);
-    
     // Inner Whispers State (内心低语)
     const [activeWhispers, setActiveWhispers] = useState<InnerWhisper[]>([]);
     const [whispersVisible, setWhispersVisible] = useState(false);
@@ -539,131 +516,10 @@ const DateSession: React.FC<DateSessionProps> = ({
         onExit(getCurrentState(), 'none', false);
     };
 
-    /** "结束今天的约会" — enter 3-act ceremony */
+    /** "结束今天的约会" — exit immediately */
     const handleStartEnding = () => {
         setShowExitModal(false);
-        setEndingPhase('gift');
-    };
-
-    /** Sync options after ceremony completes */
-    const handleEndingSyncClick = (syncMode: DateExitSyncMode) => {
-        setEndingPhase('none');
-        onExit(getCurrentState(), syncMode, true);
-    };
-
-    /** Skip ceremony → go to sync options */
-    const handleSkipToSync = () => {
-        setEndingPhase('done');
-    };
-
-    // --- Ending Ceremony: Typewriter for gift/farewell VN lines ---
-    useEffect(() => {
-        if (!endingCurrentText) { setEndingDisplayedText(''); return; }
-        let i = 0;
-        setEndingDisplayedText('');
-        const timer = setInterval(() => {
-            i++;
-            setEndingDisplayedText(endingCurrentText.slice(0, i));
-            if (i >= endingCurrentText.length) clearInterval(timer);
-        }, 25);
-        return () => clearInterval(timer);
-    }, [endingCurrentText]);
-
-    const processEndingDialogue = (queue: DialogueItem[], setQueue: React.Dispatch<React.SetStateAction<DialogueItem[]>>) => {
-        if (queue.length === 0) return;
-        const next = queue[0];
-        setEndingCurrentText(next.text);
-        if (next.emotion) {
-            setEndingCurrentEmotion(next.emotion);
-            // update sprite for emotion
-            const spriteUrl = activeSprites[next.emotion] || activeSprites['normal'] || currentSprite;
-            if (spriteUrl) setCurrentSprite(spriteUrl);
-        }
-        setQueue(queue.slice(1));
-    };
-
-    // --- Gift Exchange ---
-    const handleSendGift = async () => {
-        if (!giftInput.trim() || !onGenerateGiftReaction) return;
-        setEndingLoading(true);
-        try {
-            const rawContent = await onGenerateGiftReaction(giftInput.trim());
-            const items = parseDialogue(rawContent, 'normal');
-            setGiftReactionItems(items);
-            setGiftReactionQueue(items);
-            setEndingPhase('gift-reaction');
-            if (items.length > 0) {
-                processEndingDialogue(items, setGiftReactionQueue);
-            }
-        } catch (e) {
-            addToast('生成失败，已跳过', 'error');
-            setEndingPhase('farewell');
-            triggerFarewell();
-        } finally {
-            setEndingLoading(false);
-        }
-    };
-
-    // --- Farewell ---
-    const triggerFarewell = async () => {
-        if (!onGenerateFarewell) { setEndingPhase('letter'); triggerLetter(); return; }
-        setEndingLoading(true);
-        try {
-            const rawContent = await onGenerateFarewell();
-            const items = parseDialogue(rawContent, 'normal');
-            setFarewellItems(items);
-            setFarewellQueue(items);
-            setEndingPhase('farewell');
-            if (items.length > 0) {
-                processEndingDialogue(items, setFarewellQueue);
-            }
-        } catch (e) {
-            addToast('生成失败，已跳过', 'error');
-            setEndingPhase('letter');
-            triggerLetter();
-        } finally {
-            setEndingLoading(false);
-        }
-    };
-
-    // --- Meta Letter ---
-    const triggerLetter = async () => {
-        if (!onGenerateMetaLetter) { setEndingPhase('done'); return; }
-        setEndingLoading(true);
-        try {
-            const rawContent = await onGenerateMetaLetter();
-            setLetterContent(rawContent);
-            // Save letter to DB
-            if (onSaveMetaLetter) {
-                await onSaveMetaLetter(rawContent);
-            }
-            setEndingPhase('letter');
-        } catch (e) {
-            addToast('信件生成失败', 'error');
-            setEndingPhase('done');
-        } finally {
-            setEndingLoading(false);
-        }
-    };
-
-    // --- Export letter as image ---
-    const handleExportLetter = async () => {
-        if (!letterRef.current) return;
-        try {
-            const html2canvas = (await import('html2canvas')).default;
-            const canvas = await html2canvas(letterRef.current, {
-                scale: 3,
-                backgroundColor: null,
-                useCORS: true,
-            });
-            const link = document.createElement('a');
-            link.download = `letter-from-${char.name}-${new Date().toISOString().slice(0,10)}.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
-            addToast('已保存', 'success');
-        } catch (e) {
-            addToast('导出失败', 'error');
-        }
+        onExit(getCurrentState(), 'summary', true);
     };
 
     // Message Touch Logic (Robust version for scrollable lists)
@@ -912,217 +768,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                 }
             `}</style>
 
-            {/* ====== Date Ending Ceremony Overlays ====== */}
 
-            {/* Act 1: Gift Exchange — Input */}
-            {endingPhase === 'gift' && (
-                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-center"
-                    style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)' }}>
-                    {/* Skip */}
-                    <button onClick={handleSkipToSync}
-                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
-                    </button>
-                    <div className="w-[85%] max-w-sm" style={{ animation: 'letterCardIn 0.6s ease-out both' }}>
-                        <div className="text-center mb-6">
-                            <div className="text-white/60 text-sm font-light tracking-widest mb-1">交换礼物</div>
-                            <div className="text-white/30 text-xs font-light">送一样东西给{char.name}吧</div>
-                        </div>
-                        <div className="bg-white/[0.08] backdrop-blur-xl rounded-2xl border border-white/[0.12] p-4">
-                            <textarea
-                                value={giftInput}
-                                onChange={e => setGiftInput(e.target.value)}
-                                placeholder="一首歌、一个拥抱、一句话、或者……"
-                                className="w-full bg-transparent text-white/90 text-sm font-light placeholder:text-white/25 resize-none outline-none h-24 leading-relaxed"
-                                autoFocus
-                            />
-                        </div>
-                        <button
-                            onClick={handleSendGift}
-                            disabled={!giftInput.trim() || endingLoading}
-                            className="w-full mt-4 py-3 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97] disabled:opacity-30"
-                            style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                            {endingLoading ? '...' : '送出'}
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Act 1b: Gift Reaction — VN display */}
-            {endingPhase === 'gift-reaction' && (
-                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end"
-                    style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
-                    onClick={() => {
-                        if (giftReactionQueue.length > 0) {
-                            processEndingDialogue(giftReactionQueue, setGiftReactionQueue);
-                        } else {
-                            // Gift reaction done → trigger farewell
-                            setEndingPhase('farewell');
-                            triggerFarewell();
-                        }
-                    }}>
-                    <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
-                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
-                    </button>
-                    {/* Sprite */}
-                    {currentSprite && (
-                        <img src={currentSprite} alt="" className="absolute bottom-[30%] left-1/2 -translate-x-1/2 max-h-[55vh] object-contain pointer-events-none"
-                            style={{ transform: `translateX(-50%) scale(${spriteConfig.scale}) translateX(${spriteConfig.x}px) translateY(${spriteConfig.y}px)` }} />
-                    )}
-                    {/* Dialogue box */}
-                    <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
-                        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">
-                            {endingDisplayedText}
-                        </div>
-                        {endingDisplayedText === endingCurrentText && giftReactionQueue.length === 0 && (
-                            <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Act 2: Farewell — VN display + fade to black */}
-            {endingPhase === 'farewell' && (
-                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end"
-                    style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
-                    onClick={() => {
-                        if (farewellQueue.length > 0) {
-                            processEndingDialogue(farewellQueue, setFarewellQueue);
-                        } else {
-                            // Farewell done → fade to black → letter
-                            setEndingPhase('fade');
-                            setTimeout(() => {
-                                triggerLetter();
-                            }, 1800);
-                        }
-                    }}>
-                    <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
-                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
-                    </button>
-                    {currentSprite && (
-                        <img src={currentSprite} alt="" className="absolute bottom-[30%] left-1/2 -translate-x-1/2 max-h-[55vh] object-contain pointer-events-none"
-                            style={{ transform: `translateX(-50%) scale(${spriteConfig.scale}) translateX(${spriteConfig.x}px) translateY(${spriteConfig.y}px)` }} />
-                    )}
-                    <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
-                        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        {endingLoading ? (
-                            <div className="text-white/40 text-sm text-center py-4 animate-pulse">……</div>
-                        ) : (
-                            <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">
-                                {endingDisplayedText}
-                            </div>
-                        )}
-                        {!endingLoading && endingDisplayedText === endingCurrentText && farewellQueue.length === 0 && endingCurrentText && (
-                            <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Fade to black transition */}
-            {endingPhase === 'fade' && (
-                <div className="absolute inset-0 z-[310] bg-black"
-                    style={{ animation: 'fadeToBlack 1.5s ease-in both' }}>
-                    {endingLoading && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="text-white/20 text-xs animate-pulse tracking-widest">……</div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Act 3: Meta Letter */}
-            {endingPhase === 'letter' && (
-                <div className="absolute inset-0 z-[320] bg-black flex items-center justify-center overflow-y-auto"
-                    style={{ padding: '24px 16px' }}>
-                    <button onClick={handleSkipToSync}
-                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
-                    </button>
-                    <div className="w-full max-w-md" style={{ animation: 'letterCardIn 0.8s ease-out 0.3s both' }}>
-                        {/* Letter card */}
-                        <div ref={letterRef} className="rounded-2xl p-8 relative overflow-hidden"
-                            style={{
-                                background: 'linear-gradient(145deg, #faf6f0, #f5efe6)',
-                                boxShadow: '0 8px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)',
-                            }}>
-                            {/* Paper texture overlay */}
-                            <img src="/images/paper-texture.jpg" alt="" className="absolute inset-0 w-full h-full object-cover opacity-[0.06] mix-blend-multiply pointer-events-none" />
-                            {/* Letter content */}
-                            <div className="relative z-10">
-                                {letterContent.split('\n').filter(l => l.trim()).map((line, i) => (
-                                    <p key={i}
-                                        className="text-[15px] leading-[2] mb-0"
-                                        style={{
-                                            fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif",
-                                            color: '#3d3530',
-                                            animation: `lineReveal 0.5s ease-out ${0.5 + i * 0.3}s both`,
-                                        }}>
-                                        {line}
-                                    </p>
-                                ))}
-                                {/* Date */}
-                                <p className="text-right mt-6 text-sm"
-                                    style={{
-                                        fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif",
-                                        color: '#8a7e75',
-                                        animation: `lineReveal 0.5s ease-out ${0.5 + (letterContent.split('\n').filter(l => l.trim()).length) * 0.3}s both`,
-                                    }}>
-                                    {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
-                                </p>
-                            </div>
-                        </div>
-                        {/* Actions below card */}
-                        <div className="flex gap-3 mt-6 justify-center" style={{ animation: `endingBtnIn 0.5s ease-out ${1 + (letterContent.split('\n').filter(l => l.trim()).length) * 0.3}s both` }}>
-                            <button onClick={handleExportLetter}
-                                className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]"
-                                style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                                保存原图
-                            </button>
-                            <button onClick={() => setEndingPhase('done')}
-                                className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]"
-                                style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>
-                                收好这封信
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Final: Sync Options (after ceremony) */}
-            {endingPhase === 'done' && (
-                <div className="absolute inset-0 z-[330] bg-black/90 flex items-center justify-center"
-                    style={{ backdropFilter: 'blur(12px)' }}>
-                    <div className="w-[85%] max-w-sm" style={{ animation: 'letterCardIn 0.5s ease-out both' }}>
-                        <div className="text-center mb-6">
-                            <div className="text-white/50 text-sm font-light tracking-widest mb-1">散场后的事</div>
-                            <div className="text-white/25 text-xs font-light leading-relaxed mt-2">
-                                把这次约会的内容同步给主聊天吗？<br />同步后角色会自然记得今天的事。
-                            </div>
-                        </div>
-                        <div className="flex flex-col gap-2.5">
-                            <button onClick={() => handleEndingSyncClick('summary')}
-                                className="w-full py-3.5 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97]"
-                                style={{ background: 'rgba(52,211,153,0.2)', color: 'rgba(52,211,153,0.9)', border: '1px solid rgba(52,211,153,0.3)' }}>
-                                生成总结同步
-                            </button>
-                            <button onClick={() => handleEndingSyncClick('raw')}
-                                className="w-full py-3.5 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97]"
-                                style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                                同步原始记录
-                            </button>
-                            <button onClick={() => handleEndingSyncClick('none')}
-                                className="w-full py-3 rounded-2xl text-sm font-light tracking-wider transition-all active:scale-[0.97]"
-                                style={{ color: 'rgba(255,255,255,0.3)' }}>
-                                暂不同步
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* Input Layer */}
             <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>

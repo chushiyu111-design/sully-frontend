@@ -99,9 +99,12 @@ export const VectorMemoryExtractor = {
         // Incremental load: only fetch messages after lastExtractAt
         // to avoid loading all historical messages into memory.
         const msgsAfterExtract = await DB.getMessagesByCharIdAfterTimestamp(charId, lastExtractAt);
+        // Include all message types except system/moments (no conversational value).
+        // Special types (image, transfer, emoji, etc.) will be formatted by extractionLlm.formatMessages.
+        const EXCLUDED_TYPES = new Set(['system', 'moments']);
         const allNewMsgs = msgsAfterExtract.filter(m =>
             (m.role === 'user' || m.role === 'assistant') &&
-            (m.type === 'text' || m.type === 'call_log') &&
+            !EXCLUDED_TYPES.has(m.type) &&
             m.metadata?.source !== 'theater' &&
             m.metadata?.source !== 'date'
         );
@@ -143,11 +146,22 @@ export const VectorMemoryExtractor = {
 
         // ========== Backend-First Extraction ==========
         try {
-            const backendMsgs = newMsgs.map(m => ({
-                role: m.role, content: m.content, type: m.type,
-                timestamp: m.timestamp || Date.now(),
-                id: m.id,
-            }));
+            const backendMsgs = newMsgs.map(m => {
+                // Sanitize non-text content to avoid sending raw base64/URLs to backend
+                let content = m.content;
+                if (m.type === 'image') content = '[发送了一张图片]';
+                else if (m.type === 'emoji') content = '[发送了表情包]';
+                else if (m.type === 'interaction') content = m.role === 'user' ? '[戳了一下]' : '[被戳了一下]';
+                else if (m.type === 'transfer') {
+                    const amt = m.metadata?.amount || '?';
+                    content = `[转账 ¥${amt}]`;
+                }
+                return {
+                    role: m.role, content, type: m.type,
+                    timestamp: m.timestamp || Date.now(),
+                    id: m.id,
+                };
+            });
             const handled = await tryBackendExtraction(
                 charId, charSnapshot.name, backendMsgs, subApiConfig,
             );
@@ -299,8 +313,9 @@ export const VectorMemoryExtractor = {
         acquireExtractionLock(charId);
 
         try {
+            const EXCLUDED_TYPES = new Set(['system', 'moments']);
             const filteredMsgs = (await DB.getMessagesByCharId(charId))
-                .filter(m => (m.role === 'user' || m.role === 'assistant') && (m.type === 'text' || m.type === 'call_log') && m.metadata?.source !== 'theater' && m.metadata?.source !== 'date');
+                .filter(m => (m.role === 'user' || m.role === 'assistant') && !EXCLUDED_TYPES.has(m.type) && m.metadata?.source !== 'theater' && m.metadata?.source !== 'date');
             const boundedStartIdx = Math.max(0, startIdx);
             const boundedEndIdx = Math.min(endIdx, filteredMsgs.length - 1);
 

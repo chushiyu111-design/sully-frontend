@@ -14,6 +14,9 @@ import { useTheaterBgm } from '../../hooks/useTheaterBgm';
 import TheaterSettings from './TheaterSettings';
 import TheaterFloatingBall from './TheaterFloatingBall';
 import InlineLocationSheet from './InlineLocationSheet';
+import { TimeSlotIcon } from './TheaterMap';
+import { MinimaxTts } from '../../utils/minimaxTts';
+import { withCharacterTtsVoice } from '../../utils/characterTts';
 
 const EVENT_TYPE_ZH: Record<string, string> = {
     ambient: '氛围', encounter: '偶遇', romantic: '浪漫',
@@ -69,6 +72,11 @@ interface TheaterSessionProps {
     pendingLocationSuggestion?: LocationSuggestion | null;
     onAcceptLocationSuggestion?: () => void;
     onDeclineLocationSuggestion?: () => void;
+    // Theater Ending Ceremony
+    onGenerateGiftReaction?: (userGift: string) => Promise<string>;
+    onGenerateFarewell?: () => Promise<string>;
+    onGenerateMetaLetter?: () => Promise<string>;
+    onSaveMetaLetter?: (letterContent: string) => Promise<void>;
 }
 
 // ── Helpers ──
@@ -176,9 +184,60 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     activeWhispers = [], onWhisperClick,
     isTransitioning, transitionLocationName,
     pendingLocationSuggestion, onAcceptLocationSuggestion, onDeclineLocationSuggestion,
+    onGenerateGiftReaction, onGenerateFarewell, onGenerateMetaLetter, onSaveMetaLetter,
 }) => {
     const { addToast, registerBackHandler } = useOS();
     const { ttsConfig } = useConfig();
+
+    // ── Theater TTS Config ──
+    const characterTtsConfig = useMemo(
+        () => ttsConfig && char ? withCharacterTtsVoice(ttsConfig, char) : ttsConfig,
+        [ttsConfig, char?.id, char?.ttsVoiceId],
+    );
+
+    // ── Theater TTS Playback ──
+    const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+    const ttsUrlRef = useRef<string | null>(null);
+    const [ttsPlaying, setTtsPlaying] = useState(false);
+    const [ttsSynthesizing, setTtsSynthesizing] = useState(false);
+    const ttsAbortRef = useRef<AbortController | null>(null);
+    const ttsCacheRef = useRef<Map<string, Blob>>(new Map());
+
+    const stopTtsAudio = useCallback(() => {
+        ttsAbortRef.current?.abort();
+        ttsAbortRef.current = null;
+        if (ttsAudioRef.current) {
+            ttsAudioRef.current.pause();
+            ttsAudioRef.current.currentTime = 0;
+            ttsAudioRef.current = null;
+        }
+        if (ttsUrlRef.current) {
+            URL.revokeObjectURL(ttsUrlRef.current);
+            ttsUrlRef.current = null;
+        }
+        setTtsPlaying(false);
+        setTtsSynthesizing(false);
+    }, []);
+
+    const playTtsBlob = useCallback((blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        ttsUrlRef.current = url;
+        const audio = new Audio(url);
+        ttsAudioRef.current = audio;
+        setTtsSynthesizing(false);
+        setTtsPlaying(true);
+
+        audio.onended = () => {
+            URL.revokeObjectURL(url);
+            ttsUrlRef.current = null;
+            ttsAudioRef.current = null;
+            setTtsPlaying(false);
+        };
+        audio.onerror = () => stopTtsAudio();
+
+        skipToEnd();
+        audio.play().catch(() => stopTtsAudio());
+    }, [stopTtsAudio, skipToEnd]);
 
     // ── BGM ──
     const bgm = useTheaterBgm({
@@ -325,26 +384,44 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         return unreg;
     }, [showInput, showLog, registerBackHandler, onExit]);
 
-    // ── Click to advance ──
+    // ── Click to advance / go back ──
+    const handlePrevPage = useCallback((e?: React.MouseEvent) => {
+        if (e) e.stopPropagation();
+        stopTtsAudio();
+        setPageIndex(i => Math.max(0, i - 1));
+    }, [stopTtsAudio]);
+
     const handleDialogClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
+        stopTtsAudio();
+        
+        // If clicked on the left 30% of the screen, go back
+        const clickX = e.clientX;
+        const screenWidth = window.innerWidth;
+        if (clickX < screenWidth * 0.3 && pageIndex > 0) {
+            handlePrevPage();
+            return;
+        }
+
         if (!done) { skipToEnd(); return; }
         if (isLastPage) { setShowInput(true); return; }
         setPageIndex(i => i + 1);
-    }, [done, skipToEnd, isLastPage]);
+    }, [done, skipToEnd, isLastPage, pageIndex, handlePrevPage]);
 
     // ── Skip all remaining pages ──
     const handleSkipAll = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
+        stopTtsAudio();
         if (pages.length > 0) {
             setPageIndex(pages.length - 1);
             skipToEnd();
         }
-    }, [pages.length, skipToEnd]);
+    }, [pages.length, skipToEnd, stopTtsAudio]);
 
     // ── Send message ──
     const handleSend = async () => {
         if (!input.trim() || isLoading) return;
+        stopTtsAudio();
         const text = input.trim();
         setInput('');
         setShowInput(false);
@@ -391,9 +468,193 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         setAutoMode(v => !v);
     };
 
+    // ── Theater Ending Ceremony State & Logic ──
+    type EndingPhase = 'none' | 'gift' | 'gift-reaction' | 'farewell' | 'fade' | 'letter';
+    const [endingPhase, setEndingPhase] = useState<EndingPhase>('none');
+    const [giftInput, setGiftInput] = useState('');
+    const [giftReactionItems, setGiftReactionItems] = useState<{text: string, emotion: string}[]>([]);
+    const [giftReactionQueue, setGiftReactionQueue] = useState<{text: string, emotion: string}[]>([]);
+    const [farewellItems, setFarewellItems] = useState<{text: string, emotion: string}[]>([]);
+    const [farewellQueue, setFarewellQueue] = useState<{text: string, emotion: string}[]>([]);
+    const [letterContent, setLetterContent] = useState('');
+    const [endingLoading, setEndingLoading] = useState(false);
+    const [endingCurrentText, setEndingCurrentText] = useState('');
+    const [endingDisplayedText, setEndingDisplayedText] = useState('');
+    const [endingCurrentEmotion, setEndingCurrentEmotion] = useState('normal');
+    const letterRef = useRef<HTMLDivElement>(null);
+
+    const parseEndingDialogue = (text: string) => {
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const results: {text: string, emotion: string}[] = [];
+        let curEmotion = 'normal';
+        for (const line of lines) {
+            const tagMatch = line.match(/^\[([a-zA-Z0-9_\-]+)\]\s*(.*)/);
+            let content = line;
+            if (tagMatch) { curEmotion = tagMatch[1].toLowerCase(); content = tagMatch[2]; }
+            else {
+                const standaloneTag = line.match(/^\[([a-zA-Z0-9_\-]+)\]$/);
+                if (standaloneTag) { curEmotion = standaloneTag[1].toLowerCase(); continue; }
+            }
+            if (content) results.push({ text: content, emotion: curEmotion });
+        }
+        return results;
+    };
+
+    const handleStartEnding = () => {
+        if (!onGenerateGiftReaction) {
+            onExit();
+            return;
+        }
+        setEndingPhase('gift');
+    };
+
+    const handleSkipToSync = () => {
+        setEndingPhase('none');
+        onExit();
+    };
+
+    useEffect(() => {
+        if (!endingCurrentText) { setEndingDisplayedText(''); return; }
+        let i = 0;
+        setEndingDisplayedText('');
+        const timer = setInterval(() => {
+            i++;
+            setEndingDisplayedText(endingCurrentText.slice(0, i));
+            if (i >= endingCurrentText.length) clearInterval(timer);
+        }, 25);
+        return () => clearInterval(timer);
+    }, [endingCurrentText]);
+
+    const processEndingDialogue = (queue: {text: string, emotion: string}[], setQueue: React.Dispatch<React.SetStateAction<{text: string, emotion: string}[]>>) => {
+        if (queue.length === 0) return;
+        const next = queue[0];
+        setEndingCurrentText(next.text);
+        if (next.emotion) setEndingCurrentEmotion(next.emotion);
+        setQueue(queue.slice(1));
+    };
+
+    const handleSendGift = async () => {
+        if (!giftInput.trim() || !onGenerateGiftReaction) return;
+        setEndingLoading(true);
+        try {
+            const rawContent = await onGenerateGiftReaction(giftInput.trim());
+            const items = parseEndingDialogue(rawContent);
+            setGiftReactionItems(items);
+            setGiftReactionQueue(items);
+            setEndingPhase('gift-reaction');
+            if (items.length > 0) processEndingDialogue(items, setGiftReactionQueue);
+        } catch (e) {
+            addToast('生成失败，已跳过', 'error');
+            setEndingPhase('farewell');
+            triggerFarewell();
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const triggerFarewell = async () => {
+        if (!onGenerateFarewell) { setEndingPhase('letter'); triggerLetter(); return; }
+        setEndingLoading(true);
+        try {
+            const rawContent = await onGenerateFarewell();
+            const items = parseEndingDialogue(rawContent);
+            setFarewellItems(items);
+            setFarewellQueue(items);
+            setEndingPhase('farewell');
+            if (items.length > 0) processEndingDialogue(items, setFarewellQueue);
+        } catch (e) {
+            addToast('生成失败，已跳过', 'error');
+            setEndingPhase('letter');
+            triggerLetter();
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const triggerLetter = async () => {
+        if (!onGenerateMetaLetter) { setEndingPhase('none'); onExit(); return; }
+        setEndingLoading(true);
+        try {
+            const rawContent = await onGenerateMetaLetter();
+            setLetterContent(rawContent);
+            if (onSaveMetaLetter) await onSaveMetaLetter(rawContent);
+            setEndingPhase('letter');
+        } catch (e) {
+            addToast('信件生成失败', 'error');
+            setEndingPhase('none');
+            onExit();
+        } finally {
+            setEndingLoading(false);
+        }
+    };
+
+    const handleExportLetter = async () => {
+        if (!letterRef.current) return;
+        try {
+            const html2canvas = (await import('html2canvas')).default;
+            const canvas = await html2canvas(letterRef.current, { scale: 3, backgroundColor: null, useCORS: true });
+            const link = document.createElement('a');
+            link.download = `letter-from-${char.name}-${new Date().toISOString().slice(0,10)}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            addToast('已保存', 'success');
+        } catch (e) {
+            addToast('导出失败', 'error');
+        }
+    };
+
+    // ── Manual TTS: play current page on demand (with cache) ──
+    const handleManualTts = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!currentPage || !characterTtsConfig?.apiKey) return;
+
+        // If already playing, stop
+        if (ttsPlaying || ttsSynthesizing) {
+            stopTtsAudio();
+            return;
+        }
+
+        if (currentPage.type === 'user') return;
+
+        const cacheKey = currentPage.text;
+
+        // Check cache first
+        const cached = ttsCacheRef.current.get(cacheKey);
+        if (cached) {
+            playTtsBlob(cached);
+            return;
+        }
+
+        // Fresh synthesis
+        const controller = new AbortController();
+        ttsAbortRef.current = controller;
+        setTtsSynthesizing(true);
+
+        (async () => {
+            try {
+                const result = await MinimaxTts.synthesizeSync(
+                    currentPage.text,
+                    characterTtsConfig,
+                    undefined,
+                    controller.signal,
+                );
+                if (controller.signal.aborted || !result?.blob) return;
+
+                // Store in cache
+                ttsCacheRef.current.set(cacheKey, result.blob);
+                playTtsBlob(result.blob);
+            } catch (err) {
+                if (!controller.signal.aborted) {
+                    console.error('[TheaterTTS] Manual synthesis failed:', err);
+                    setTtsSynthesizing(false);
+                }
+            }
+        })();
+    }, [currentPage, characterTtsConfig, ttsPlaying, ttsSynthesizing, stopTtsAudio, playTtsBlob]);
+
     // ── Render ──
     return (
-        <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none flex flex-col">
+        <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none flex flex-col" onClick={handleDialogClick}>
             {/* Background — dual-layer crossfade */}
             {bgLayers.back && (
                 <div
@@ -424,8 +685,10 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             {isTransitioning && (
                 <div className="theater-transition-overlay">
                     <div className="theater-transition-content">
-                        <div className="theater-transition-line" />
-                        <div className="theater-transition-location">{transitionLocationName}</div>
+                        <div className="flex gap-2">
+                            <button onClick={handleStartEnding} className="flex-1 py-3 text-sm font-bold rounded-xl transition-all" style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)' }}>结束约会</button>
+                            <button onClick={() => setShowInput(false)} className="py-3 px-4 text-sm font-bold rounded-xl transition-all" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>取消</button>
+                        </div>
                         <div className="theater-transition-sub">场景切换中</div>
                         <div className="theater-transition-line" />
                     </div>
@@ -433,7 +696,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             )}
 
             {/* Top Bar — minimal */}
-            <div className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 shrink-0">
+            <div className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 shrink-0" onClick={e => e.stopPropagation()}>
                 <button onClick={onExit} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="rgba(255,255,255,0.6)" width={16} height={16}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -447,8 +710,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                             {timelineLabel}
                         </span>
                     )}
-                    <div className="theater-time-badge" style={{ padding: '4px 10px', fontSize: 11 }}>
-                        <span>{timeLabel.icon}</span>
+                    <div className={`theater-time-badge theater-time-badge--${timeSlot}`} style={{ padding: '4px 10px', fontSize: 11 }}>
+                        <TimeSlotIcon slot={timeSlot} size={12} className="theater-time-slot-icon" />
                         <span>{timeLabel.zh}</span>
                     </div>
                 </div>
@@ -584,6 +847,12 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
                     {/* Bottom Control Bar */}
                     <div className="theater-vn-controls" onClick={e => e.stopPropagation()}>
+                        {pageIndex > 0 && (
+                            <button className="theater-vn-ctrl-btn" onClick={handlePrevPage}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                                <span>上页</span>
+                            </button>
+                        )}
                         <button className="theater-vn-ctrl-btn" onClick={(e) => { e.stopPropagation(); setShowLog(true); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                             <span>回顾</span>
@@ -596,6 +865,16 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061A1.125 1.125 0 0 1 3 16.811V8.69ZM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061a1.125 1.125 0 0 1-1.683-.977V8.69Z" /></svg>
                             <span>跳过</span>
                         </button>
+                        {characterTtsConfig?.apiKey && currentPage && currentPage.type !== 'user' && (
+                            <button className={`theater-vn-ctrl-btn ${ttsPlaying || ttsSynthesizing ? 'active' : ''}`} onClick={handleManualTts}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill={ttsPlaying ? 'currentColor' : 'none'}/>
+                                    {!ttsSynthesizing && <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>}
+                                    {ttsSynthesizing && <path d="M15 10v4" strokeDasharray="2 2"><animate attributeName="stroke-dashoffset" from="0" to="4" dur="0.6s" repeatCount="indefinite"/></path>}
+                                </svg>
+                                <span>{ttsSynthesizing ? '合成…' : ttsPlaying ? '播放' : '听'}</span>
+                            </button>
+                        )}
                         <button className={`theater-vn-ctrl-btn ${autoMode ? 'active' : ''}`} onClick={toggleAuto}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
                             <span>自动</span>
@@ -724,7 +1003,103 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 </div>
             )}
 
-            {/* Settings Overlay */}
+            {/* ====== Date Ending Ceremony Overlays ====== */}
+            {endingPhase === 'gift' && (
+                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)' }}>
+                    <button onClick={handleSkipToSync}
+                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
+                        跳过 ›
+                    </button>
+                    <div className="w-[85%] max-w-sm" style={{ animation: 'letterCardIn 0.6s ease-out both' }}>
+                        <div className="text-center mb-6">
+                            <div className="text-white/60 text-sm font-light tracking-widest mb-1">交换礼物</div>
+                            <div className="text-white/30 text-xs font-light">送一样东西给{char.name}吧</div>
+                        </div>
+                        <div className="bg-white/[0.08] backdrop-blur-xl rounded-2xl border border-white/[0.12] p-4">
+                            <textarea
+                                value={giftInput}
+                                onChange={e => setGiftInput(e.target.value)}
+                                placeholder="一首歌、一个拥抱、一句话、或者……"
+                                className="w-full bg-transparent text-white/90 text-sm font-light placeholder:text-white/25 resize-none outline-none h-24 leading-relaxed"
+                                autoFocus
+                            />
+                        </div>
+                        <button
+                            onClick={handleSendGift}
+                            disabled={!giftInput.trim() || endingLoading}
+                            className="w-full mt-4 py-3 rounded-2xl text-sm font-medium tracking-wider transition-all active:scale-[0.97] disabled:opacity-30"
+                            style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            {endingLoading ? '...' : '送出'}
+                        </button>
+                    </div>
+                </div>
+            )}
+            {endingPhase === 'gift-reaction' && (
+                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end"
+                    style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+                    onClick={() => {
+                        if (giftReactionQueue.length > 0) processEndingDialogue(giftReactionQueue, setGiftReactionQueue);
+                        else { setEndingPhase('farewell'); triggerFarewell(); }
+                    }}>
+                    <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
+                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
+                        跳过 ›
+                    </button>
+                    <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
+                        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">{endingDisplayedText}</div>
+                        {endingDisplayedText === endingCurrentText && giftReactionQueue.length === 0 && (
+                            <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>
+                        )}
+                    </div>
+                </div>
+            )}
+            {endingPhase === 'farewell' && (
+                <div className="absolute inset-0 z-[300] flex flex-col items-center justify-end"
+                    style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+                    onClick={() => {
+                        if (farewellQueue.length > 0) processEndingDialogue(farewellQueue, setFarewellQueue);
+                        else { setEndingPhase('fade'); setTimeout(() => triggerLetter(), 1800); }
+                    }}>
+                    <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
+                        className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
+                        跳过 ›
+                    </button>
+                    <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
+                        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {endingLoading ? <div className="text-white/40 text-sm text-center py-4 animate-pulse">……</div> : <div className="text-white/90 text-[15px] font-light leading-relaxed min-h-[3em]">{endingDisplayedText}</div>}
+                        {!endingLoading && endingDisplayedText === endingCurrentText && farewellQueue.length === 0 && endingCurrentText && <div className="text-center text-white/30 text-[10px] mt-3 animate-pulse">点击继续</div>}
+                    </div>
+                </div>
+            )}
+            {endingPhase === 'fade' && (
+                <div className="absolute inset-0 z-[310] bg-black" style={{ animation: 'fadeToBlack 1.5s ease-in both' }}>
+                    {endingLoading && <div className="absolute inset-0 flex items-center justify-center"><div className="text-white/20 text-xs animate-pulse tracking-widest">……</div></div>}
+                </div>
+            )}
+            {endingPhase === 'letter' && (
+                <div className="absolute inset-0 z-[320] bg-black flex items-center justify-center overflow-y-auto" style={{ padding: '24px 16px' }}>
+                    <button onClick={handleSkipToSync} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                    <div className="w-full max-w-md" style={{ animation: 'letterCardIn 0.8s ease-out 0.3s both' }}>
+                        <div ref={letterRef} className="rounded-2xl p-8 relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #faf6f0, #f5efe6)', boxShadow: '0 8px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)' }}>
+                            <img src="/images/paper-texture.jpg" alt="" className="absolute inset-0 w-full h-full object-cover opacity-[0.06] mix-blend-multiply pointer-events-none" />
+                            <div className="relative z-10">
+                                {letterContent.split('\n').filter(l => l.trim()).map((line, i) => (
+                                    <p key={i} className="text-[15px] leading-[2] mb-0" style={{ fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif", color: '#3d3530', animation: `lineReveal 0.5s ease-out ${0.5 + i * 0.3}s both` }}>{line}</p>
+                                ))}
+                                <p className="text-right mt-6 text-sm" style={{ fontFamily: "'ShouXie6', 'HuangHunShouXie', 'Kaiti SC', STKaiti, serif", color: '#8a7e75', animation: `lineReveal 0.5s ease-out ${0.5 + (letterContent.split('\n').filter(l => l.trim()).length) * 0.3}s both` }}>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 mt-6 justify-center" style={{ animation: `endingBtnIn 0.5s ease-out ${1 + (letterContent.split('\n').filter(l => l.trim()).length) * 0.3}s both` }}>
+                            <button onClick={handleExportLetter} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}>保存原图</button>
+                            <button onClick={() => { setEndingPhase('none'); onExit(); }} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>收好这封信</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Main VN Content Layer */}
             <TheaterSettings
                 char={char}
                 location={location}

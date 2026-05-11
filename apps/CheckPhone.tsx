@@ -5,7 +5,8 @@ import { CharacterProfile,PhoneEvidence,PhoneCustomApp } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
-import { searchNearbyRestaurants } from '../utils/mapService';
+// === [Deprecated] 高德地图 POI 搜索已因额度耗尽停用，外卖商家改由大模型生成 ===
+// import { searchNearbyRestaurants } from '../utils/mapService';
 import MeituanTakeoutCard from '../components/chat/cards/phone/MeituanTakeoutCard';
 
 // 朋友圈封面背景图池 —— 每次进入随机选一张
@@ -50,10 +51,11 @@ const LayoutInspector: React.FC = () => {
     );
 };
 
-function shuffleAndPick<T>(arr: T[], count: number): T[] {
-    const shuffled = [...arr].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
-}
+// === [LEGACY] 原配合 searchNearbyRestaurants 使用，暂停 ===
+// function shuffleAndPick<T>(arr: T[], count: number): T[] {
+//     const shuffled = [...arr].sort(() => Math.random() - 0.5);
+//     return shuffled.slice(0, count);
+// }
 
 const CheckPhone: React.FC = () => {
     const { closeApp, characters, updateCharacter, apiConfig, addToast, userProfile } = useOS();
@@ -252,53 +254,64 @@ const CheckPhone: React.FC = () => {
     格式JSON数组: [{ "title": "商品名", "detail": "规格 | 状态", "value": "¥金额", "shop": "店铺名" }, ...]`;
                     logPrefix = "购物APP";
                 } else if (type === 'delivery') {
+                    // ─── LLM-Native 外卖生成（无需地图 API）─────────────────
                     const cityOverride = targetChar.cityOverride?.trim();
                     const cityReferenceReal = targetChar.cityReferenceReal?.trim();
-                    let queryCity: string | null = null;
 
-                    if (targetChar.isFictionalCity && cityReferenceReal) {
-                        queryCity = cityReferenceReal;
+                    // 构建城市与美食文化上下文
+                    let cityContext = '';
+                    if (targetChar.isFictionalCity && cityOverride) {
+                        if (cityReferenceReal) {
+                            // 架空城市 + 有现实参照
+                            cityContext = `你身处「${cityOverride}」——这是一个以「${cityReferenceReal}」为蓝本的架空城市。
+生成外卖订单时请遵循以下规则：
+- 商家名称和菜品风格要融合「${cityReferenceReal}」的真实饮食文化特色（比如当地知名菜系、连锁品牌的本地化变体）
+- 但商家名必须做世界观改编：可以谐音、化用、加上符合设定的前缀后缀（如"阿卡姆速递"、"璃月港茶餐厅"），让它听起来像真实存在于「${cityOverride}」的店
+- 菜品种类和价位仍然以「${cityReferenceReal}」的真实消费水平为参照
+- 鼓励混入 1-2 个纯原创的、只可能存在于你的世界观里的特色美食`;
+                        } else {
+                            // 架空城市 + 无现实参照 → 完全自由创作
+                            cityContext = `你身处「${cityOverride}」——这是一个架空/虚构城市。
+生成外卖订单时请完全根据你的世界观和人设自由创作：
+- 商家名称应该听起来像真实存在于这个世界里的店（符合世界观的语言风格和文化氛围）
+- 菜品要符合这个世界的设定（如果是魔法世界可以有"龙息辣翅"，赛博朋克可以有"合成蛋白套餐"）
+- 价格体系要自洽（可以用你世界里的货币单位，但也可以用 ¥ 方便展示）
+- 整体风格要让人一看就知道"这是那个世界的外卖"`;
+                        }
                     } else if (cityOverride) {
-                        queryCity = targetChar.cityAdcode || cityOverride;
-                    }
-
-                    const realShops = queryCity
-                        ? await searchNearbyRestaurants(queryCity, 15)
-                        : [];
-                    const selectedShops = realShops.length > 0
-                        ? shuffleAndPick(realShops, Math.min(5, Math.max(3, realShops.length)))
-                        : [];
-
-                    if (selectedShops.length > 0) {
-                        const shopList = selectedShops
-                            .map((shop, index) => `${index + 1}. ${shop.name} - ${shop.type} (${shop.address})`)
-                            .join('\n');
-
-                        const fictionalNote = targetChar.isFictionalCity && cityOverride && cityReferenceReal
-                            ? `\n注意：你身处"${cityOverride}"（一个以${cityReferenceReal}为参照的架空城市）。你可以将商家名改编为符合你所在世界观的风格，但菜品种类和价位要保持一致。`
-                            : '';
-
-                        promptInstruction = `生成 3 条你最近的外卖订单记录。
-【当地真实商家参考（你必须从以下商家中选择下单）】：
-${shopList}
-要求：
-1. title 必须使用上面列表中的真实商家名称（或其改编名）。
-2. 菜品必须符合该商家的菜系特征（如蜜雪冰城只出饮品甜品，华莱士出炸鸡汉堡薯条）。
-3. 根据你的人设和经济状况，选择符合你身份的商家下单。富人挑贵的，学生挑便宜的。
-4. detail 是点的菜品列表，用「;」分隔，包含数量（例如 "蜜汁手扒鸡×1;可乐×2"）。
-5. value 是订单总价，必须带 ¥ 前缀，价格要符合该商家的真实价位。
-6. shop 是订单状态（例如 "已完成"、"骑手正在配送"、"已取消"）。${fictionalNote}
-格式JSON数组: [{ "title": "商家名", "detail": "菜品1×数量;菜品2×数量;...", "value": "¥总价", "shop": "订单状态" }, ...]`;
+                        // 真实城市
+                        cityContext = `你身处「${cityOverride}」。
+生成外卖订单时请体现这座城市的真实饮食文化特色：
+- 优先使用当地真实存在的知名餐饮品牌和连锁店（包括全国连锁在该城市的分店，以及当地独有的老字号/网红店）
+- 菜品要符合「${cityOverride}」的地方饮食特色（比如成都多川菜/串串/火锅、广州多粤式茶餐厅/肠粉、长沙多湘菜/臭豆腐/奶茶）
+- 商家名格式带上分店名（如 "蜜雪冰城(春熙路店)"、"文和友(海信广场店)"）
+- 价格要符合当地真实消费水平`;
                     } else {
-                        promptInstruction = `生成 3 条该角色最近的美团外卖订单记录。
-    要求：
-    1. title 是商家名称（例如 "华莱士(高新店)"、"蜜雪冰城(大学路店)"、"张亮麻辣烫"）。
-    2. detail 是点的菜品列表，用「;」分隔，包含数量（例如 "蜜汁手扒鸡×1;可乐×2;薯条（大份）×1"）。
-    3. value 是订单总价，必须带 ¥ 前缀（例如 "¥45.8"）。
-    4. shop 是订单状态（例如 "已完成"、"骑手正在配送"、"已取消"）。
-    格式JSON数组: [{ "title": "商家名", "detail": "菜品1×数量;菜品2×数量;...", "value": "¥总价", "shop": "订单状态" }, ...]`;
+                        // 未设城市 → 通用
+                        cityContext = `你没有设置具体城市，请根据你的人设和生活环境合理推断你可能在哪类城市，并据此生成合理的外卖订单。
+可以使用全国常见的连锁品牌（如华莱士、蜜雪冰城、张亮麻辣烫、瑞幸咖啡、肯德基等），也可以虚构符合你身份的本地小店。`;
                     }
+
+                    promptInstruction = `生成 3 条你最近的外卖订单记录。
+
+【你的地理与饮食文化背景】
+${cityContext}
+
+【通用要求】
+1. title 是商家名称，要有店名特色和辨识度。
+2. 菜品必须符合该商家的菜系特征（如奶茶店只出饮品甜品，烧烤店出烤串烤肉）。
+3. 根据你的人设和经济状况，选择符合你身份的商家下单。富人挑精致的，学生挑实惠的。
+4. detail 是点的菜品列表，用「;」分隔，包含数量（例如 "招牌奶茶×1;芋泥波波×2"）。
+5. value 是订单总价，必须带 ¥ 前缀，价格要合理。
+6. shop 是订单状态（例如 "已完成"、"骑手正在配送"、"已取消"、"待评价"）。
+格式JSON数组: [{ "title": "商家名", "detail": "菜品1×数量;菜品2×数量;...", "value": "¥总价", "shop": "订单状态" }, ...]`;
                     logPrefix = "外卖APP";
+
+                    // === [LEGACY] 以下为原版高德 POI API 搜索逻辑，因额度耗尽停用 ===
+                    // const realShops = queryCity ? await searchNearbyRestaurants(queryCity, 15) : [];
+                    // const selectedShops = realShops.length > 0 ? shuffleAndPick(realShops, Math.min(5, Math.max(3, realShops.length))) : [];
+                    // if (selectedShops.length > 0) { ... 用真实 POI 构建 prompt ... }
+                    // === [/LEGACY] ===
                 } else if (type === 'social') {
                     promptInstruction = `生成 2 条该角色的朋友圈/社交媒体动态。
     格式JSON数组: [{ "title": "时间/状态", "detail": "正文内容" }, ...]`;

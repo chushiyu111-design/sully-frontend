@@ -9,6 +9,21 @@ import { TIME_SLOT_LABELS } from '../../types/theater';
 import LocationEditor from './LocationEditor';
 import { resolveTheaterBg } from '../../utils/db/theaterStore';
 
+/** Minimal SVG icons for time-of-day — replaces emoji with elegant line art */
+export const TimeSlotIcon: React.FC<{ slot: TimeSlot; size?: number; className?: string }> = ({ slot, size = 14, className }) => {
+    const props = { xmlns: 'http://www.w3.org/2000/svg', width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, className };
+    switch (slot) {
+        case 'morning': // sunrise — half sun with horizon
+            return <svg {...props}><path d="M12 2v3" /><path d="M4.93 4.93l2.12 2.12" /><path d="M19.07 4.93l-2.12 2.12" /><path d="M2 12h3" /><path d="M19 12h3" /><path d="M12 16a4 4 0 0 1-4-4" /><path d="M12 16a4 4 0 0 0 4-4" /><line x1="2" y1="18" x2="22" y2="18" strokeDasharray="2 2" /></svg>;
+        case 'afternoon': // full sun
+            return <svg {...props}><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="M4.93 4.93l1.41 1.41" /><path d="M17.66 17.66l1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="M6.34 17.66l-1.41 1.41" /><path d="M19.07 4.93l-1.41 1.41" /></svg>;
+        case 'evening': // sunset — sun dipping below horizon
+            return <svg {...props}><path d="M12 10a4 4 0 0 1 4 4" /><path d="M12 10a4 4 0 0 0-4 4" /><line x1="2" y1="16" x2="22" y2="16" /><path d="M12 3v4" /><path d="M5.5 5.5l2 2" /><path d="M18.5 5.5l-2 2" /></svg>;
+        case 'night': // crescent moon + star
+            return <svg {...props}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /><path d="M17 5l.5 1.5L19 7l-1.5.5L17 9l-.5-1.5L15 7l1.5-.5L17 5z" strokeWidth={1.2} /></svg>;
+    }
+};
+
 const TAG_LABELS: Record<string, string> = {
     romantic: '浪漫',
     daily: '日常',
@@ -124,13 +139,13 @@ const TheaterMap: React.FC<TheaterMapProps> = ({
                         </svg>
                     </button>
                     <div>
-                        <div className="theater-map-title">约会剧场</div>
-                        <div className="theater-map-subtitle">DATE THEATER</div>
+                        <div className="theater-map-title">约会</div>
+                        <div className="theater-map-subtitle">LET'S FALL IN LOVE</div>
                     </div>
                 </div>
 
-                <div className="theater-time-badge">
-                    <span className="theater-time-icon">{timeLabel.icon}</span>
+                <div className={`theater-time-badge theater-time-badge--${timeSlot}`}>
+                    <TimeSlotIcon slot={timeSlot} size={13} className="theater-time-slot-icon" />
                     <span>{timeLabel.zh}场</span>
                 </div>
             </div>

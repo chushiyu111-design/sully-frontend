@@ -15,6 +15,7 @@ import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
+import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../../utils/dateEndingPrompts';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 
 import {
@@ -1349,6 +1350,116 @@ ${exitPromptContent}
         return true;
     };
 
+    // ====== Theater Ending Three-Act Ceremony API Calls ======
+
+    const getEndingSessionContext = async (): Promise<string> => {
+        if (!char || !currentTimelineId) return '';
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMsgs = getTimelineVisibleMessages(allMsgs, char.id, currentTimelineId)
+            .filter(m => !m.metadata?.hiddenFromUser && !m.metadata?.isSummary);
+        return formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+    };
+
+    const handleGenerateGiftReaction = async (userGift: string): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildGiftExchangePrompt(char.name, userProfile.name, userGift, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    const handleGenerateFarewell = async (): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildFarewellPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    const handleGenerateMetaLetter = async (): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        const sessionContext = await getEndingSessionContext();
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+
+        const prompt = buildMetaLetterPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.8,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    /** Save the meta letter to DB so it can be viewed in history */
+    const handleSaveMetaLetter = async (letterContent: string): Promise<void> => {
+        if (!char) return;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const tlId = currentTimelineId;
+        const sessionMessages = tlId ? getTimelineVisibleMessages(allMsgs, char.id, tlId) : [];
+        const sessionStartMsgId = sessionMessages.length > 0 ? sessionMessages[0].id : undefined;
+
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content: letterContent,
+            metadata: {
+                source: 'theater',
+                branchId: tlId,
+                isMetaLetter: true,
+                sessionStartMsgId,
+            },
+        });
+    };
+
     const saveRawBridgeAndExit = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
@@ -1652,6 +1763,10 @@ ${exitPromptContent}
                     pendingLocationSuggestion={pendingLocationSuggestion}
                     onAcceptLocationSuggestion={handleAcceptLocationSuggestion}
                     onDeclineLocationSuggestion={handleDeclineLocationSuggestion}
+                    onGenerateGiftReaction={handleGenerateGiftReaction}
+                    onGenerateFarewell={handleGenerateFarewell}
+                    onGenerateMetaLetter={handleGenerateMetaLetter}
+                    onSaveMetaLetter={handleSaveMetaLetter}
                 />
 
                 {/* Exit Sync Modal */}

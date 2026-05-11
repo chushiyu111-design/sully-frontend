@@ -989,13 +989,19 @@ Step 5 — 最后检查
             .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
             .filter(m => !m.metadata?.hiddenFromUser || (m.type as string) === 'soul_reflection')
             .filter(m => m.metadata?.source !== 'date');
-        // Exclude AI-generated voice messages (their text already appears in paired text bubbles).
-        // Keep user voice recordings — they are the ONLY representation of the user's speech.
+        // Voice message handling:
+        // - User recordings: keep (content = transcribed text, this is the primary message)
+        // - AI voice messages: keep — their text content needs to be in context
+        //   (previously filtered assuming a paired text bubble existed, but it doesn't;
+        //    the voice text was lost from the context window entirely)
+        // - User read-aloud copies: filter out (the original text message is still present)
         const nonVoiceHistory = effectiveHistory.filter(m => {
             if (m.type !== 'voice') return true;
-            // User recordings: keep (content = transcribed text, this is the primary message)
+            // User recordings: keep
             if (m.role === 'user' && m.metadata?.source === 'user-recording') return true;
-            // AI voice / read-aloud: filter out (paired text bubble carries the same content)
+            // AI voice messages: keep (no paired text bubble carries this content)
+            if (m.role === 'assistant') return true;
+            // Other voice copies (e.g. user read-aloud): filter out
             return false;
         });
         const historySlice = nonVoiceHistory.slice(-limit);
@@ -1082,6 +1088,11 @@ Step 5 — 最后检查
                     } else {
                         content = `${timeStr} [🎤用户发送了一条语音消息（${m.metadata?.duration || '?'}秒）]`;
                     }
+                }
+                else if (m.type === 'voice' && m.role === 'assistant') {
+                    // AI voice message: restore text content into context
+                    const voiceText = m.metadata?.sourceText || m.content;
+                    content = `${timeStr} [${char.name}发送了语音消息] ${voiceText}`;
                 }
                 else content = `${timeStr} ${content}`;
 

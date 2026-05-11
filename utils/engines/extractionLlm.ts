@@ -77,7 +77,7 @@ ${formattedMsgs}
 }
 
 export function formatMessages(
-    msgs: { timestamp: number; type: string; role: string; content: string }[],
+    msgs: { timestamp: number; type: string; role: string; content: string; metadata?: any }[],
     charName: string,
 ): string {
     return msgs.map((message) => {
@@ -88,9 +88,68 @@ export function formatMessages(
             minute: '2-digit',
             hour12: false,
         });
-        const prefix = message.type === 'call_log' ? '[通话记录] ' : '';
         const speaker = message.role === 'user' ? '用户' : charName;
-        return `[${time}] ${prefix}${speaker}: ${message.content.slice(0, 300)}`;
+
+        // Format content based on message type
+        let displayContent: string;
+        switch (message.type) {
+            case 'call_log':
+                displayContent = `[通话记录] ${message.content.slice(0, 300)}`;
+                break;
+            case 'voice':
+                displayContent = `[语音消息] ${(message.metadata?.sourceText || message.content).slice(0, 300)}`;
+                break;
+            case 'image':
+                displayContent = '[发送了一张图片]';
+                break;
+            case 'emoji':
+                displayContent = '[发送了表情包]';
+                break;
+            case 'interaction':
+                displayContent = message.role === 'user' ? '[戳了一下]' : '[被戳了一下]';
+                break;
+            case 'transfer': {
+                const amt = message.metadata?.amount || '?';
+                const status = message.metadata?.status || 'pending';
+                const isFromUser = message.role === 'user';
+                const statusLabels: Record<string, string> = isFromUser
+                    ? { pending: `给${charName}转账 ¥${amt}`, accepted: `转账 ¥${amt}（已收取）`, returned: `转账 ¥${amt}（已退还）` }
+                    : { pending: `给用户转账 ¥${amt}`, accepted: `转账 ¥${amt}（用户已收取）`, returned: `转账 ¥${amt}（用户已退还）` };
+                displayContent = `[${statusLabels[status] || statusLabels.pending}]`;
+                break;
+            }
+            case 'social_card': {
+                const post = message.metadata?.post || {};
+                displayContent = `[分享了帖子] 标题: ${post.title || '无标题'} 内容: ${(post.content || '').slice(0, 150)}`;
+                break;
+            }
+            case 'xhs_card': {
+                const note = message.metadata?.xhsNote || {};
+                displayContent = `[分享了小红书笔记] 标题: ${note.title || '无标题'} 作者: ${note.author || '未知'}`;
+                break;
+            }
+            case 'chat_forward': {
+                try {
+                    const fwd = JSON.parse(message.content);
+                    const count = fwd.count || fwd.messages?.length || '?';
+                    displayContent = `[转发了与 ${fwd.fromCharName || '另一个角色'} 的 ${count} 条聊天记录]`;
+                } catch {
+                    displayContent = '[转发了一段聊天记录]';
+                }
+                break;
+            }
+            case 'health_signal':
+                displayContent = `[健康感知] ${message.content.slice(0, 200)}`;
+                break;
+            case 'soul_reflection':
+                displayContent = `[内心反思] ${message.content.slice(0, 200)}`;
+                break;
+            default:
+                displayContent = message.content.slice(0, 300);
+                break;
+        }
+
+        return `[${time}] ${speaker}: ${displayContent}`;
     }).join('\n');
 }
 

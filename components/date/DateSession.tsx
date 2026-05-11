@@ -187,7 +187,6 @@ const DateSession: React.FC<DateSessionProps> = ({
     translateTargetLang,
     onToggleTranslation,
     onSetTranslateSourceLang,
-    onSetTranslateSourceLang,
     onSetTranslateTargetLang}) => {
     const { addToast, registerBackHandler } = useOS();
     

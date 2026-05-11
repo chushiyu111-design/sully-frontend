@@ -1,5 +1,5 @@
 /**
- * Theater App Types — 约会
+ * Theater App Types — 520 约会剧场
  * 导演引擎驱动的沉浸式文游体验
  */
 
@@ -97,11 +97,11 @@ export interface PityCounter {
 
 export type TimeSlot = 'morning' | 'afternoon' | 'evening' | 'night';
 
-export const TIME_SLOT_LABELS: Record<TimeSlot, { zh: string; icon: string; en: string }> = {
-    morning:   { zh: '早晨', icon: 'morning',   en: 'AM' },
-    afternoon: { zh: '下午', icon: 'afternoon', en: 'PM' },
-    evening:   { zh: '傍晚', icon: 'evening',   en: 'EVE' },
-    night:     { zh: '深夜', icon: 'night',      en: 'LATE' },
+export const TIME_SLOT_LABELS: Record<TimeSlot, { zh: string; icon: string }> = {
+    morning:   { zh: '早晨', icon: '🌅' },
+    afternoon: { zh: '下午', icon: '☀️' },
+    evening:   { zh: '傍晚', icon: '🌆' },
+    night:     { zh: '深夜', icon: '🌙' },
 };
 
 // ── Session State (serializable) ──

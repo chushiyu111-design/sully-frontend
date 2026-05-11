@@ -1,5 +1,5 @@
 /**
- * TheaterFloatingBall — 约会独立悬浮球
+ * TheaterFloatingBall — 520约会剧场独立悬浮球
  * 粉色系主题，不与见面的 SummaryFloatingBall 耦合。
  * 实装：场景切换、设置入口、氛围 BGM
  * 占位：记忆印记、心情读取、取景框
@@ -400,10 +400,27 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                 {/* ── 2×2 Jelly Keys ── */}
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, padding: '8px 8px 6px' }}>
                                     {[
-                                        { iconSrc: '/images/theater-btn-scene.png', label: '场景', onClick: () => { setPanelOpen(false); onOpenFullLocationSheet(); } },
-                                        { iconSrc: '/images/theater-btn-costume.png', label: '立绘', onClick: () => { setPanelOpen(false); onOpenSettings(); } },
-                                        { iconSrc: '/images/theater-btn-voice.png', label: '音乐', onClick: () => onBgmToggle(), active: bgmEnabled },
-                                        { iconSrc: '/images/theater-btn-memory.png', label: '记忆', onClick: () => setMemoryExpanded(v => !v), active: memoryExpanded },
+                                        { icon: (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+                                                <circle cx="12" cy="12" r="3"/>
+                                            </svg>
+                                        ), label: '场景', onClick: () => { setPanelOpen(false); onOpenFullLocationSheet(); } },
+                                        { icon: (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M20.38 3.46 16 2 12 4 8 2 3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6l-1 12h14l-1-12h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>
+                                            </svg>
+                                        ), label: '立绘', onClick: () => { setPanelOpen(false); onOpenSettings(); } },
+                                        { icon: (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                                            </svg>
+                                        ), label: '音乐', onClick: () => onBgmToggle(), active: bgmEnabled },
+                                        { icon: (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4z"/>
+                                            </svg>
+                                        ), label: '记忆', onClick: () => setMemoryExpanded(v => !v), active: memoryExpanded },
                                     ].map(item => (
                                         <button key={item.label} type="button" onClick={item.onClick}
                                             style={{
@@ -432,10 +449,7 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                                 e.currentTarget.style.transform = 'scale(1)';
                                                 e.currentTarget.style.boxShadow = `0 3px 6px rgba(200,110,140,0.12), ${P.cardInnerShadow}`;
                                             }}>
-                                            <img src={item.iconSrc} alt={item.label} draggable={false}
-                                                style={{ width: 36, height: 36, objectFit: 'contain', pointerEvents: 'none',
-                                                    filter: item.active ? 'brightness(0.95) saturate(1.2)' : 'none',
-                                                    opacity: item.active ? 1 : 0.85 }} />
+                                            {item.icon}
                                             <span style={{ fontSize: 9, fontWeight: 700, color: P.textPri, letterSpacing: 0.8 }}>{item.label}</span>
                                         </button>
                                     ))}
@@ -508,14 +522,12 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                         border: `1px solid rgba(255,180,205,0.3)`,
                                         boxShadow: 'inset 0 1px 2px rgba(200,140,170,0.06), inset 0 -1px 0 rgba(255,255,255,0.4)',
                                         display: 'flex', alignItems: 'center', gap: 5,
-                                        cursor: 'pointer',
-                                    }} onClick={onBgmToggle}>
+                                    }}>
                                         <svg width="9" height="9" viewBox="0 0 24 24" fill={P.btnPink} stroke="none"><path d="M9 18V5l12-2v13M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
                                         <span style={{ flex: 1, fontSize: 7, color: P.textSec, fontStyle: 'italic', letterSpacing: 0.2 }}>
                                             {bgmStatus === 'generating' ? '♪ 生成中…' : bgmStatus === 'ready' ? '♡ 播放中' : bgmEnabled ? '♪ 等待…' : '♪ 已静音'}
                                         </span>
                                         <input type="range" min={0} max={100} value={Math.round(bgmVolume * 100)}
-                                            onClick={e => e.stopPropagation()}
                                             onChange={e => onBgmVolumeChange(Number(e.target.value) / 100)}
                                             style={{ width: 40, height: 2, borderRadius: 2, appearance: 'none', WebkitAppearance: 'none', cursor: 'pointer',
                                                 background: `linear-gradient(to right, ${P.btnPink} ${bgmVolume * 100}%, ${P.toggleOff} ${bgmVolume * 100}%)`,
@@ -536,7 +548,7 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                     padding: '6px 10px', cursor: 'pointer', border: 'none',
                                     background: 'linear-gradient(180deg, rgba(255,245,250,0.7) 0%, rgba(255,238,246,0.5) 100%)',
                                 }}>
-                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={P.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m3 16 5-5c.9-.9 2.2-.9 3.1 0l5 5"/><path d="m14 14 1-1c.9-.9 2.2-.9 3.1 0l2.9 2.9"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>
+                                    <span style={{ fontSize: 11 }}>🖼</span>
                                     <span style={{ fontSize: 8, fontWeight: 700, color: P.textPri, flex: 1, textAlign: 'left' }}>贴纸仓</span>
                                     <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke={P.textSec} strokeWidth="2" style={{ transform: stickerOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
                                         <path d="M2 4l4 4 4-4"/>

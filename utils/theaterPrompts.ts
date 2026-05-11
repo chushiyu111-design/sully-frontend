@@ -70,7 +70,7 @@ tags 只能从以下选择：romantic, daily, adventure, quiet, crowded, outdoor
 ### 当前场景
 - 地点：${location.name}
 - 地点氛围：${location.description}
-- 时段：${timeLabel.zh}
+- 时段：${timeLabel.icon} ${timeLabel.zh}
 - 角色：${charName}（AI角色），${userName}（用户）
 
 ### 最近发生的事件
@@ -115,8 +115,8 @@ export function buildTheaterSceneInjection(
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
     return `
-### 【约会 · 导演指令】
-你正在和对方在 **${location.name}** 度过${timeLabel.zh}的时光。
+### 【约会剧场 · 导演指令】
+你正在和对方在 **${location.name}** 度过 ${timeLabel.icon}${timeLabel.zh} 的时光。
 
 **当前场景氛围**：
 ${event.atmosphere}
@@ -153,7 +153,7 @@ export function buildInitialScenePrompt(
         : `${userName}和${charName}刚刚来到 ${location.name}。`;
 
     return `### 场景：感知新地点
-当前时段: ${timeLabel.zh}
+当前时段: ${timeLabel.icon} ${timeLabel.zh}
 地点: ${location.name}
 
 ### 任务
@@ -318,7 +318,7 @@ export function buildTransitionDirectorPrompt(
 ### 当前状态
 - 现在位于：${fromLocation.name}（${fromLocation.description.slice(0, 80)}…）
 - 即将前往：${toLocation.name}（${toLocation.description.slice(0, 80)}…）
-- 时段：${timeLabel.zh}
+- 时段：${timeLabel.icon} ${timeLabel.zh}
 - 角色：${charName}（AI角色），${userName}（用户）
 
 ### 最近事件
@@ -406,9 +406,9 @@ export function buildTransitionSceneInjection(
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
     return `
-### 【约会 · 转场指令】
+### 【约会剧场 · 转场指令】
 你们正在从 **${fromLocation.name}** 出发，前往 **${toLocation.name}**。
-当前时段：${timeLabel.zh}
+当前时段：${timeLabel.icon}${timeLabel.zh}
 
 **离开的画面**：
 ${transition.departure}

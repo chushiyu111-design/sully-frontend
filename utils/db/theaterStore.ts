@@ -82,6 +82,12 @@ export function getTheaterSession(charId: string): TheaterSessionState | null {
     }
 }
 
+export function deleteTheaterSession(charId: string): void {
+    try {
+        localStorage.removeItem(THEATER_SESSION_KEY + charId);
+    } catch { /* ignore */ }
+}
+
 // ── Custom Locations (localStorage) ──
 
 export function getCustomLocations(): TheaterLocation[] {
@@ -116,6 +122,13 @@ export function addCustomLocation(location: TheaterLocation): void {
 
 export function deleteCustomLocation(id: string): void {
     const existing = getCustomLocations().filter(l => l.id !== id);
+    saveCustomLocations(existing);
+}
+
+export function updateCustomLocation(id: string, updates: Partial<TheaterLocation>): void {
+    const existing = getCustomLocations().map(l =>
+        l.id === id ? { ...l, ...updates } : l
+    );
     saveCustomLocations(existing);
 }
 

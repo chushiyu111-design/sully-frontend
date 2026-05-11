@@ -262,7 +262,6 @@ export async function generateTheaterBgm(options: GenerateBgmOptions): Promise<G
         baseUrl: options.musicBaseUrl?.trim() || undefined,
         prompt,
         lyrics: '',
-        isInstrumental: true,
         signal: options.signal,
         timeoutMs: BGM_GENERATION_TIMEOUT_MS,
     });

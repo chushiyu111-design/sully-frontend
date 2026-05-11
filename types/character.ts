@@ -155,6 +155,7 @@ export interface CharacterProfile {
     // Date output tuning
     dateOutputWordCount?: number;          // Target reply word count (0 or undefined = default ~150)
     dateWritingStyle?: string;             // Writing style preset key or custom prompt text
+    dateTemperature?: number;              // LLM temperature for date mode (0.0-2.0, default 0.85)
 
     // Theater (520) Summary System
     theaterSummaryPrompt?: string;           // User-customized theater summary prompt

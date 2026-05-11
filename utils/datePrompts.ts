@@ -270,7 +270,7 @@ export const buildDateOutputTuning = (
     // Give a ±30% range for natural feel
     const lo = Math.max(30, Math.round(targetWords * 0.7));
     const hi = Math.round(targetWords * 1.3);
-    parts.push(`\n### 回复篇幅\n目标字数: 约 ${targetWords} 字（${lo}-${hi} 字）。\n- 这是叙述行+台词的总字数（不含 [emotion] 标签和 <thinking> 推理）\n- 不要为了凑字数而注水，也不要为了压缩而丢失画面感\n- 如果当前场景确实需要更长或更短的回复，可以适当浮动`);
+    parts.push(`\n### 回复篇幅【硬性要求】\n目标字数: 约 ${targetWords} 字。允许范围: ${lo}-${hi} 字。\n- 这是叙述行+台词的总字数（不含 [emotion] 标签和 <thinking> 推理）\n- 【红线】低于 ${lo} 字 = 不合格，必须补充场景细节、感官描写、动作节奏直到达标\n- 不要为了凑字数而注水重复，用更丰富的画面感和更多的行为细节来填充篇幅\n- 如果当前场景节奏确实需要更短的回复（如一句冷场），下限可降至 ${Math.max(20, Math.round(lo * 0.7))} 字，但这是例外而非常态`);
 
     // --- Anti-Cliché Base Layer (always-on, invisible to user) ---
     parts.push(`\n${ANTI_CLICHE_BASE}`);
@@ -551,12 +551,21 @@ Step 6 — 情绪标签规划
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Step 7 — 最后检查
+Step 7 — 篇幅规划
+a. 读取上方的【回复篇幅】要求，确认本轮目标字数范围
+b. 对照你在 Step 4-6 规划的内容，预估总行数和总字数
+c. 如果预估低于下限 → 必须补充：增加环境感官细节、动作间的节奏停顿、内心微妙反应
+d. 如果预估远超上限 → 删减冗余描写，保留核心画面
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step 8 — 最后检查
 □ 油腻：有没有自我感动或刻意暧昧？→ 删掉
 □ 太完美：你是不是又在扮演圣人？→ 你是有脾气的真人
 □ 失去自我：整段都在围着 ${userName} 转？
 □ 没有你的味道：把名字换掉还能用吗？→ 重写
 □ 人称：叙述行的人称是否严格符合 Step 0 的设定？「${perspectiveLabel}」
+□ 篇幅：正文总字数是否在目标范围内？低于下限 → 回到 Step 7 补充内容
 
 ---
 ## [CLOSURE-PROTOCOL]

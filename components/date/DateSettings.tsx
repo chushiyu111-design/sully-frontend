@@ -31,6 +31,9 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const [tempWordCount, setTempWordCount] = useState<string>(
         (char.dateOutputWordCount && char.dateOutputWordCount > 0) ? String(char.dateOutputWordCount) : ''
     );
+    const [tempTemperature, setTempTemperature] = useState<string>(
+        (char.dateTemperature !== undefined && char.dateTemperature !== null) ? String(char.dateTemperature) : ''
+    );
     const isPresetStyle = DATE_WRITING_STYLE_PRESETS.some(p => p.key === (char.dateWritingStyle || ''));
     const [selectedStyleKey, setSelectedStyleKey] = useState<string | null>(
         isPresetStyle ? (char.dateWritingStyle || null) : (char.dateWritingStyle ? '__custom__' : null)
@@ -62,6 +65,9 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     useEffect(() => {
         setTempWordCount(
             (char.dateOutputWordCount && char.dateOutputWordCount > 0) ? String(char.dateOutputWordCount) : ''
+        );
+        setTempTemperature(
+            (char.dateTemperature !== undefined && char.dateTemperature !== null) ? String(char.dateTemperature) : ''
         );
         const isPre = DATE_WRITING_STYLE_PRESETS.some(p => p.key === (char.dateWritingStyle || ''));
         setSelectedStyleKey(isPre ? (char.dateWritingStyle || null) : (char.dateWritingStyle ? '__custom__' : null));
@@ -190,12 +196,14 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         }
 
         const wordCountNum = tempWordCount ? parseInt(tempWordCount, 10) : undefined;
+        const tempNum = tempTemperature ? parseFloat(tempTemperature) : undefined;
 
         updateCharacter(char.id, {
             spriteConfig: tempSpriteConfig,
             dateSummaryPrompt: summaryPrompt.trim() || DEFAULT_DATE_SUMMARY_PROMPT,
             dateOutputWordCount: (wordCountNum && wordCountNum > 0) ? wordCountNum : undefined,
             dateWritingStyle: writingStyleToSave,
+            dateTemperature: (tempNum !== undefined && isFinite(tempNum)) ? Math.min(2, Math.max(0, tempNum)) : undefined,
         });
         addToast('配置已保存', 'success');
         onBack();
@@ -320,6 +328,32 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                             实际输出范围: 约 {Math.max(30, Math.round(parseInt(tempWordCount) * 0.7))}-{Math.round(parseInt(tempWordCount) * 1.3)} 字
                         </div>
                     )}
+                </section>
+
+                {/* Temperature */}
+                <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-1">温度 (Temperature)</h3>
+                    <p className="text-[11px] text-slate-400 mb-3">AI 回复的创意程度。值越高越大胆/随机，越低越保守/确定。留空则使用默认值 0.85。</p>
+                    <div className="flex items-center gap-3">
+                        <input
+                            type="range"
+                            min="0"
+                            max="2.0"
+                            step="0.05"
+                            value={tempTemperature || '0.85'}
+                            onChange={e => setTempTemperature(e.target.value)}
+                            className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary"
+                        />
+                        <span className="text-sm font-mono text-slate-600 w-10 text-right">{tempTemperature || '0.85'}</span>
+                        {tempTemperature && (
+                            <button
+                                onClick={() => setTempTemperature('')}
+                                className="text-[10px] text-slate-400 hover:text-slate-600 underline shrink-0"
+                            >
+                                重置
+                            </button>
+                        )}
+                    </div>
                 </section>
 
                 {/* Writing Style */}

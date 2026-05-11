@@ -144,6 +144,9 @@ interface DateSessionProps {
     writingStyle?: string;
     onChangeWordCount: (count: number | undefined) => void;
     onChangeWritingStyle: (style: string | undefined) => void;
+    // Temperature
+    temperature?: number;
+    onChangeTemperature: (temp: number | undefined) => void;
     // Translation
     translationEnabled?: boolean;
     translateSourceLang?: string;
@@ -182,6 +185,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     writingStyle,
     onChangeWordCount,
     onChangeWritingStyle,
+    temperature,
+    onChangeTemperature,
     translationEnabled,
     translateSourceLang,
     translateTargetLang,
@@ -761,6 +766,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                 writingStyle={writingStyle}
                 onChangeWordCount={onChangeWordCount}
                 onChangeWritingStyle={onChangeWritingStyle}
+                temperature={temperature}
+                onChangeTemperature={onChangeTemperature}
                 translationEnabled={translationEnabled}
                 translateSourceLang={translateSourceLang}
                 translateTargetLang={translateTargetLang}

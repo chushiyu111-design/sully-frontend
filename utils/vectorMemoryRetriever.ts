@@ -29,6 +29,7 @@ import { DB } from './db';
 import { parseDateExpression } from './parseDateExpression';
 import { extractHormoneSnapshot,hormoneResonance as computeHormoneResonance } from './hormoneDynamics';
 import { tryBackendRetrieval } from './backendClient';
+import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 
 
 
@@ -62,11 +63,17 @@ function detectTemporalIntent(query: string): TemporalIntent {
 /**
  * Rule-based fallback: strip RP actions, keep only user messages.
  */
-function buildFallbackQuery(contextMsgs: Message[]): string {
+function buildFallbackQuery(contextMsgs: Message[], charName: string, userName: string): string {
     return contextMsgs
         .filter(m => m.role === 'user')
         .slice(-3)
-        .map(m => stripRPActions(m.content))
+        .map(m => stripRPActions(formatMessageForContext(m, {
+            surface: 'retrieval',
+            charName,
+            userName,
+            compact: true,
+            maxContentChars: 300,
+        }) || m.content))
         .join('\n')
         .slice(0, 500);
 }
@@ -201,15 +208,27 @@ export const VectorMemoryRetriever = {
         currentHormoneState?: InternalState,  // 当前激素状态（用于状态依存性检索）
     ): Promise<string | null> {
         try {
+            const contextMsgs = currentMsgs
+                .filter(m => (m.role === 'user' || m.role === 'assistant') && shouldIncludeMessageInContext(m))
+                .slice(-5);
+
             // ========== Backend-First Retrieval ==========
             // Try the backend API (includes graph diffusion, rerank, full pipeline).
             // Falls back to local pipeline if backend is unavailable or returns null.
             try {
                 const hormoneSnapshot = currentHormoneState ? extractHormoneSnapshot(currentHormoneState) : undefined;
-                const simpleMsgs = currentMsgs
-                    .filter(m => (m.role === 'user' || m.role === 'assistant') && (m.type === 'text' || m.type === 'call_log'))
-                    .slice(-5)
-                    .map(m => ({ role: m.role, content: m.content, type: m.type }));
+                const simpleMsgs = contextMsgs
+                    .map(m => ({
+                        role: m.role,
+                        content: formatMessageForContext(m, {
+                            surface: 'retrieval',
+                            charName,
+                            userName,
+                            compact: true,
+                            maxContentChars: 300,
+                        }) || m.content,
+                        type: 'text',
+                    }));
                 const { fallback, memories } = await tryBackendRetrieval(charId, charName, userName, simpleMsgs, hormoneSnapshot);
                 if (!fallback) {
                     // Backend successfully handled the request (even if it found 0 memories)
@@ -225,20 +244,24 @@ export const VectorMemoryRetriever = {
             }
 
             // ========== Local Pipeline (Fallback) ==========
-            // Extract recent conversation context
-            const contextMsgs = currentMsgs
-                .filter(m => (m.role === 'user' || m.role === 'assistant') && (m.type === 'text' || m.type === 'call_log'))
-                .slice(-5);
-
             if (contextMsgs.filter(m => m.role === 'user').length === 0) return null;
 
             // ====== Stage 0: Query Building (rule-based) ======
-            const queryText = buildFallbackQuery(contextMsgs);
+            const queryText = buildFallbackQuery(contextMsgs, charName, userName);
             console.log('🧠 [VectorRetriever] Query:', queryText.slice(0, 50) + '...');
             if (!queryText.trim()) return null;
 
             // Detect temporal intent from the last user message
-            const lastUserMsg = contextMsgs.filter(m => m.role === 'user').pop()?.content || '';
+            const lastUser = contextMsgs.filter(m => m.role === 'user').pop();
+            const lastUserMsg = lastUser
+                ? (formatMessageForContext(lastUser, {
+                    surface: 'retrieval',
+                    charName,
+                    userName,
+                    compact: true,
+                    maxContentChars: 300,
+                }) || lastUser.content)
+                : '';
             const temporalIntent = detectTemporalIntent(lastUserMsg);
             if (temporalIntent) console.log(`🧠 [VectorRetriever] Temporal intent: "${temporalIntent.type}"${temporalIntent.type === 'absolute' ? ` (${new Date(temporalIntent.start).toLocaleDateString()} ~ ${new Date(temporalIntent.end).toLocaleDateString()})` : ''}`);
 

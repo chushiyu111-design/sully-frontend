@@ -10,11 +10,12 @@ import { buildCharacterAiHot } from './aihotContext';
 import { VectorMemoryRetriever } from './vectorMemoryRetriever';
 import { buildTemporalContext } from './temporalContext';
 import { buildCurrentLifeAnchorForCharacter,formatCurrentLifeAnchorForPrompt } from './lifeAnchor';
+import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import type { PlaybackLyricSnapshot } from './playbackLyricsRuntime';
 
 const buildDateContextBridgePrompt = (messages: Message[], char: CharacterProfile, userProfile: UserProfile): string => {
     const bridges = messages
-        .filter(m => m.metadata?.source === 'date' && m.metadata?.hiddenFromUser && m.metadata?.isDateContextBridge)
+        .filter(m => (m.metadata?.source === 'date' || m.metadata?.source === 'theater') && m.metadata?.hiddenFromUser && m.metadata?.isDateContextBridge)
         .sort((a, b) => a.timestamp - b.timestamp)
         .slice(-3);
 
@@ -22,17 +23,18 @@ const buildDateContextBridgePrompt = (messages: Message[], char: CharacterProfil
 
     const blocks = bridges.map((m, index) => {
         const typeLabel = m.metadata?.bridgeType === 'raw' ? '原始记录' : '总结';
-        return `### 线下见面${typeLabel} ${index + 1}
+        const sourceLabel = m.metadata?.source === 'theater' ? '约会' : '线下见面';
+        return `### ${sourceLabel}${typeLabel} ${index + 1}
 时间: ${ChatPrompts.formatDate(m.timestamp)}
 ${m.content}`;
     }).join('\n\n');
 
     return `
 ### 【线下见面记忆】
-以下内容是你（${char.name}）和${userProfile.name}之前线下见面发生过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
+以下内容是你（${char.name}）和${userProfile.name}之前线下见面/约会发生过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
 请把这些内容当作你真实经历过、自然记得的共同经历：可以在合适时机顺着提起，也可以被它影响语气和情绪。
 这些内容不是当前正在发生的现场动作，也不是当前聊天窗口里的新消息；现在的交流媒介已经切回线上文字聊天。
-不要说“我看到了总结/记录”，不要复述系统说明，不要继续使用见面模式的 [emotion] 格式。
+不要说"我看到了总结/记录"，不要复述系统说明，不要继续使用见面模式的 [emotion] 格式。
 
 ${blocks}
 `;
@@ -986,18 +988,9 @@ Step 5 — 最后检查
         // Filter Logic
         const effectiveHistory = messages
             .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-            .filter(m => !m.metadata?.hiddenFromUser || (m.type as string) === 'soul_reflection')
-            .filter(m => m.metadata?.source !== 'date');
-        // Exclude AI-generated voice messages (their text already appears in paired text bubbles).
-        // Keep user voice recordings — they are the ONLY representation of the user's speech.
-        const nonVoiceHistory = effectiveHistory.filter(m => {
-            if (m.type !== 'voice') return true;
-            // User recordings: keep (content = transcribed text, this is the primary message)
-            if (m.role === 'user' && m.metadata?.source === 'user-recording') return true;
-            // AI voice / read-aloud: filter out (paired text bubble carries the same content)
-            return false;
-        });
-        const historySlice = nonVoiceHistory.slice(-limit);
+            .filter(m => m.metadata?.source !== 'date')
+            .filter(m => shouldIncludeMessageInContext(m));
+        const historySlice = effectiveHistory.slice(-limit);
 
         let timeGapHint = "";
         if (historySlice.length >= 2) {
@@ -1008,86 +1001,29 @@ Step 5 — 最后检查
 
         return {
             apiMessages: historySlice.map((m, index) => {
-                let content: any = m.content;
-                const timeStr = `[${ChatPrompts.formatDate(m.timestamp)}]`;
-
-                if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
+                let content: any = formatMessageForContext(m, {
+                    surface: 'chat',
+                    charName: char.name,
+                    emojis,
+                    includeTimestamp: true,
+                    timestampFormatter: ChatPrompts.formatDate,
+                }) || '';
 
                 if (m.type === 'image') {
-                    let textPart = `${timeStr} [User sent an image]`;
+                    let textPart = content;
                     if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }
 
                 if (index === historySlice.length - 1 && m.role === 'user') {
                     // Inject temporal context (always) + legacy time gap hint
+                    // NOTE: lifeAnchor is already in system prompt (buildSystemPrompt).
+                    // Do NOT duplicate here — appending it to user messages caused AI to
+                    // treat internal metadata (sourceDetail/confidence) as user-sent content.
                     const temporalCtx = buildTemporalContext(historySlice, Date.now(), char.id);
-                    const lifeAnchorCtx = formatCurrentLifeAnchorForPrompt(
-                        buildCurrentLifeAnchorForCharacter(char, historySlice),
-                    );
-                    const contextSuffix = [lifeAnchorCtx, temporalCtx || timeGapHint].filter(Boolean).join('\n\n');
+                    const contextSuffix = temporalCtx || timeGapHint;
                     if (contextSuffix) content = `${content}\n\n${contextSuffix}`;
                 }
-
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
-                else if (m.type === 'transfer') {
-                    const amt = m.metadata?.amount || '?';
-                    const status = m.metadata?.status || 'pending';
-                    const isFromUser = m.role === 'user';
-                    const statusMap: Record<string, string> = isFromUser
-                        ? { pending: `用户给你转账 ¥${amt}，等待你收款`, accepted: `你已收取用户的 ¥${amt} 转账`, returned: `你已退还用户的 ¥${amt} 转账` }
-                        : { pending: `你给用户转账 ¥${amt}，等待用户收款`, accepted: `用户已收取你的 ¥${amt} 转账`, returned: `用户已退还你的 ¥${amt} 转账` };
-                    content = `${timeStr} [系统: ${statusMap[status] || statusMap.pending}]`;
-                }
-                else if (m.type === 'social_card') {
-                    const post = m.metadata?.post || {};
-                    const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
-                }
-                else if ((m.type as string) === 'xhs_card') {
-                    const note = m.metadata?.xhsNote || {};
-                    const sender = m.role === 'user' ? '用户' : '你';
-                    content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
-                }
-                else if ((m.type as string) === 'health_signal') {
-                    content = `${timeStr} ${m.content}`;
-                }
-                else if (m.type === 'emoji') {
-                    const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
-                    content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
-                }
-                else if ((m.type as string) === 'chat_forward') {
-                    try {
-                        const fwd = JSON.parse(m.content);
-                        const lines = (fwd.messages || []).map((fm: any) => {
-                            const sender = fm.role === 'user' ? (fwd.fromUserName || '用户') : (fwd.fromCharName || '角色');
-                            const text = fm.type === 'image' ? '[图片]' : fm.type === 'emoji' ? '[表情]' : (fm.content || '').slice(0, 200);
-                            return `  ${sender}: ${text}`;
-                        });
-                        content = `${timeStr} [用户转发了与 ${fwd.fromCharName || '另一个角色'} 的 ${fwd.count || lines.length} 条聊天记录]\n${lines.join('\n')}`;
-                    } catch {
-                        content = `${timeStr} [用户转发了一段聊天记录]`;
-                    }
-                }
-                else if ((m.type as string) === 'soul_reflection') {
-                    const charName = char.name;
-                    content = `${timeStr} [${charName}的回神 — 停下来审视自己]\n${m.content}\n[这段回神已经完成。从现在起自然地在言行中体现调整，但绝对不要在对话中提到"回神"、"反省"或这段思考过程本身。]`;
-                }
-                else if (m.type === 'voice' && m.role === 'user') {
-                    // User voice recording: show as voice message with transcribed text
-                    const sttStatus = m.metadata?.sttStatus;
-                    if (sttStatus === 'done' && m.content) {
-                        content = `${timeStr} [🎤用户语音] ${m.content}`;
-                    } else {
-                        content = `${timeStr} [🎤用户发送了一条语音消息（${m.metadata?.duration || '?'}秒）]`;
-                    }
-                }
-                else if (m.type === 'voice' && m.role === 'assistant') {
-                    // AI voice message: restore text content into context
-                    const voiceText = m.metadata?.sourceText || m.content;
-                    content = `${timeStr} [${char.name}发送了语音消息] ${voiceText}`;
-                }
-                else content = `${timeStr} ${content}`;
 
                 return { role: m.role, content };
             }),

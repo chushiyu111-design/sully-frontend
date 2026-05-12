@@ -9,6 +9,7 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../constants/archivePrompts';
+import { formatMessageForContext,shouldIncludeMessageInContext } from '../utils/messageContext';
 
 // 复用 Chat.tsx 的高颜值样式逻辑，但针对群聊微调
 
@@ -644,7 +645,21 @@ ${logText.substring(0, 10000)}
                 // Get private gap string
                 const privateGapInfo = await getPrivateTimeGap(member.id);
 
-                const recentPrivate = privateMsgs.slice(-10).map(m => `[${m.role === 'user' ? '用户' : '我'}]: ${m.content.substring(0, 50)}`).join('\n');
+                const recentPrivate = privateMsgs
+                    .filter(m => shouldIncludeMessageInContext(m))
+                    .slice(-10)
+                    .map(m => {
+                        const content = formatMessageForContext(m, {
+                            surface: 'secondaryModel',
+                            charName: member.name,
+                            userName: userProfile.name,
+                            emojis,
+                            compact: true,
+                            maxContentChars: 120,
+                        }) || m.content;
+                        return `[${m.role === 'user' ? '用户' : '我'}]: ${content}`;
+                    })
+                    .join('\n');
 
                 // Private-chat recency should override stale "long time no see"
                 // cues from the group thread when we build each member context.
@@ -662,12 +677,19 @@ ${recentPrivate || '(暂无私聊)'}
             }
 
             // 3. Group History (uses configurable context limit)
-            const recentGroupMsgs = currentMsgs.slice(-contextLimit).map(m => {
+            const recentGroupMsgs = currentMsgs.filter(m => shouldIncludeMessageInContext(m)).slice(-contextLimit).map(m => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
                 }
-                const content = m.type === 'image' ? '[图片]' : m.type === 'emoji' ? `[表情包: ${m.content}]` : m.type === 'transfer' ? `[发红包: ${m.metadata?.amount}]` : m.content;
+                const content = formatMessageForContext(m, {
+                    surface: 'secondaryModel',
+                    charName: name,
+                    userName: userProfile.name,
+                    emojis,
+                    compact: true,
+                    maxContentChars: 300,
+                }) || m.content;
                 return `${name}: ${content}`;
             }).join('\n');
 

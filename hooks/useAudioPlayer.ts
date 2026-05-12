@@ -42,7 +42,6 @@ let globalAudio: HTMLAudioElement | null = null;
 let audioEventsBound = false;
 let currentRequestId = 0;
 let pendingPlayPromise: Promise<void> | null = null;
-let audioPlaybackPrimed = false;
 let currentState: PlaybackState = { ...initialState };
 const listeners = new Set<Listener>();
 const SILENT_AUDIO_DATA_URI = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQAAAAAAAAAAaC9GQMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MYxAANCAKeeUAQBAA0oyq1HwfB8Hw+BAMfwfB8EAfD4EAgGP4Pg+D4Ph8CAfB8HwfB8CAIB8Hw+BAMfwfB8Hw+D4EAx/B8HwfB8Hw+D4EAx/+MYxA0AAADSAAAAALhj4fg+D4Pg+H4IB8PwfB8CAY/g+D4Pg+HwIB8HwfB8HwIBj+D4Pg+D4Ph8CAfB8HwfB8CAQD4fB8HwfB8';
@@ -140,48 +139,36 @@ function getAudio(): HTMLAudioElement | null {
     return globalAudio;
 }
 
-async function primeAudioPlayback(audio: HTMLAudioElement): Promise<void> {
-    if (audioPlaybackPrimed) return;
+function getAudioSource(audio: HTMLAudioElement): string {
+    return audio.currentSrc || audio.src || audio.getAttribute('src') || '';
+}
 
-    audioPlaybackPrimed = true;
+function isResumableAudioSource(audio: HTMLAudioElement): boolean {
+    const source = getAudioSource(audio);
+    if (!source || source === SILENT_AUDIO_DATA_URI) return false;
+    if (audio.error) return false;
+    return audio.networkState !== audio.NETWORK_NO_SOURCE;
+}
 
+function clearAudioSource(audio: HTMLAudioElement): void {
+    audio.removeAttribute('src');
     try {
-        const previousMuted = audio.muted;
-        const previousVolume = audio.volume;
-        const hadSrc = audio.hasAttribute('src');
-        const primedSrc = SILENT_AUDIO_DATA_URI;
-
-        audio.muted = true;
-        audio.volume = 0;
-
-        if (!hadSrc) {
-            audio.src = primedSrc;
-        }
-
-        const restore = () => {
-            audio.muted = previousMuted;
-            audio.volume = previousVolume;
-
-            if (!hadSrc) {
-                const currentSrc = audio.currentSrc || audio.getAttribute('src') || '';
-                if (currentSrc !== primedSrc) {
-                    return;
-                }
-
-                audio.pause();
-                audio.removeAttribute('src');
-                audio.load();
-            }
-        };
-
-        pendingPlayPromise = audio.play();
-        if (pendingPlayPromise) {
-            await pendingPlayPromise;
-        }
-        restore();
+        audio.load();
     } catch {
-        audioPlaybackPrimed = false;
-    } finally {
+        // Some browser implementations can throw while resetting a failed media element.
+    }
+}
+
+async function primeAudioPlayback(audio: HTMLAudioElement): Promise<void> {
+    try {
+        if (!audio.hasAttribute('src') || !audio.src) {
+            audio.src = SILENT_AUDIO_DATA_URI;
+            audio.muted = true;
+            pendingPlayPromise = audio.play();
+            await pendingPlayPromise;
+            pendingPlayPromise = null;
+        }
+    } catch {
         pendingPlayPromise = null;
     }
 }
@@ -198,6 +185,7 @@ function syncStateFromAudio(overrides: Partial<PlaybackState> = {}): void {
     const currentTime = Number.isFinite(audio.currentTime) ? audio.currentTime : (overrides.currentTime ?? currentState.currentTime);
     const safeDuration = duration > 0 ? duration : 0;
     const progress = safeDuration > 0 ? Math.min(100, (currentTime / safeDuration) * 100) : 0;
+    const isPlaying = overrides.isPlaying ?? (!audio.paused && !audio.ended);
 
     updateState((state) => ({
         ...state,
@@ -205,7 +193,7 @@ function syncStateFromAudio(overrides: Partial<PlaybackState> = {}): void {
         currentTime,
         duration: safeDuration,
         progress,
-        isPlaying: !audio.paused && !audio.ended,
+        isPlaying,
         lastActivityAt,
     }));
 }
@@ -301,6 +289,8 @@ async function playSongInternal(song: MusicPlayable, playlist?: MusicPlayable[])
                 }
             }
 
+            clearAudioSource(audio);
+            audio.muted = false;
             syncStateFromAudio({ isPlaying: false });
         }
     }
@@ -340,12 +330,37 @@ function stopInternal(): void {
 
 async function resumeInternal(): Promise<void> {
     const audio = getAudio();
-    if (!audio?.src) return;
+    if (!audio) return;
+
+    bindAudioEvents();
+
+    const replayCurrentSong = async () => {
+        const currentSong = currentState.currentSong;
+        if (!currentSong) {
+            syncStateFromAudio({ isPlaying: false });
+            return;
+        }
+
+        const playlist = currentState.playlist.length > 0 ? currentState.playlist : [currentSong];
+        await playSongInternal(currentSong, playlist);
+    };
+
+    if (!isResumableAudioSource(audio)) {
+        await replayCurrentSong();
+        return;
+    }
 
     try {
         await safelyPlay(audio);
         syncStateFromAudio({ isPlaying: true });
     } catch (error) {
+        clearAudioSource(audio);
+        syncStateFromAudio({ isPlaying: false });
+        if (currentState.currentSong) {
+            await replayCurrentSong();
+            return;
+        }
+
         console.error('[AudioPlayer] Resume error:', error);
     }
 }
@@ -421,6 +436,7 @@ function bindAudioEvents(): void {
 
     const sync = () => syncStateFromAudio();
     const handleEnded = () => { void playNextInternal(); };
+    const handleError = () => syncStateFromAudio({ isPlaying: false });
 
     audio.addEventListener('timeupdate', sync);
     audio.addEventListener('loadedmetadata', sync);
@@ -430,6 +446,7 @@ function bindAudioEvents(): void {
     audio.addEventListener('seeking', sync);
     audio.addEventListener('seeked', sync);
     audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
     audioEventsBound = true;
 }
 

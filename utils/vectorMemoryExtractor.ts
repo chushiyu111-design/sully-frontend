@@ -20,6 +20,7 @@ import {
     markVectorMemoryAsSynced,
 } from './vectorMemorySyncState';
 import { buildExtractionPrompt, formatMessages, callLLM } from './engines/extractionLlm';
+import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import {
     hasExtractionLock,
     acquireExtractionLock,
@@ -105,6 +106,7 @@ export const VectorMemoryExtractor = {
         const allNewMsgs = msgsAfterExtract.filter(m =>
             (m.role === 'user' || m.role === 'assistant') &&
             !EXCLUDED_TYPES.has(m.type) &&
+            shouldIncludeMessageInContext(m) &&
             m.metadata?.source !== 'theater' &&
             m.metadata?.source !== 'date'
         );
@@ -147,15 +149,12 @@ export const VectorMemoryExtractor = {
         // ========== Backend-First Extraction ==========
         try {
             const backendMsgs = newMsgs.map(m => {
-                // Sanitize non-text content to avoid sending raw base64/URLs to backend
-                let content = m.content;
-                if (m.type === 'image') content = '[发送了一张图片]';
-                else if (m.type === 'emoji') content = '[发送了表情包]';
-                else if (m.type === 'interaction') content = m.role === 'user' ? '[戳了一下]' : '[被戳了一下]';
-                else if (m.type === 'transfer') {
-                    const amt = m.metadata?.amount || '?';
-                    content = `[转账 ¥${amt}]`;
-                }
+                const content = formatMessageForContext(m, {
+                    surface: 'memoryExtraction',
+                    charName: charSnapshot.name,
+                    compact: true,
+                    maxContentChars: 300,
+                }) || m.content;
                 return {
                     role: m.role, content, type: m.type,
                     timestamp: m.timestamp || Date.now(),
@@ -315,7 +314,7 @@ export const VectorMemoryExtractor = {
         try {
             const EXCLUDED_TYPES = new Set(['system', 'moments']);
             const filteredMsgs = (await DB.getMessagesByCharId(charId))
-                .filter(m => (m.role === 'user' || m.role === 'assistant') && !EXCLUDED_TYPES.has(m.type) && m.metadata?.source !== 'theater' && m.metadata?.source !== 'date');
+                .filter(m => (m.role === 'user' || m.role === 'assistant') && !EXCLUDED_TYPES.has(m.type) && shouldIncludeMessageInContext(m) && m.metadata?.source !== 'theater' && m.metadata?.source !== 'date');
             const boundedStartIdx = Math.max(0, startIdx);
             const boundedEndIdx = Math.min(endIdx, filteredMsgs.length - 1);
 

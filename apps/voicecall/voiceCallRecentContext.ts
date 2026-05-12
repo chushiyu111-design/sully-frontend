@@ -1,4 +1,5 @@
 import type { Message } from '../../types';
+import { formatMessageForContext,shouldIncludeMessageInContext } from '../../utils/messageContext';
 
 export interface VoiceCallRecentContextMessage {
     id: number;
@@ -11,51 +12,16 @@ export interface VoiceCallRecentContextMessage {
 
 const RECENT_CONTEXT_CHAR_LIMIT = 240;
 
-function compactText(text: string): string {
-    return text.replace(/\s+/g, ' ').trim();
-}
-
 function clipText(text: string, limit: number = RECENT_CONTEXT_CHAR_LIMIT): string {
     return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 function serializeRecentContextMessage(message: Message): string | null {
-    const trimmed = compactText(message.content || '');
-
-    switch (message.type) {
-        case 'text':
-            return trimmed || null;
-        case 'voice':
-            if (message.role === 'assistant') return null;
-            return trimmed || '[发送了一条语音消息]';
-        case 'image':
-            return '[发送了一张图片]';
-        case 'emoji':
-            return '[发送了一个表情]';
-        case 'interaction':
-            return '[戳了你一下]';
-        case 'transfer': {
-            const amount = message.metadata?.amount;
-            const status = message.metadata?.status;
-            const amountText = amount ? ` ¥${amount}` : '';
-            const statusText = status ? `（${status}）` : '';
-            return `[发起了一笔转账${amountText}${statusText}]`;
-        }
-        case 'social_card': {
-            const title = compactText(message.metadata?.post?.title || '');
-            return title ? `[分享了一个 Spark 笔记] ${clipText(title)}` : '[分享了一个 Spark 笔记]';
-        }
-        case 'xhs_card': {
-            const title = compactText(message.metadata?.xhsNote?.title || '');
-            return title ? `[分享了一篇小红书笔记] ${clipText(title)}` : '[分享了一篇小红书笔记]';
-        }
-        case 'chat_forward':
-            return '[转发了一段聊天记录]';
-        case 'moments':
-            return trimmed ? `[分享了朋友圈] ${clipText(trimmed)}` : '[分享了朋友圈]';
-        default:
-            return trimmed || null;
-    }
+    return formatMessageForContext(message, {
+        surface: 'voiceCall',
+        compact: true,
+        maxContentChars: RECENT_CONTEXT_CHAR_LIMIT,
+    });
 }
 
 export function buildVoiceCallRecentContextMessages(
@@ -68,7 +34,7 @@ export function buildVoiceCallRecentContextMessages(
     const filtered = messages.filter((message) => {
         if (message.role !== 'user' && message.role !== 'assistant') return false;
         if (hideBeforeMessageId && message.id < hideBeforeMessageId) return false;
-        return true;
+        return shouldIncludeMessageInContext(message);
     });
 
     return filtered

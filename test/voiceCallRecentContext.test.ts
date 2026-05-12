@@ -18,10 +18,10 @@ function createMessage(overrides: Partial<Message>): Message {
 }
 
 describe('voice call recent context', () => {
-    it('serializes recent chat messages for pre-call context without duplicating assistant voice', () => {
+    it('serializes recent chat messages for pre-call context including assistant TTS voice', () => {
         const messages: Message[] = [
             createMessage({ id: 1, role: 'user', type: 'text', content: '   早上好   ' }),
-            createMessage({ id: 2, role: 'assistant', type: 'voice', content: '这条是朗读重复，不该保留' }),
+            createMessage({ id: 2, role: 'assistant', type: 'voice', content: '', metadata: { sourceText: '这条是 TTS 语音，也要保留' } }),
             createMessage({ id: 3, role: 'user', type: 'voice', content: '我刚刚说过了', metadata: { source: 'user-recording' } }),
             createMessage({ id: 4, role: 'assistant', type: 'image', content: 'https://example.com/a.png' }),
             createMessage({ id: 5, role: 'assistant', type: 'text', content: '那我们一会儿电话里接着说。' }),
@@ -39,11 +39,19 @@ describe('voice call recent context', () => {
                 timestamp: 1,
             },
             {
+                id: 2,
+                charId: 'char-1',
+                role: 'assistant',
+                type: 'text',
+                content: '[语音消息] 这条是 TTS 语音，也要保留',
+                timestamp: 1,
+            },
+            {
                 id: 3,
                 charId: 'char-1',
                 role: 'user',
                 type: 'text',
-                content: '我刚刚说过了',
+                content: '[语音消息] 我刚刚说过了',
                 timestamp: 1,
             },
             {
@@ -66,7 +74,8 @@ describe('voice call recent context', () => {
 
         expect(buildVoiceCallRecentContextTranscript(recentContext, '糯米', 'Char')).toBe([
             '糯米: 早上好',
-            '糯米: 我刚刚说过了',
+            'Char: [语音消息] 这条是 TTS 语音，也要保留',
+            '糯米: [语音消息] 我刚刚说过了',
             'Char: [发送了一张图片]',
             'Char: 那我们一会儿电话里接着说。',
         ].join('\n'));

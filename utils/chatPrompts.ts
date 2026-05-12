@@ -1082,6 +1082,11 @@ Step 5 — 最后检查
                         content = `${timeStr} [🎤用户发送了一条语音消息（${m.metadata?.duration || '?'}秒）]`;
                     }
                 }
+                else if (m.type === 'voice' && m.role === 'assistant') {
+                    // AI voice message: restore text content into context
+                    const voiceText = m.metadata?.sourceText || m.content;
+                    content = `${timeStr} [${char.name}发送了语音消息] ${voiceText}`;
+                }
                 else content = `${timeStr} ${content}`;
 
                 return { role: m.role, content };

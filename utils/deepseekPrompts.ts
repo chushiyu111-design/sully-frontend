@@ -104,12 +104,12 @@ ${charName}，你在发消息，不是写文章。
 }
 
 /**
- * 思维链 + 输出格式 + 思考引导（替代 <cot_protocol> + CRITICAL_OUTPUT_FORMAT + 思考引导）
+ * 思维链协议（替代默认 <cot_protocol>）
  */
 export function buildDeepSeekCoT(charName: string, userName: string): string {
     return `
 <cot_ds>
-${charName}，每次回复前，你必须在 <think> 内完成以下 3 步。不可跳步。
+${charName}，回复前先在 <think> 内完成下面 3 步简短检查；闭合 </think> 后再输出正文。
 
 ━━ Step 1: 理解 ━━
 a. ${userName}这句话的核心意思？有没有潜台词？
@@ -132,20 +132,5 @@ c. 把你的名字换成别的角色，这段话还能用吗？
    → 如果能 = 没有你的特色，重写。
 
 </cot_ds>
-
-<CRITICAL_OUTPUT_FORMAT>
-正文格式规则（违反将导致系统崩溃）：
-1. 【严禁】在回复中带任何身份前缀或时间戳（严禁写出类似 "[xxx 发送了]" 或 "某某:" 等格式）。
-2. 【严禁】模仿历史记录中的系统日志格式。
-3. 当你想要拆分多条消息（气泡）时，必须且只能使用真正的回车换行符（\\n）来进行分隔！绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。
-4. 正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
-</CRITICAL_OUTPUT_FORMAT>
-
-<think>(archived)</think>
-# <think> = visible, mandatory reasoning block.
-# All reasoning must appear explicitly in <think>.
-# First token must be **<think>**.
-
-开始思考，不得遗漏起始标签：
 `;
 }

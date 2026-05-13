@@ -8,7 +8,7 @@ import {
   getBackendUrl,
 } from './backendClient';
 import { safeTimeoutSignal } from './safeTimeout';
-import type { AgentConfig } from './autonomousAgent';
+import type { AgentConfig } from './agentTypes';
 
 type AgentApiConfig = {
     baseUrl: string;

@@ -36,6 +36,7 @@ export enum AppID {
     Theater = 'theater', // 约会
     Trajectory = 'trajectory', // 人生轨迹
     Crosstime = 'crosstime',   // 跨时空对话
+    LoveShow = 'love_show',    // 恋综
 }
 
 export interface SystemLog {

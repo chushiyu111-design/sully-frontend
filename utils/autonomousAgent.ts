@@ -16,6 +16,7 @@ import { pullMemories } from './backendClient';
 import { buildCoreMemoryDigest,buildMountedWorldbooksDigest } from './agentContextSnapshot';
 import { getPrimaryApiConfig as getRuntimePrimaryApiConfig,getRealtimeConfig } from './runtimeConfig';
 import { buildCurrentLifeAnchorForCharacter } from './lifeAnchor';
+import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import {
     readJsonStorage,
     safeLocalStorageGet,
@@ -51,18 +52,9 @@ export interface LLMDecision {
     content?: string;
 }
 
-export interface AgentConfig {
-    enabled: boolean;
-    minIntervalMin: number;
-    maxIntervalMin: number;
-    cooldownHours: number;
-    maxDailyActions: number;
-    maxConsecutiveIgnored: number;
-    baseProb: number;
-    notificationsEnabled: boolean;
-    debugMode: boolean;
-    debugIntervalSec: number;
-}
+// AgentConfig — canonical definition in agentTypes.ts; re-exported for backward compatibility
+import type { AgentConfig } from './agentTypes';
+export type { AgentConfig } from './agentTypes';
 
 type ContextSnapshot = {
     charId: string;
@@ -367,8 +359,9 @@ async function buildContextSnapshot(
     }
 
     let emojiNames: string[] = [];
+    let emojis: Array<{ name: string; url: string }> = [];
     try {
-        const emojis = await DB.getEmojis();
+        emojis = await DB.getEmojis();
         emojiNames = emojis.map(emoji => emoji.name).slice(0, 30);
     } catch {
         // Ignore emoji lookup failure.
@@ -402,11 +395,20 @@ async function buildContextSnapshot(
         isFictionalCity,
         cityReferenceReal,
         userName,
-        recentMessages: recentMessages.map(message => ({
-            role: message.role,
-            content: message.content.slice(0, 500),
-            timestamp: message.timestamp,
-        })),
+        recentMessages: recentMessages
+            .filter(message => shouldIncludeMessageInContext(message))
+            .map(message => ({
+                role: message.role,
+                content: (formatMessageForContext(message, {
+                    surface: 'agent',
+                    charName: char.name,
+                    userName,
+                    emojis,
+                    compact: true,
+                    maxContentChars: 500,
+                }) || message.content).slice(0, 500),
+                timestamp: message.timestamp,
+            })),
         moodState,
         lastUserMsgAt,
         lastAIMsgAt,

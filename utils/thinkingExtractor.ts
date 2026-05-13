@@ -13,6 +13,12 @@ export interface ExtractionResult {
     thinking?: string;
 }
 
+export const THINKING_CONTENT_FALLBACK_REPLY = '嗯...刚刚卡了一下';
+
+export function safeThinkingFallbackReply(_thinkingContent?: string): string {
+    return THINKING_CONTENT_FALLBACK_REPLY;
+}
+
 /**
  * 从 LLM 原始输出中提取思考链并清洗内容。
  *
@@ -58,7 +64,7 @@ export function extractThinking(raw: string): ExtractionResult {
     content = stripCoTResidual(content);
 
     // 安全回退
-    if (!content) {
+    if (!content && !thinking) {
         content = raw.replace(/<\/?think(?:ing)?>/gi, '').trim();
     }
 
@@ -154,10 +160,7 @@ export function stripCoTResidual(content: string): string {
     const result = cleanLines.join('\n').trim();
     
     // If stripping removed everything, return original (safety net)
-    if (!result) {
-        console.warn('🧹 [CoT Strip] Stripping removed all content, returning original');
-        return content;
-    }
+    if (!result) return '';
 
     console.log(`🧹 [CoT Strip] Stripped CoT residual: ${content.length} → ${result.length} chars`);
     return result;

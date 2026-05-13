@@ -1,5 +1,5 @@
 import React from 'react';
-import { TransferCardProps } from '../ThemeRegistry';
+import type { TransferCardProps } from '../pluginTypes';
 
 const WeChatTransferCard: React.FC<TransferCardProps> = ({ message: m, isUser, charName, selectionMode, onTransferAction }) => {
     const status = (m.metadata?.status as string) || 'pending';

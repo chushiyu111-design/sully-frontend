@@ -74,6 +74,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Theater: ({ className }) => <Sparkle className={className} weight="fill" />,
   Trajectory: ({ className }) => <Path className={className} weight="bold" />,
   Crosstime: ({ className }) => <GitBranch className={className} weight="bold" />,
+  LoveShow: ({ className }) => <Heart className={className} weight="fill" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -93,6 +94,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Theater, name: '约会', icon: 'Theater', color: 'rose' },
   { id: AppID.Trajectory, name: '轨迹', icon: 'Trajectory', color: 'indigo' },
   { id: AppID.Crosstime, name: '跨时空对话', icon: 'Crosstime', color: 'violet' },
+  { id: AppID.LoveShow, name: '恋综', icon: 'LoveShow', color: 'rose' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },

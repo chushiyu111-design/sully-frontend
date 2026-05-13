@@ -12,6 +12,7 @@ import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
+import { hasCompleteApiConfig } from '../../utils/apiValidation';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
@@ -74,8 +75,7 @@ const isTheaterRawMessage = (m: Message, branchId?: string) =>
 const isTheaterSummaryMessage = (m: Message) =>
     m.metadata?.source === 'theater' && m.metadata?.isSummary === true;
 
-const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } =>
-    !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim();
+// hasCompleteApiConfig — imported from utils/apiValidation.ts
 
 /**
  * Get messages visible in the current timeline.

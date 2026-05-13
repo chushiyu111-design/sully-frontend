@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TheaterLocation, TimeSlot, DirectorEvent } from '../types/theater';
 import {
+    buildBgmCacheKey,
     generateTheaterBgm,
     cleanupBgmBlobUrls,
     type BgmStatus,
@@ -172,7 +173,6 @@ export function useTheaterBgm({
         try {
             // If force regenerating, clear cache for this scene
             if (forceRegenerate) {
-                const { buildBgmCacheKey } = await import('../utils/theaterBgm');
                 const cacheKey = buildBgmCacheKey(location.id, timeSlot);
                 try { localStorage.removeItem(cacheKey); } catch { /* */ }
             }

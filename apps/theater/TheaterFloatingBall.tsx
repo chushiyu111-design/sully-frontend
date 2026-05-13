@@ -7,6 +7,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, AnimatePresence, PanInfo } from 'framer-motion';
+import type { BgmStatus } from '../../utils/theaterBgm';
 
 const DEFAULT_BALL_ICON = '/theater-ball-default.png';
 const ICON_STORAGE_PREFIX = 'theater_ball_icon_';
@@ -37,9 +38,6 @@ const resizeImageToDataUrl = (file: File): Promise<string> => new Promise((resol
     reader.onerror = reject;
     reader.readAsDataURL(file);
 });
-import type { BgmStatus } from '../../utils/theaterBgm';
-
-
 interface TheaterFloatingBallProps {
     charId: string;
     onOpenSettings: () => void;

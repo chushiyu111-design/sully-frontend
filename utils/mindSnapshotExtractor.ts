@@ -18,6 +18,7 @@ import { DB } from './db';
 import { RealtimeContextManager } from './realtimeContext';
 import { composeCustomStatusTemplateHtml } from './statusTemplateComposer';
 import { parseStatusBlock } from './statusBlockParser';
+import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import {
   RawSenseOutput,
   SenseDelta,
@@ -83,14 +84,22 @@ function buildRecentContext(msgs: Message[], charName: string, limit: number = 3
     let userCount = 0, assistantCount = 0;
 
     for (const m of reversed) {
-        if (m.type === 'emoji' || m.type === 'interaction' || m.type === 'transfer') continue;
         if (m.role === 'system') continue;
+        if (!shouldIncludeMessageInContext(m)) continue;
+
+        const serialized = formatMessageForContext(m, {
+            surface: 'secondaryModel',
+            charName,
+            compact: true,
+            maxContentChars: 300,
+        });
+        if (!serialized) continue;
 
         if (m.role === 'user' && userCount < limit) {
-            lines.unshift(`[用户说]: ${m.content.slice(0, 300)}`);
+            lines.unshift(`[用户说]: ${serialized}`);
             userCount++;
         } else if (m.role === 'assistant' && assistantCount < limit) {
-            lines.unshift(`[${charName}说]: ${m.content.slice(0, 300)}`);
+            lines.unshift(`[${charName}说]: ${serialized}`);
             assistantCount++;
         }
         if (userCount >= limit && assistantCount >= limit) break;

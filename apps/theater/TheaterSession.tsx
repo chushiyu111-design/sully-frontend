@@ -195,6 +195,67 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         [ttsConfig, char?.id, char?.ttsVoiceId],
     );
 
+    // ── BGM ──
+    const bgm = useTheaterBgm({
+        location,
+        timeSlot,
+        event: currentEvent,
+        apiKey: ttsConfig.apiKey || '',
+        groupId: ttsConfig.groupId,
+    });
+
+    // ── VN State ──
+    const pages = useMemo(() => buildPages(messages), [messages]);
+    const [pageIndex, setPageIndex] = useState(0);
+    const [showInput, setShowInput] = useState(false);
+    const [autoMode, setAutoMode] = useState(false);
+    const [showLog, setShowLog] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
+    const [hideDialog, setHideDialog] = useState(false);
+    const [input, setInput] = useState('');
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
+    const prevPagesLenRef = useRef(0);
+    /** Track whether the component mounted with messages already present (i.e. resumed history) */
+    const hadInitialMessagesRef = useRef(messages.length > 0);
+
+    // ── Background Crossfade ──
+    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        resolveTheaterBg(location.bgImage).then(url => {
+            if (!cancelled) setResolvedBg(url);
+        });
+        return () => { cancelled = true; };
+    }, [location.bgImage]);
+
+    const currentBg = resolvedBg
+        ? `url(${resolvedBg}) center/cover`
+        : location.bgGradient || '#111';
+    const prevBgRef = useRef(currentBg);
+    const [bgLayers, setBgLayers] = useState<{ front: string; back: string; transitioning: boolean }>({
+        front: currentBg, back: '', transitioning: false,
+    });
+
+    useLayoutEffect(() => {
+        if (currentBg !== prevBgRef.current) {
+            // Start crossfade: old bg goes to back layer (fading out), new bg on front (fading in)
+            setBgLayers({ front: currentBg, back: prevBgRef.current, transitioning: true });
+            prevBgRef.current = currentBg;
+            const t = setTimeout(() => setBgLayers(prev => ({ ...prev, back: '', transitioning: false })), 700);
+            return () => clearTimeout(t);
+        }
+    }, [currentBg]);
+    const hasInitializedRef = useRef(false);
+    const timeLabel = TIME_SLOT_LABELS[timeSlot];
+
+    const currentPage = pages[pageIndex] || null;
+    const isLastPage = pageIndex >= pages.length - 1;
+    const isLoading = isAiLoading || isDirectorLoading;
+
+    // ── Typewriter ──
+    const { displayed, done, skipToEnd } = useTypewriter(currentPage?.text || '', 30);
+
     // ── Theater TTS Playback ──
     const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
     const ttsUrlRef = useRef<string | null>(null);
@@ -238,68 +299,6 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         skipToEnd();
         audio.play().catch(() => stopTtsAudio());
     }, [stopTtsAudio, skipToEnd]);
-
-    // ── BGM ──
-    const bgm = useTheaterBgm({
-        location,
-        timeSlot,
-        event: currentEvent,
-        apiKey: ttsConfig.apiKey || '',
-        groupId: ttsConfig.groupId,
-    });
-
-    // ── VN State ──
-    const pages = useMemo(() => buildPages(messages), [messages]);
-    const [pageIndex, setPageIndex] = useState(0);
-    const [showInput, setShowInput] = useState(false);
-    const [autoMode, setAutoMode] = useState(false);
-    const [showLog, setShowLog] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
-    const [hideDialog, setHideDialog] = useState(false);
-    const [input, setInput] = useState('');
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [eventCollapsed, setEventCollapsed] = useState(false);
-    const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
-    const prevPagesLenRef = useRef(0);
-    /** Track whether the component mounted with messages already present (i.e. resumed history) */
-    const hadInitialMessagesRef = useRef(messages.length > 0);
-
-    // ── Background Crossfade ──
-    const [resolvedBg, setResolvedBg] = useState<string | null>(null);
-    useEffect(() => {
-        let cancelled = false;
-        resolveTheaterBg(location.bgImage).then(url => {
-            if (!cancelled) setResolvedBg(url);
-        });
-        return () => { cancelled = true; };
-    }, [location.bgImage]);
-
-    const currentBg = resolvedBg
-        ? `url(${resolvedBg}) center/cover`
-        : location.bgGradient || '#111';
-    const prevBgRef = useRef(currentBg);
-    const [bgLayers, setBgLayers] = useState<{ front: string; back: string; transitioning: boolean }>({
-        front: currentBg, back: '', transitioning: false,
-    });
-
-    useLayoutEffect(() => {
-        if (currentBg !== prevBgRef.current) {
-            // Start crossfade: old bg goes to back layer (fading out), new bg on front (fading in)
-            setBgLayers({ front: currentBg, back: prevBgRef.current, transitioning: true });
-            prevBgRef.current = currentBg;
-            const t = setTimeout(() => setBgLayers(prev => ({ ...prev, back: '', transitioning: false })), 700);
-            return () => clearTimeout(t);
-        }
-    }, [currentBg]);
-    const hasInitializedRef = useRef(false);
-    const timeLabel = TIME_SLOT_LABELS[timeSlot];
-
-    const currentPage = pages[pageIndex] || null;
-    const isLastPage = pageIndex >= pages.length - 1;
-    const isLoading = isAiLoading || isDirectorLoading;
-
-    // ── Typewriter ──
-    const { displayed, done, skipToEnd } = useTypewriter(currentPage?.text || '', 30);
 
     // ── Page navigation: distinguish initial load vs new content ──
     useEffect(() => {
@@ -360,18 +359,6 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         if (found && activeSprites[found]) return activeSprites[found];
         return activeSprites['normal'] || Object.values(activeSprites)[0] || null;
     }, [currentEmotion, activeSprites, hasSprites, dateEmotionKeys]);
-
-    // ── Event overlay auto-collapse ──
-    useEffect(() => {
-        if (currentEvent && !eventCollapsed) {
-            const t = setTimeout(() => setEventCollapsed(true), 5000);
-            return () => clearTimeout(t);
-        }
-    }, [currentEvent, eventCollapsed]);
-
-    useEffect(() => {
-        if (currentEvent) setEventCollapsed(false);
-    }, [currentEvent?.event]);
 
     // ── Back handler ──
     useEffect(() => {
@@ -716,34 +703,6 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     </div>
                 </div>
             </div>
-
-            {/* Director Event Overlay */}
-            {currentEvent && (
-                <div
-                    className={`theater-event-overlay ${eventCollapsed ? 'collapsed' : ''}`}
-                    onClick={() => setEventCollapsed(c => !c)}
-                    style={{ top: 100 }}
-                >
-                    {!eventCollapsed && (
-                        <>
-                            <span className={`theater-event-type-badge ${currentEvent.sceneType}`}>
-                                {EVENT_TYPE_ZH[currentEvent.sceneType] || currentEvent.sceneType}
-                            </span>
-                            <p className="theater-event-text">{currentEvent.atmosphere}</p>
-                            {currentEvent.event && (
-                                <p className="theater-event-text" style={{ marginTop: 8, fontWeight: 600, color: 'rgba(255,255,255,0.95)' }}>
-                                    {currentEvent.event}
-                                </p>
-                            )}
-                        </>
-                    )}
-                    {eventCollapsed && (
-                        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
-                            {EVENT_TYPE_ZH[currentEvent.sceneType]} · 点击展开
-                        </span>
-                    )}
-                </div>
-            )}
 
             {/* ════════ VN Dialog Box — borderless ════════ */}
             {!showInput && (

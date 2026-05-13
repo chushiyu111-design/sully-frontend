@@ -16,6 +16,7 @@ import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
 import { stripTranslationTags } from '../utils/chatParser';
 import { getInitialTimeSlot } from '../utils/theaterDirector';
+import { hasCompleteApiConfig } from '../utils/apiValidation';
 import { RealtimeContextManager } from '../utils/realtimeContext';
 
 
@@ -80,9 +81,7 @@ const buildDateSummaryMemoryPrompt = (msgs: Message[]) => {
     return `\n\n### 【本次见面的已总结上下文】\n以下是本次见面中较早内容的压缩总结。它们是刚才线下见面已经发生过的事，不是新的用户消息。继续当前线下见面时，请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
 };
 
-const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } => (
-    !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim()
-);
+// hasCompleteApiConfig — imported from utils/apiValidation.ts
 
 export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     const dateMsgs = msgs

@@ -278,20 +278,22 @@ export const ChatParser = {
         let content = aiContent;
 
         // POKE
-        if (content.includes('[[ACTION:POKE]]')) {
+        const pokeMatch = content.match(/(?:\[{1,2}|【|\()(?:ACTION\s*[:：]\s*)?POKE(?:\]{1,2}|】|\))/i);
+        if (pokeMatch) {
             await DB.saveMessage({ charId, role: 'assistant', type: 'interaction', content: '[戳一戳]' });
-            content = content.replace('[[ACTION:POKE]]', '').trim();
+            content = content.replace(pokeMatch[0], '').trim();
         }
 
         // TRANSFER (AI initiates a transfer to the user)
-        const transferMatch = content.match(/\[\[ACTION:TRANSFER:(\d+)\]\]/);
+        const transferMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*TRANSFER\s*[:：]\s*(\d+)(?:\]{1,2}|】|\))/i);
         if (transferMatch) {
             await DB.saveMessage({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1], status: 'pending' } });
             content = content.replace(transferMatch[0], '').trim();
         }
 
         // RECEIVE_TRANSFER (AI accepts a pending user transfer)
-        if (content.includes('[[ACTION:RECEIVE_TRANSFER]]')) {
+        const receiveTransferMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*RECEIVE_TRANSFER(?:\]{1,2}|】|\))/i);
+        if (receiveTransferMatch) {
             try {
                 const recentMsgs = await DB.getRecentMessagesByCharId(charId, 50);
                 const pendingUserTransfer = recentMsgs.slice().reverse().find(
@@ -302,11 +304,12 @@ export const ChatParser = {
                     addToast(`${charName} 已收取 ¥${pendingUserTransfer.metadata?.amount}`, 'success');
                 }
             } catch (e) { console.error('RECEIVE_TRANSFER failed:', e); }
-            content = content.replace('[[ACTION:RECEIVE_TRANSFER]]', '').trim();
+            content = content.replace(receiveTransferMatch[0], '').trim();
         }
 
         // RETURN_TRANSFER (AI returns/rejects a pending user transfer)
-        if (content.includes('[[ACTION:RETURN_TRANSFER]]')) {
+        const returnTransferMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*RETURN_TRANSFER(?:\]{1,2}|】|\))/i);
+        if (returnTransferMatch) {
             try {
                 const recentMsgs = await DB.getRecentMessagesByCharId(charId, 50);
                 const pendingUserTransfer = recentMsgs.slice().reverse().find(
@@ -317,11 +320,11 @@ export const ChatParser = {
                     addToast(`${charName} 退还了 ¥${pendingUserTransfer.metadata?.amount}`, 'info');
                 }
             } catch (e) { console.error('RETURN_TRANSFER failed:', e); }
-            content = content.replace('[[ACTION:RETURN_TRANSFER]]', '').trim();
+            content = content.replace(returnTransferMatch[0], '').trim();
         }
 
         // ADD_EVENT
-        const eventMatch = content.match(/\[\[ACTION:ADD_EVENT\s*\|\s*(.*?)\s*\|\s*(.*?)\]\]/);
+        const eventMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*ADD_EVENT\s*[|｜]\s*(.*?)\s*[|｜]\s*(.*?)(?:\]{1,2}|】|\))/i);
         if (eventMatch) {
             const title = eventMatch[1].trim();
             const date = eventMatch[2].trim();
@@ -393,6 +396,12 @@ export const ChatParser = {
             .replace(/[【\[](?:emoji|sticker)\s*[：:]\s*(.+?)[】\]]/gi, '[[SEND_EMOJI: $1]]')
             // 3d. Bracket normalization: [SEND_EMOJI: xxx] 【SEND_EMOJI：xxx】→ [[SEND_EMOJI: xxx]]
             .replace(/(?:\[{1,2}|【)\s*SEND_EMOJI\s*[：:]\s*([\s\S]*?)\s*(?:\]{1,2}|】)/gi, '[[SEND_EMOJI: $1]]')
+
+            // 3e. ACTION normalization: [发送转账: 50] -> [[ACTION:TRANSFER:50]], [戳一戳] -> [[ACTION:POKE]]
+            .replace(/[【\[](?:发送)?转账\s*[：:]\s*(\d+)[】\]]/g, '[[ACTION:TRANSFER:$1]]')
+            .replace(/[【\[](?:发送)?戳一戳[】\]]/g, '[[ACTION:POKE]]')
+            .replace(/[【\[](?:收取|接收)转账[】\]]/g, '[[ACTION:RECEIVE_TRANSFER]]')
+            .replace(/[【\[]退还转账[】\]]/g, '[[ACTION:RETURN_TRANSFER]]')
 
             // ══════════════════════════════════════════════════════════════
             // Layer 4: VOICE TAG RESCUE — normalize variants → 【语音消息：content】

@@ -11,7 +11,7 @@ import { VectorMemoryExtractor } from '../utils/vectorMemoryExtractor';
 import { MindSnapshotExtractor } from '../utils/mindSnapshotExtractor';
 import { loadCharacterGoals, formatGoalListStr } from '../utils/goalService';
 import { EventExtractor } from '../utils/eventExtractor';
-import { extractThinking } from '../utils/thinkingExtractor';
+import { extractThinking, safeThinkingFallbackReply } from '../utils/thinkingExtractor';
 import { isDeepSeekMode } from '../utils/deepseekPrompts';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { BackendAgentManager } from '../utils/autonomousAgent';
@@ -141,7 +141,14 @@ export const useChatAI = ({
                     console.error('Failed to load full history from DB, using React state:', e);
                 }
             }
-            const promptContextMsgs = contextMsgs.filter(m => m.metadata?.source !== 'date' || m.metadata?.isDateContextBridge);
+            const promptContextMsgs = contextMsgs.filter(m => {
+                const source = m.metadata?.source;
+                if (source === 'date' || source === 'theater') {
+                    // Only include date/theater messages that are explicit context bridges
+                    return !!m.metadata?.isDateContextBridge;
+                }
+                return true;
+            });
 
             // 0.1 Gamygdala — 加载角色目标（并行，静默降级）
             const goalsPromise = loadCharacterGoals(char.id).catch(e => {
@@ -357,9 +364,9 @@ mode 可选值：
             const thinkTag = isDeepSeek ? 'think' : 'thinking';
             if (usePrefill) {
                 if (isDeepSeek) {
-                    trailingInstructions += `\n\n[思考链格式锁定]\n请严格遵循以下输出流程：\n1. 先在 <think>...</think> 中完成全部思考\n2. 思考完毕后，必须输出 </think> 闭合标签\n3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）\n4. 正文中不得包含任何 <think> 标签或思考过程\n\n格式：\n<think>\n（你的思考过程）\n</think>\n（角色正文回复）\n\n严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。`;
+                    trailingInstructions += `\n\n[思考提示]\n请先在 <think> 内简短思考，闭合 </think> 后输出正文。`;
                 } else {
-                    trailingInstructions += `\n\n[思考链格式锁定]\n请严格遵循以下输出流程：\n1. 先在 <thinking>...</thinking> 中完成全部思考\n2. 思考完毕后，必须输出 </thinking> 闭合标签\n3. 闭合标签后，立即输出角色的正文回复（不要遗漏！）\n4. 正文中不得包含任何 <thinking> 标签或思考过程\n\n格式：\n<thinking>\n（你的思考过程）\n</thinking>\n（角色正文回复）\n\n严禁只输出思考而遗漏正文。思考链闭合后必须紧跟正文内容。\n\n━━━━━━━━━━━━━━━\n<!--\nif 首段不是<thinking>标签 then\n    立即回滚本轮并重写，直至首段为<thinking>…</thinking>\nend if\n-->\n━━━━━━━━━━━━━━━`;
+                    trailingInstructions += `\n\n[思考提示]\n请先在 <thinking> 内简短思考，闭合 </thinking> 后输出正文。`;
                 }
             }
 
@@ -455,6 +462,7 @@ mode 可选值：
                     // The thinking chain lock was injected into the last user message, we need to remove it
                     const rLastUserIdx = retryMessages.map(m => m.role).lastIndexOf('user');
                     if (rLastUserIdx >= 0 && typeof retryMessages[rLastUserIdx].content === 'string') {
+                        retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考提示\][\s\S]*?输出正文。/, '');
                         retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考链格式锁定\][\s\S]*?━━━━━━━━━━━━━━━/, '');
                         // Also clean DeepSeek-style chain lock (no separator block)
                         retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考链格式锁定\][\s\S]*?思考链闭合后必须紧跟正文内容。/, '');
@@ -473,21 +481,26 @@ mode 可选值：
                     const retryContent = retryData.choices?.[0]?.message?.content || '';
                     if (retryContent.trim()) {
                         const retryExtracted = extractThinking(retryContent);
-                        aiContent = retryExtracted.content || retryContent;
+                        aiContent = retryExtracted.content.trim()
+                            ? retryExtracted.content
+                            : safeThinkingFallbackReply(retryExtracted.thinking || thinkingContent);
                         console.log('🔒 [ChainLock] Retry succeeded, recovered content length:', aiContent.length);
                     } else {
-                        console.warn('🔒 [ChainLock] Retry also returned empty. Using thinking as fallback.');
-                        aiContent = thinkingContent; // Last resort: show thinking as content
+                        console.warn('🔒 [ChainLock] Retry also returned empty. Using safe fallback reply.');
+                        aiContent = safeThinkingFallbackReply(thinkingContent);
                     }
                 } catch (retryErr) {
                     console.error('🔒 [ChainLock] Retry failed:', retryErr);
-                    aiContent = thinkingContent; // Fallback
+                    aiContent = safeThinkingFallbackReply(thinkingContent);
                 }
             }
 
             // CLEAN UP prefixes and timestamps LAST, so the regex anchors correctly
             // at the start of the string (now that <thinking> is gone!)
             aiContent = ChatParser.cleanAiSecondPass(aiContent);
+
+            // Execute any parsed actions BEFORE side effect handlers like Search/Recall
+            aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast);
 
             console.log(`🧠 [ThinkingDebug] final thinkingContent length=${thinkingContent.length}, preview:`, thinkingContent.substring(0, 200));
 
@@ -577,6 +590,19 @@ mode 可选值：
             }
             // Clean all quote tag variants from content
             aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
+
+            // 7.5 Bare emoji name rescue — AI sometimes outputs [emojiName] without proper tags
+            // If content inside single brackets exactly matches a known emoji, convert to [[SEND_EMOJI:]]
+            if (emojis.length > 0) {
+                aiContent = aiContent.replace(/\[([^\]\[]{1,30})\]/g, (match: string, name: string) => {
+                    const trimmed = name.trim();
+                    if (emojis.some(e => e.name === trimmed)) {
+                        console.log(`🎨 [EmojiRescue] Bare [${trimmed}] → [[SEND_EMOJI: ${trimmed}]]`);
+                        return `[[SEND_EMOJI: ${trimmed}]]`;
+                    }
+                    return match;
+                });
+            }
 
             // 8. Split and Stream (Simulate Typing)
             // Note: SEND_EMOJI tags are preserved through sanitize so splitResponse can interleave them with text

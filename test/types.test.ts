@@ -65,6 +65,30 @@ describe('ChatParser', () => {
         expect(ChatParser.cleanAiSecondPass('[发送表情: 揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
         // Subject 我
         expect(ChatParser.cleanAiSecondPass('[我发送了表情包: 揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
+        // Degraded weak-model logs with directional/traditional wording
+        expect(ChatParser.cleanAiSecondPass('[{{char}}向你發送表情包：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
+        expect(ChatParser.cleanAiSecondPass('[糯米向你发送表情包：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
+        expect(ChatParser.cleanAiSecondPass('[发送貼圖：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
+    });
+
+    it('normalises degraded transfer action variants', async () => {
+        const { ChatParser } = chatParserModule;
+        const dbModule = await import('../utils/db');
+        const saveMessage = dbModule.DB.saveMessage as any;
+
+        expect(ChatParser.cleanAiSecondPass('[{{char}}向你轉帳：¥52.00]')).toContain('[[ACTION:TRANSFER:52.00]]');
+        expect(ChatParser.cleanAiSecondPass('[糯米给你转账: 52]')).toContain('[[ACTION:TRANSFER:52]]');
+        expect(ChatParser.cleanAiSecondPass('[{{char}}收取了你的轉帳]')).toContain('[[ACTION:RECEIVE_TRANSFER]]');
+        expect(ChatParser.cleanAiSecondPass('[{{char}}退還了你的轉帳]')).toContain('[[ACTION:RETURN_TRANSFER]]');
+
+        saveMessage.mockClear();
+        await ChatParser.parseAndExecuteActions('[{{char}}向你轉帳：¥52.00]', 'char-1', '糯米', vi.fn());
+        expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+            charId: 'char-1',
+            role: 'assistant',
+            type: 'transfer',
+            metadata: { amount: '52.00', status: 'pending' },
+        }));
     });
 
     it('normalises song share tags and removes bracket-only wrappers', () => {

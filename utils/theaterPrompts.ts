@@ -17,6 +17,11 @@ const EVENT_TYPE_DESCRIPTIONS: Record<EventType, string> = {
     surprise:  '完全意想不到的转折。天气骤变、偶遇名人、捡到奇怪的东西、手机突然响了带来消息——打破当前节奏的意外。',
 };
 
+export interface DirectorPromptOptions {
+    recentContext?: string;
+    recentForbiddenMotifs?: string;
+}
+
 /**
  * Build the director prompt for the secondary API.
  * The director must return a structured JSON object.
@@ -31,6 +36,7 @@ export function buildDirectorPrompt(
     recentMemories?: string,
     existingLocationNames?: string[],
     allowLocationSuggestion?: boolean,
+    options: DirectorPromptOptions = {},
 ): string {
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
     const recentEventsText = recentEvents.length > 0
@@ -38,7 +44,15 @@ export function buildDirectorPrompt(
         : '  (无)';
 
     const memoryBlock = recentMemories
-        ? `\n### 可用记忆片段（如果事件类型是 callback，请融入以下记忆）\n${recentMemories}\n`
+        ? `\n### 可用真实记忆片段（仅 callback 可用）\n${recentMemories}\n`
+        : '';
+
+    const recentContextBlock = options.recentContext?.trim()
+        ? `\n### 当前对话上下文（避免打断正在发生的情绪）\n${options.recentContext.trim()}\n`
+        : '';
+
+    const forbiddenMotifsBlock = options.recentForbiddenMotifs?.trim()
+        ? `\n### 近期禁止复用的事件素材\n以下桥段、NPC、事故形态或同义变体近期已经用过，不能再次使用：\n${options.recentForbiddenMotifs.trim()}\n`
         : '';
 
     const locationListBlock = existingLocationNames && existingLocationNames.length > 0
@@ -75,7 +89,7 @@ tags 只能从以下选择：romantic, daily, adventure, quiet, crowded, outdoor
 
 ### 最近发生的事件
 ${recentEventsText}
-${memoryBlock}${locationListBlock}
+${recentContextBlock}${memoryBlock}${forbiddenMotifsBlock}${locationListBlock}
 ### 你的任务
 设计一个 **${EVENT_TYPE_DESCRIPTIONS[eventType]}**
 ${locationSuggestionBlock}
@@ -98,7 +112,9 @@ ${locationSuggestionBlock}
 4. suggestedBeats 是给角色扮演者的提示，不是给用户看的
 5. 不要重复最近发生过的事件
 6. 事件必须符合地点和时段的逻辑（深夜的咖啡厅可能要打烊了）
-7. 只输出 JSON，不要输出任何其他文字`;
+7. 如果 sceneType 是 callback，只能基于“可用真实记忆片段”设计似曾相识的触发点；没有写在记忆里的过去，绝不能编造
+8. 事故类桥段不是禁用，但如果近期禁止素材里出现过类似事故、外卖员、电动车、撞倒、受伤等元素，必须换成完全不同的事件形态
+9. 只输出 JSON，不要输出任何其他文字`;
 }
 
 // ── Scene Injection Prompt (injected into Main API system prompt) ──

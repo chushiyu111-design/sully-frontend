@@ -4,7 +4,7 @@
  * 负责：事件权重计算、保底概率、事件类型选择、时间推进。
  */
 
-import type { EventType, PityCounter, TimeSlot, TheaterLocation, DirectorEvent } from '../types';
+import type { CharacterProfile, EventType, Message, PityCounter, TimeSlot, TheaterLocation, DirectorEvent } from '../types';
 
 // ── Base Weights ──
 
@@ -19,11 +19,21 @@ const BASE_WEIGHTS: Record<EventType, number> = {
 
 // ── Pity Constants ──
 
-const PITY_BASE_CHANCE = 0.15;        // 15% base probability
-const PITY_INCREMENT = 0.12;          // +12% each round without event
-// Soft guarantee: ~70% at round 5
-const PITY_HARD_GUARANTEE = 8;        // 100% at round 8
-const PITY_COOLDOWN_ROUNDS = 2;       // 2 rounds cooldown after event
+const PITY_BASE_CHANCE = 0.10;        // 10% base probability
+const PITY_INCREMENT = 0.08;          // +8% each round without event
+// Medium drama: quieter than v1, but still eventually moves.
+const PITY_HARD_GUARANTEE = 10;       // 100% at round 10
+const PITY_COOLDOWN_ROUNDS = 3;       // 3 rounds cooldown after event
+
+export const THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT = 8;
+
+const DIRECTOR_FORBIDDEN_EVENT_LOOKBACK = 8;
+
+const REPEAT_MOTIF_KEYWORDS = [
+    '外卖员', '电动车', '撞', '撞到', '撞倒', '摔倒', '受伤', '车祸', '交通',
+    '雨', '暴雨', '停电', '手机响', '电话', '迷路', '钱包', '钥匙', '陌生人',
+    '服务员', '店员', '快递', '警报', '火灾', '争吵', '醉酒',
+];
 
 // ── Weight Computation ──
 
@@ -118,6 +128,140 @@ export function rollEventType(weights: Record<EventType, number>): EventType {
     }
 
     return 'ambient'; // fallback
+}
+
+export function chooseDirectorEventType(
+    weights: Record<EventType, number>,
+    hasCallbackMemory: boolean,
+    roll: (weights: Record<EventType, number>) => EventType = rollEventType,
+): EventType {
+    const firstRoll = roll(weights);
+    if (firstRoll !== 'callback' || hasCallbackMemory) return firstRoll;
+
+    const withoutCallback = { ...weights, callback: 0 };
+    const fallbackRoll = roll(withoutCallback);
+    return fallbackRoll === 'callback' ? 'ambient' : fallbackRoll;
+}
+
+// ── Director Context Helpers ──
+
+function compactText(text: string, max = 220): string {
+    const value = text
+        .replace(/\[[a-zA-Z0-9_-]+\]\s*/g, '')
+        .replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+export function buildTheaterDirectorRecentContext(
+    messages: Message[],
+    charName: string,
+    userName: string,
+    limit = 8,
+): string {
+    const lines = messages
+        .filter(m => (m.role === 'user' || m.role === 'assistant') && m.type !== 'image')
+        .slice(-limit)
+        .map(m => {
+            const speaker = m.role === 'user' ? userName : charName;
+            return `${speaker}: ${compactText(m.content || '')}`;
+        })
+        .filter(line => line.trim().length > 0);
+
+    return lines.join('\n');
+}
+
+export function buildTraditionalCallbackMemoryContext(char: CharacterProfile, maxItems = 8): string {
+    const lines: string[] = [];
+    const refinedLimit = Math.min(4, maxItems);
+
+    if (char.refinedMemories && Object.keys(char.refinedMemories).length > 0) {
+        for (const [date, summary] of Object.entries(char.refinedMemories).sort()) {
+            if (!summary?.trim()) continue;
+            lines.push(`- [传统记忆·${date}] ${compactText(summary, 260)}`);
+            if (lines.length >= refinedLimit) break;
+        }
+    }
+
+    if (lines.length < maxItems && char.activeMemoryMonths?.length && Array.isArray(char.memories)) {
+        const activeMonths = new Set(char.activeMemoryMonths);
+        for (const memory of char.memories) {
+            let normalizedDate = memory.date.replace(/[\/年月]/g, '-').replace('日', '');
+            const parts = normalizedDate.split('-');
+            if (parts.length >= 2) {
+                normalizedDate = `${parts[0]}-${parts[1].padStart(2, '0')}`;
+            }
+            if (!activeMonths.has(normalizedDate)) continue;
+            if (!memory.summary?.trim()) continue;
+            lines.push(`- [详细回忆·${memory.date}${memory.mood ? `·${memory.mood}` : ''}] ${compactText(memory.summary, 260)}`);
+            if (lines.length >= maxItems) break;
+        }
+    }
+
+    return lines.join('\n');
+}
+
+export function combineCallbackMemoryContext(
+    traditionalMemory: string | null | undefined,
+    vectorMemory: string | null | undefined,
+): string {
+    const blocks: string[] = [];
+    if (traditionalMemory?.trim()) {
+        blocks.push(`【传统记忆】\n${traditionalMemory.trim()}`);
+    }
+    if (vectorMemory?.trim()) {
+        blocks.push(`【向量记忆】\n${vectorMemory.trim()}`);
+    }
+    return blocks.join('\n\n');
+}
+
+export function hasCallbackMemory(memoryContext: string | null | undefined): boolean {
+    return !!memoryContext?.trim();
+}
+
+export function buildRecentForbiddenMotifs(
+    eventHistory: DirectorEvent[],
+    lookback = DIRECTOR_FORBIDDEN_EVENT_LOOKBACK,
+): string {
+    const recentEvents = eventHistory.slice(-lookback);
+    if (recentEvents.length === 0) return '';
+
+    const motifSet = new Set<string>();
+    for (const event of recentEvents) {
+        const text = `${event.event || ''} ${event.atmosphere || ''} ${event.npcHint || ''}`;
+        for (const keyword of REPEAT_MOTIF_KEYWORDS) {
+            if (text.includes(keyword)) motifSet.add(keyword);
+        }
+    }
+
+    const eventLines = recentEvents
+        .map((event, index) => `${index + 1}. [${event.sceneType}] ${compactText(event.event || event.atmosphere || '', 180)}`)
+        .join('\n');
+    const keywordLine = motifSet.size > 0
+        ? `\n\n近期已经用过的关键词：${Array.from(motifSet).join('、')}`
+        : '';
+
+    return `${eventLines}${keywordLine}`;
+}
+
+export function selectTheaterAutoSummaryTargetMessages(
+    sessionMessages: Message[],
+    lastAutoMsgId?: number,
+    settleBufferCount = THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT,
+): Message[] {
+    const candidates = sessionMessages.filter(m =>
+        (!lastAutoMsgId || m.id > lastAutoMsgId)
+        && !m.metadata?.dateSummaryAutoHidden
+    );
+    return candidates.slice(0, Math.max(0, candidates.length - settleBufferCount));
+}
+
+export function getTheaterSummaryHiddenMsgIds(
+    coveredMsgIds: number[],
+    keepCount = THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT,
+): number[] {
+    return coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - keepCount));
 }
 
 // ── Pity System ──

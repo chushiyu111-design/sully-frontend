@@ -17,6 +17,19 @@ import InlineLocationSheet from './InlineLocationSheet';
 import { TimeSlotIcon } from './TheaterMap';
 import { MinimaxTts } from '../../utils/minimaxTts';
 import { withCharacterTtsVoice } from '../../utils/characterTts';
+import {
+    formatTheaterUserBeatsForMessage,
+    parseTheaterAssistantBeatReplyGroups,
+    parseTheaterAssistantPages,
+    parseTheaterUserPages,
+    sanitizeTheaterUserBeats,
+    stripTheaterBeatMarkers,
+    type TheaterAssistantBeatReply,
+    type TheaterAssistantBeatReplyGroup,
+    type TheaterBeatKind,
+    type TheaterUserBeat,
+    type TheaterVNPage,
+} from '../../utils/theaterDialogueFormat';
 
 const EVENT_TYPE_ZH: Record<string, string> = {
     ambient: '氛围', encounter: '偶遇', romantic: '浪漫',
@@ -24,6 +37,10 @@ const EVENT_TYPE_ZH: Record<string, string> = {
 };
 
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
+
+interface TheaterInputBeat extends TheaterUserBeat {
+    id: string;
+}
 
 interface TheaterSessionProps {
     char: CharacterProfile;
@@ -35,7 +52,7 @@ interface TheaterSessionProps {
     isDirectorLoading: boolean;
     isAiLoading: boolean;
     messages: Message[];
-    onSendMessage: (text: string, directorHint?: string) => Promise<void>;
+    onSendMessage: (text: string, directorHint?: string, userBeats?: TheaterUserBeat[]) => Promise<void>;
     /** Location switching (inline, no exit) */
     locations: TheaterLocation[];
     visitedLocationIds: string[];
@@ -83,7 +100,7 @@ interface TheaterSessionProps {
 
 // ── Helpers ──
 
-const cleanText = (text: string) => text.replace(/\[.*?\]/g, '').trim();
+const cleanText = (text: string) => stripTheaterBeatMarkers(text).replace(/\[.*?\]/g, '').trim();
 
 const extractCurrentEmotion = (messages: Message[]): string => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -98,36 +115,82 @@ const extractCurrentEmotion = (messages: Message[]): string => {
     return 'normal';
 };
 
-/** Flatten messages into VN pages with type detection */
-type PageType = 'dialogue' | 'narration' | 'user';
-interface VNPage { role: 'user' | 'assistant'; type: PageType; text: string; msgId: string | number; }
+const createInputBeat = (kind: TheaterBeatKind = 'speech'): TheaterInputBeat => ({
+    id: `beat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    text: '',
+});
 
-/** Detect if a cleaned line is dialogue (wrapped in quotes) and strip the quotes */
-function classifyLine(clean: string): { type: 'dialogue' | 'narration'; text: string } {
-    // Match "..." or \u201C...\u201D or \u300C...\u300D
-    const m = clean.match(/^["\u201C\u300C](.+)["\u201D\u300D]$/);
-    if (m) return { type: 'dialogue', text: m[1] };
-    // Partial match: starts with quote (AI sometimes doesn't close)
-    const m2 = clean.match(/^["\u201C\u300C](.+)/);
-    if (m2) return { type: 'dialogue', text: m2[1].replace(/["\u201D\u300D]$/, '') };
-    return { type: 'narration', text: clean };
-}
+const getMessageUserBeats = (msg: Message): TheaterUserBeat[] | undefined => {
+    const raw = msg.metadata?.theaterUserBeats;
+    if (!Array.isArray(raw)) return undefined;
 
-function buildPages(messages: Message[]): VNPage[] {
-    const pages: VNPage[] = [];
-    for (const msg of messages) {
+    const beats = raw.filter((beat): beat is TheaterUserBeat => (
+        beat
+        && (beat.kind === 'speech' || beat.kind === 'action')
+        && typeof beat.text === 'string'
+    ));
+
+    return beats.length > 0 ? beats : undefined;
+};
+
+const getMessageAssistantBeatReplies = (msg: Message): TheaterAssistantBeatReplyGroup[] => {
+    const raw = msg.metadata?.theaterAssistantBeatReplies;
+    if (Array.isArray(raw)) {
+        return raw
+            .filter((reply): reply is TheaterAssistantBeatReply => (
+                reply
+                && typeof reply.beatIndex === 'number'
+                && Number.isFinite(reply.beatIndex)
+                && typeof reply.content === 'string'
+            ))
+            .map(reply => ({
+                ...reply,
+                pages: parseTheaterAssistantPages(reply.content, msg.id),
+            }))
+            .filter(reply => reply.pages.length > 0);
+    }
+
+    const parsed = parseTheaterAssistantBeatReplyGroups(msg.content || '', msg.id);
+    return parsed.hasBeatMarkers && parsed.unassignedPages.length === 0 ? parsed.groups : [];
+};
+
+function buildPages(messages: Message[]): TheaterVNPage[] {
+    const pages: TheaterVNPage[] = [];
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
         if (msg.role === 'user') {
-            const clean = cleanText(msg.content);
-            if (clean) pages.push({ role: 'user', type: 'user', text: clean, msgId: msg.id });
-        } else {
-            const lines = (msg.content || '').split('\n');
-            for (const line of lines) {
-                const clean = cleanText(line);
-                if (!clean) continue;
-                const { type, text } = classifyLine(clean);
-                pages.push({ role: 'assistant', type, text, msgId: msg.id });
+            const userPages = parseTheaterUserPages(msg.content || '', msg.id, getMessageUserBeats(msg));
+            const next = messages[i + 1];
+            if (next?.role === 'assistant') {
+                const replyGroups = getMessageAssistantBeatReplies(next);
+                if (replyGroups.length > 0) {
+                    const repliesByBeat = new Map(replyGroups.map(group => [group.beatIndex, group.pages]));
+                    const usedIndexes = new Set<number>();
+                    userPages.forEach((page, index) => {
+                        const beatIndex = index + 1;
+                        pages.push(page);
+                        const replies = repliesByBeat.get(beatIndex) || [];
+                        if (replies.length > 0) {
+                            pages.push(...replies);
+                            usedIndexes.add(beatIndex);
+                        }
+                    });
+                    replyGroups
+                        .filter(group => !usedIndexes.has(group.beatIndex))
+                        .forEach(group => pages.push(...group.pages));
+                    i += 1;
+                    continue;
+                }
+
+                pages.push(...userPages, ...parseTheaterAssistantPages(next.content || '', next.id));
+                i += 1;
+                continue;
             }
+            pages.push(...userPages);
+            continue;
         }
+        pages.push(...parseTheaterAssistantPages(msg.content || '', msg.id));
     }
     return pages;
 }
@@ -208,14 +271,17 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
     // ── VN State ──
     const pages = useMemo(() => buildPages(messages), [messages]);
+    const messageById = useMemo(
+        () => new Map(messages.map(msg => [String(msg.id), msg])),
+        [messages],
+    );
     const [pageIndex, setPageIndex] = useState(0);
     const [showInput, setShowInput] = useState(false);
     const [autoMode, setAutoMode] = useState(false);
     const [showLog, setShowLog] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [hideDialog, setHideDialog] = useState(false);
-    const [input, setInput] = useState('');
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [inputBeats, setInputBeats] = useState<TheaterInputBeat[]>(() => [createInputBeat('speech')]);
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
     const prevPagesLenRef = useRef(0);
     /** Track whether the component mounted with messages already present (i.e. resumed history) */
@@ -254,6 +320,10 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const currentPage = pages[pageIndex] || null;
     const isLastPage = pageIndex >= pages.length - 1;
     const isLoading = isAiLoading || isDirectorLoading;
+    const sendableInputBeats = useMemo(
+        () => sanitizeTheaterUserBeats(inputBeats.map(({ kind, text }) => ({ kind, text }))),
+        [inputBeats],
+    );
 
     // ── Typewriter ──
     const { displayed, done, skipToEnd } = useTypewriter(currentPage?.text || '', 30);
@@ -409,12 +479,13 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
     // ── Send message ──
     const handleSend = async () => {
-        if (!input.trim() || isLoading) return;
+        if (sendableInputBeats.length === 0 || isLoading) return;
         stopTtsAudio();
-        const text = input.trim();
-        setInput('');
+        const userBeats = sendableInputBeats;
+        const text = formatTheaterUserBeatsForMessage(userBeats);
+        setInputBeats([createInputBeat('speech')]);
         setShowInput(false);
-        try { await onSendMessage(text); } catch { addToast('发送失败，请重试', 'error'); }
+        try { await onSendMessage(text, undefined, userBeats); } catch { addToast('发送失败，请重试', 'error'); }
     };
 
     // ── Handle whisper click ──
@@ -423,26 +494,25 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         onWhisperClick(w);
     };
 
-    // ── Quick punctuation insert ──
-    const insertAtCursor = useCallback((before: string, after: string = '') => {
-        const el = textareaRef.current;
-        if (!el) return;
-        const start = el.selectionStart;
-        const end = el.selectionEnd;
-        const val = el.value;
-        const selectedText = val.slice(start, end);
-        const inserted = before + selectedText + after;
-        const newVal = val.slice(0, start) + inserted + val.slice(end);
-        setInput(newVal);
-        // Position cursor between before/after (or after 'before' if no 'after')
-        requestAnimationFrame(() => {
-            el.focus();
-            const cursorPos = start + before.length + selectedText.length;
-            el.setSelectionRange(cursorPos, cursorPos);
-        });
+    const updateInputBeat = useCallback((id: string, updates: Partial<TheaterUserBeat>) => {
+        setInputBeats(prev => prev.map(beat => (
+            beat.id === id ? { ...beat, ...updates } : beat
+        )));
     }, []);
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
+    const addInputBeat = useCallback((kind: TheaterBeatKind) => {
+        setInputBeats(prev => [...prev, createInputBeat(kind)]);
+    }, []);
+
+    const removeInputBeat = useCallback((id: string) => {
+        setInputBeats(prev => (
+            prev.length <= 1
+                ? [{ ...prev[0], text: '' }]
+                : prev.filter(beat => beat.id !== id)
+        ));
+    }, []);
+
+    const handleBeatKeyDown = (e: React.KeyboardEvent) => {
         // Ctrl+Enter or Cmd+Enter → send
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -826,7 +896,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061A1.125 1.125 0 0 1 3 16.811V8.69ZM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 0 1 0 1.954l-7.108 4.061a1.125 1.125 0 0 1-1.683-.977V8.69Z" /></svg>
                             <span>跳过</span>
                         </button>
-                        {characterTtsConfig?.apiKey && currentPage && currentPage.type !== 'user' && (
+                        {characterTtsConfig?.apiKey && currentPage?.role === 'assistant' && (
                             <button className={`theater-vn-ctrl-btn ${ttsPlaying || ttsSynthesizing ? 'active' : ''}`} onClick={handleManualTts}>
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill={ttsPlaying ? 'currentColor' : 'none'}/>
@@ -856,52 +926,67 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             {/* ════════ Input Area ════════ */}
             {showInput && (
                 <div className="theater-vn-input-area" onClick={e => e.stopPropagation()}>
-                    {/* Quick punctuation toolbar */}
-                    <div className="theater-vn-punct-bar">
-                        <button
-                            className="theater-vn-punct-btn theater-vn-punct-hero"
-                            onClick={() => insertAtCursor('\u201C', '\u201D')}
-                            title="插入台词引号"
-                        >
-                            <span className="theater-vn-punct-icon">{'\u201C\u201D'}</span>
-                            <span className="theater-vn-punct-label">台词</span>
-                        </button>
-                        <button
-                            className="theater-vn-punct-btn"
-                            onClick={() => insertAtCursor('\u2026\u2026')}
-                            title="插入省略号"
-                        >
-                            <span className="theater-vn-punct-icon">……</span>
-                        </button>
-                        <button
-                            className="theater-vn-punct-btn"
-                            onClick={() => insertAtCursor('\u2014\u2014')}
-                            title="插入破折号"
-                        >
-                            <span className="theater-vn-punct-icon">——</span>
-                        </button>
-                        <span className="theater-vn-punct-hint">引号内 = 台词 · 其余 = 动作</span>
+                    <div className="theater-vn-beat-list">
+                        {inputBeats.map((beat, index) => (
+                            <div key={beat.id} className={`theater-vn-beat-card ${beat.kind}`}>
+                                <div className="theater-vn-beat-head">
+                                    <div className="theater-vn-beat-toggle" role="group" aria-label="段落类型">
+                                        <button
+                                            type="button"
+                                            className={beat.kind === 'speech' ? 'active' : ''}
+                                            onClick={() => updateInputBeat(beat.id, { kind: 'speech' })}
+                                        >
+                                            台词
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={beat.kind === 'action' ? 'active' : ''}
+                                            onClick={() => updateInputBeat(beat.id, { kind: 'action' })}
+                                        >
+                                            动作
+                                        </button>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="theater-vn-beat-remove"
+                                        onClick={() => removeInputBeat(beat.id)}
+                                        aria-label={inputBeats.length > 1 ? '删除段落' : '清空段落'}
+                                        title={inputBeats.length > 1 ? '删除段落' : '清空段落'}
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                                <textarea
+                                    value={beat.text}
+                                    onChange={e => {
+                                        updateInputBeat(beat.id, { text: e.target.value });
+                                        const el = e.target;
+                                        el.style.height = '42px';
+                                        el.style.height = Math.min(el.scrollHeight, 92) + 'px';
+                                    }}
+                                    onKeyDown={handleBeatKeyDown}
+                                    placeholder={isLoading ? '等待回应…' : beat.kind === 'speech' ? '写一句要说的话…' : '写一个动作或停顿…'}
+                                    disabled={isLoading}
+                                    autoFocus={index === 0}
+                                />
+                            </div>
+                        ))}
                     </div>
                     <div className="theater-vn-input-row">
-                        <textarea
-                            ref={textareaRef}
-                            value={input}
-                            onChange={e => {
-                                setInput(e.target.value);
-                                // Auto-grow height
-                                const el = e.target;
-                                el.style.height = '44px';
-                                el.style.height = Math.min(el.scrollHeight, 100) + 'px';
-                            }}
-                            onKeyDown={handleKeyDown}
-                            placeholder={isLoading ? '等待回应…' : '说了什么，做了什么…'}
-                            disabled={isLoading}
-                            autoFocus
-                        />
+                        <div className="theater-vn-beat-actions">
+                            <button type="button" onClick={() => addInputBeat('speech')} disabled={isLoading}>
+                                + 台词
+                            </button>
+                            <button type="button" onClick={() => addInputBeat('action')} disabled={isLoading}>
+                                + 动作
+                            </button>
+                        </div>
                         <button
                             className="theater-vn-send-btn"
                             onClick={handleSend}
-                            disabled={!input.trim() || isLoading}
+                            disabled={sendableInputBeats.length === 0 || isLoading}
+                            aria-label="发送"
+                            title="发送"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" width={20} height={20}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
@@ -929,33 +1014,44 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                         </button>
                     </div>
                     <div className="theater-vn-log-scroll">
-                        {messages.map(msg => (
-                            <div
-                                key={msg.id}
-                                className="theater-vn-log-item"
-                                onContextMenu={(e) => {
-                                    if (onForkFromMessage) {
-                                        e.preventDefault();
-                                        onForkFromMessage(msg);
-                                    }
-                                }}
-                            >
-                                <div className={`theater-vn-log-item-name ${msg.role === 'user' ? 'user' : ''}`}>
-                                    {msg.role === 'user' ? (userProfile.name || '你') : char.name}
+                        {pages.map((page, index) => {
+                            const sourceMessage = messageById.get(String(page.msgId));
+                            const speaker = page.type === 'narration'
+                                ? ''
+                                : page.role === 'user'
+                                    ? (userProfile.name || '你')
+                                    : char.name;
+
+                            return (
+                                <div
+                                    key={`${page.msgId}-${index}`}
+                                    className={`theater-vn-log-item ${page.role} ${page.type}`}
+                                    onContextMenu={(e) => {
+                                        if (onForkFromMessage && sourceMessage) {
+                                            e.preventDefault();
+                                            onForkFromMessage(sourceMessage);
+                                        }
+                                    }}
+                                >
+                                    {speaker && (
+                                        <div className={`theater-vn-log-item-name ${page.role === 'user' ? 'user' : ''}`}>
+                                            {speaker}
+                                        </div>
+                                    )}
+                                    <div className="theater-vn-log-item-text">{cleanText(page.text)}</div>
+                                    {onForkFromMessage && sourceMessage && (
+                                        <button
+                                            className="theater-vn-log-fork-btn"
+                                            onClick={(e) => { e.stopPropagation(); onForkFromMessage(sourceMessage); }}
+                                            title="从这里分叉"
+                                        >
+                                            <span style={{ fontSize: 9, letterSpacing: 0.5 }}>分叉</span>
+                                        </button>
+                                    )}
                                 </div>
-                                <div className="theater-vn-log-item-text">{cleanText(msg.content)}</div>
-                                {onForkFromMessage && (
-                                    <button
-                                        className="theater-vn-log-fork-btn"
-                                        onClick={(e) => { e.stopPropagation(); onForkFromMessage(msg); }}
-                                        title="从这里分叉"
-                                    >
-                                        <span style={{ fontSize: 9, letterSpacing: 0.5 }}>分叉</span>
-                                    </button>
-                                )}
-                            </div>
-                        ))}
-                        {messages.length === 0 && (
+                            );
+                        })}
+                        {pages.length === 0 && (
                             <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.2)', paddingTop: 40, fontSize: 13 }}>
                                 暂无对话记录
                             </div>

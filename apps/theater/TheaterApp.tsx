@@ -10,7 +10,7 @@ import { DB } from '../../utils/db';
 import { ContextBuilder } from '../../utils/context';
 import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
-import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
+import { getEmbeddingConfig, getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
 import { hasCompleteApiConfig } from '../../utils/apiValidation';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
@@ -20,9 +20,18 @@ import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, fo
 import { TIME_SLOT_LABELS } from '../../types/theater';
 
 import {
-    computeWeights, rollEventType, shouldTriggerEvent, updatePity,
+    buildRecentForbiddenMotifs,
+    buildTheaterDirectorRecentContext,
+    buildTraditionalCallbackMemoryContext,
+    chooseDirectorEventType,
+    combineCallbackMemoryContext,
+    computeWeights, shouldTriggerEvent, updatePity,
     createPityCounter, getInitialTimeSlot,
+    getTheaterSummaryHiddenMsgIds,
+    hasCallbackMemory,
     is520EventActive, generateSessionId, getAutoGradient,
+    selectTheaterAutoSummaryTargetMessages,
+    THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT,
 } from '../../utils/theaterDirector';
 import {
     buildDirectorPrompt, buildTheaterSceneInjection, buildInitialScenePrompt,
@@ -30,6 +39,13 @@ import {
     buildTransitionDirectorPrompt, parseTransitionResponse, buildTransitionSceneInjection,
 } from '../../utils/theaterPrompts';
 import { getPresetLocations } from '../../utils/theaterLocations';
+import {
+    buildTheaterUserBeatsSystemNote,
+    parseTheaterAssistantBeatReplyGroups,
+    sanitizeTheaterUserBeats,
+    stripTheaterBeatMarkers,
+    type TheaterUserBeat,
+} from '../../utils/theaterDialogueFormat';
 import {
     saveTheaterSession,
     getCustomLocations, addCustomLocation as dbAddCustomLocation,
@@ -40,6 +56,7 @@ import {
     canCreateTimeline, generateTimelineLabel, getTimelineById,
     resolveForkChain, deleteTheaterBgImage,
 } from '../../utils/db/theaterStore';
+import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
 
 import TheaterMap from './TheaterMap';
 import TheaterSession from './TheaterSession';
@@ -61,8 +78,6 @@ type SummaryDraft = {
     bridgeOnSave?: boolean;
     injectToVectorMemory?: boolean;
 };
-
-const THEATER_SUMMARY_CONTEXT_KEEP_COUNT = 5;
 
 const isTheaterMessage = (m: Message, branchId?: string) =>
     m.metadata?.source === 'theater' && !m.metadata?.hiddenFromUser
@@ -717,31 +732,68 @@ const TheaterApp: React.FC = () => {
     };
 
     // ── Send Message (with director engine integration) ──
-    const handleSendMessage = useCallback(async (text: string, directorHint?: string) => {
+    const handleSendMessage = useCallback(async (text: string, directorHint?: string, userBeats?: TheaterUserBeat[]) => {
         if (!char || !currentLocation || !session || !apiConfig?.baseUrl) return;
 
         // 0. Clear whispers from previous turn
         setActiveWhispers([]);
+        const normalizedUserBeats = sanitizeTheaterUserBeats(userBeats || []);
 
         // 1. Save user message
         await DB.saveMessage({
             charId: char.id, role: 'user', type: 'text', content: text,
-            metadata: { source: 'theater', branchId: currentTimelineId, locationId: currentLocation.id },
+            metadata: {
+                source: 'theater',
+                branchId: currentTimelineId,
+                locationId: currentLocation.id,
+                ...(normalizedUserBeats.length > 0 ? { theaterUserBeats: normalizedUserBeats } : {}),
+            },
         });
 
         // Refresh messages
         let allMsgs = await refreshTimelineMessages() || await DB.getMessagesByCharId(char.id);
+        const theaterMsgsForDirector = allMsgs
+            .filter(m => isTheaterMessage(m, currentTimelineId || undefined))
+            .sort((a, b) => a.timestamp - b.timestamp);
+        const recentDirectorContext = buildTheaterDirectorRecentContext(
+            theaterMsgsForDirector,
+            char.name,
+            userProfile.name,
+        );
+        const recentForbiddenMotifs = buildRecentForbiddenMotifs(session.eventHistory);
 
         // 2. Check pity system — should we trigger a director event?
         const triggered = shouldTriggerEvent(session.pity);
         let directorEvent: DirectorEvent | null = null;
 
         if (triggered) {
-            // 2a. Roll event type
-            const weights = computeWeights(currentLocation, session.timeSlot, session.eventHistory, session.is520Event);
-            const eventType = rollEventType(weights);
+            // 2a. Build callback memory first, so callback only fires from real memory.
+            const traditionalMemory = buildTraditionalCallbackMemoryContext(char);
+            let vectorMemory: string | null = null;
+            const embeddingConfig = getEmbeddingConfig();
+            if (char.vectorMemoryEnabled && embeddingConfig.apiKey) {
+                try {
+                    vectorMemory = await VectorMemoryRetriever.retrieve(
+                        char.id,
+                        char.name,
+                        userProfile.name,
+                        theaterMsgsForDirector,
+                        embeddingConfig.apiKey,
+                        apiConfig,
+                        char.moodState as any,
+                    );
+                } catch (e) {
+                    console.warn('[Theater] Callback vector memory retrieval failed:', e);
+                }
+            }
+            const callbackMemoryContext = combineCallbackMemoryContext(traditionalMemory, vectorMemory);
+            const canUseCallback = hasCallbackMemory(callbackMemoryContext);
 
-            // 2b. Call director (secondary API)
+            // 2b. Roll event type
+            const weights = computeWeights(currentLocation, session.timeSlot, session.eventHistory, session.is520Event);
+            const eventType = chooseDirectorEventType(weights, canUseCallback);
+
+            // 2c. Call director (secondary API)
             const secondaryConfig = getSecondaryApiConfig();
             if (secondaryConfig?.baseUrl && secondaryConfig?.apiKey) {
                 setIsDirectorLoading(true);
@@ -749,9 +801,13 @@ const TheaterApp: React.FC = () => {
                     const directorPrompt = buildDirectorPrompt(
                         char.name, userProfile.name, currentLocation,
                         session.timeSlot, eventType, session.eventHistory,
-                        undefined, // recentMemories
+                        eventType === 'callback' ? callbackMemoryContext : undefined,
                         locations.map(l => l.name), // ★ 已有地点列表
                         true, // ★ 允许建议换场景
+                        {
+                            recentContext: recentDirectorContext,
+                            recentForbiddenMotifs,
+                        },
                     );
 
                     const dirResponse = await fetch(`${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -837,6 +893,7 @@ const TheaterApp: React.FC = () => {
             if (directorHint) {
                 eventNote += `\n<director_note>${directorHint}</director_note>`;
             }
+            eventNote += buildTheaterUserBeatsSystemNote(normalizedUserBeats, userProfile.name, char.name);
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -859,16 +916,27 @@ const TheaterApp: React.FC = () => {
             // Extract inner whispers from the cleaned content
             const whisperResult = extractInnerWhispers(extracted.content);
             const cleanContent = whisperResult.content;
+            const assistantBeatReplyParse = parseTheaterAssistantBeatReplyGroups(cleanContent, 'pending');
+            const hasCompleteBeatReplies = assistantBeatReplyParse.hasBeatMarkers
+                && assistantBeatReplyParse.unassignedPages.length === 0;
+            const contentForDb = stripTheaterBeatMarkers(cleanContent);
+            const assistantBeatReplies = hasCompleteBeatReplies
+                ? assistantBeatReplyParse.groups.map(group => ({
+                    beatIndex: group.beatIndex,
+                    content: group.content,
+                }))
+                : [];
 
             await DB.saveMessage({
                 charId: char.id, role: 'assistant', type: 'text',
-                content: cleanContent,
+                content: contentForDb,
                 metadata: {
                     source: 'theater',
                     branchId: currentTimelineId,
                     locationId: currentLocation.id,
                     directorEvent: directorEvent?.sceneType || null,
                     thinking: extracted.thinking,
+                    ...(assistantBeatReplies.length > 0 ? { theaterAssistantBeatReplies: assistantBeatReplies } : {}),
                 },
             });
 
@@ -881,7 +949,7 @@ const TheaterApp: React.FC = () => {
             if (currentTimelineId) {
                 const tl = getTimelineById(char.id, currentTimelineId);
                 if (tl) {
-                    saveTimeline({ ...tl, preview: cleanContent.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
+                    saveTimeline({ ...tl, preview: contentForDb.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
                 }
             }
 
@@ -971,7 +1039,7 @@ const TheaterApp: React.FC = () => {
             const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
             if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的剧场内容', 'info'); return null; }
             const targetMessages = summaryType === 'auto'
-                ? sessionMessages.filter(m => (!char.theaterSummaryLastAutoMsgId || m.id > char.theaterSummaryLastAutoMsgId) && !m.metadata?.dateSummaryAutoHidden)
+                ? selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId)
                 : sessionMessages;
             const threshold = char.theaterSummaryAutoThreshold || 20;
             if (summaryType === 'auto' && targetMessages.length < threshold) return null;
@@ -1116,7 +1184,7 @@ ${exitPromptContent}
     };
 
     const hideCoveredMsgIds = async (coveredMsgIds: number[], summaryMsgId: number) => {
-        const idsToHide = coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - THEATER_SUMMARY_CONTEXT_KEEP_COUNT));
+        const idsToHide = getTheaterSummaryHiddenMsgIds(coveredMsgIds, THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT);
         if (idsToHide.length === 0) return;
         await Promise.all(idsToHide.map(id => DB.updateMessageMetadata(id, {
             hiddenFromUser: true, dateSummaryAutoHidden: true, hiddenBySummaryMsgId: summaryMsgId,
@@ -1229,12 +1297,9 @@ ${exitPromptContent}
         if (!char || !char.theaterSummaryAutoEnabled || pendingAutoSummary || summaryGeneratingRef.current) return;
         if (!hasCompleteApiConfig(getSecondaryApiConfig())) return;
         const sessionMessages = getCurrentTheaterSessionMessages(msgs);
-        const unsummarized = sessionMessages.filter(m => !m.metadata?.dateSummaryAutoHidden);
-        const newCount = char.theaterSummaryLastAutoMsgId
-            ? unsummarized.filter(m => m.id > char.theaterSummaryLastAutoMsgId!).length
-            : unsummarized.length;
+        const eligibleMessages = selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId);
         const threshold = char.theaterSummaryAutoThreshold || 20;
-        if (newCount < threshold) return;
+        if (eligibleMessages.length < threshold) return;
         const draft = await generateSummaryDraft('auto');
         if (draft) setPendingAutoSummary(draft);
     };
@@ -1818,7 +1883,7 @@ ${exitPromptContent}
                     activeWhispers={activeWhispers}
                     onWhisperClick={async (w) => {
                         setActiveWhispers([]);
-                        await handleSendMessage(w.whisper, w.secret || undefined);
+                        await handleSendMessage(w.whisper, w.secret || undefined, [{ kind: 'action', text: w.whisper }]);
                     }}
                     locations={locations}
                     visitedLocationIds={session?.visitedLocationIds || []}

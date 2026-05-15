@@ -68,6 +68,7 @@ describe('ChatParser', () => {
         // Degraded weak-model logs with directional/traditional wording
         expect(ChatParser.cleanAiSecondPass('[{{char}}向你發送表情包：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
         expect(ChatParser.cleanAiSecondPass('[糯米向你发送表情包：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
+        expect(ChatParser.cleanAiSecondPass('[夏以昼发送了表情包: 酷_墨镜耍帅]')).toContain('[[SEND_EMOJI: 酷_墨镜耍帅]]');
         expect(ChatParser.cleanAiSecondPass('[发送貼圖：揉脸]')).toContain('[[SEND_EMOJI: 揉脸]]');
     });
 

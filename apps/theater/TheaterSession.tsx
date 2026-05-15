@@ -65,6 +65,8 @@ interface TheaterSessionProps {
     onToggleAutoHideSummary?: (enabled: boolean) => void;
     onChangeThreshold?: (threshold: number) => void;
     onOpenSummarySettings?: () => void;
+    savedSummaryCount?: number;
+    onOpenSavedSummaries?: () => void;
     // Transition
     isTransitioning?: boolean;
     transitionLocationName?: string;
@@ -180,7 +182,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     summaryDisabledReason,
     onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
     onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
-    onOpenSummarySettings,
+    onOpenSummarySettings, savedSummaryCount, onOpenSavedSummaries,
     activeWhispers = [], onWhisperClick,
     isTransitioning, transitionLocationName,
     pendingLocationSuggestion, onAcceptLocationSuggestion, onDeclineLocationSuggestion,
@@ -1089,6 +1091,8 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 onToggleAutoHideSummary={onToggleAutoHideSummary}
                 onChangeThreshold={onChangeThreshold}
                 onOpenSummarySettings={onOpenSummarySettings}
+                savedSummaryCount={savedSummaryCount}
+                onOpenSavedSummaries={onOpenSavedSummaries}
                 theaterSummaryAutoEnabled={char.theaterSummaryAutoEnabled}
                 theaterSummaryAutoHideEnabled={char.theaterSummaryAutoHideEnabled}
                 theaterSummaryAutoThreshold={char.theaterSummaryAutoThreshold}

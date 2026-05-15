@@ -1654,3 +1654,15 @@
 .traj-regen-toast-btn:active {
     transform: scale(0.95);
 }
+
+/* ── Danger Button (Delete Node) ── */
+
+.traj-mono-btn--danger {
+    color: #b87070;
+    border-color: rgba(184, 112, 112, 0.15);
+}
+
+.traj-mono-btn--danger:active {
+    background: rgba(184, 112, 112, 0.12);
+    border-color: rgba(184, 112, 112, 0.25);
+}

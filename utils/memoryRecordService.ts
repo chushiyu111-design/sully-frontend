@@ -18,7 +18,7 @@ import { masterMemoryRecordAudio } from './memoryRecordMastering';
 import { MinimaxMusic, type MinimaxMusicGenerateResult } from './minimaxMusic';
 import { MinimaxTts } from './minimaxTts';
 import { selectMemoryRecordCover } from './memoryRecordCovers';
-import { extractContent, extractJsonTyped, safeFetchJson } from './safeApi';
+import { extractContent, extractJsonTyped, safeResponseJson } from './safeApi';
 import { safeTimeoutSignal } from './safeTimeout';
 import {
     getCharacterVoiceIdNotExistMessage,
@@ -786,6 +786,91 @@ function mergeRecordErrors(previousError: string | undefined, currentError: stri
     return `歌词草稿：${previousError}\n音频生成：${currentError}`;
 }
 
+function extractStreamContentDelta(value: any): string {
+    if (!Array.isArray(value?.choices)) return '';
+    return value.choices.map((choice: any) => {
+        const delta = choice?.delta;
+        if (typeof delta?.content === 'string') return delta.content;
+        if (typeof choice?.message?.content === 'string') return choice.message.content;
+        return '';
+    }).join('');
+}
+
+async function readMemoryRecordLlmResponse(response: Response): Promise<{ content: string; finishReason: string }> {
+    const contentType = response.headers.get('Content-Type') || '';
+    if (!contentType.toLowerCase().includes('text/event-stream')) {
+        const data = await safeResponseJson(response);
+        return {
+            content: extractContent(data),
+            finishReason: getChoiceFinishReason(data),
+        };
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw new Error('LLM 流式响应为空，请检查当前 API 是否支持 stream=true');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let finishReason = '';
+
+    const consumeLine = (line: string) => {
+        const match = line.match(/^data:\s*(.*)$/);
+        if (!match) return;
+        const payload = match[1].trim();
+        if (!payload || payload === '[DONE]') return;
+
+        try {
+            const json = JSON.parse(payload);
+            content += extractStreamContentDelta(json);
+            const reason = getChoiceFinishReason(json);
+            if (reason) finishReason = reason;
+        } catch {
+            // Some proxies may send heartbeat/comment lines. They are safe to ignore.
+        }
+    };
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        lines.forEach(consumeLine);
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim()) consumeLine(buffer.trim());
+
+    return { content: content.trim(), finishReason };
+}
+
+async function readMemoryRecordLlmError(response: Response): Promise<string> {
+    const body = await response.text().catch(() => '');
+    const preview = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (response.status === 524) {
+        return 'LLM API 524: Cloudflare 等上游模型太久，已中断这次请求。请确认当前 LLM 代理支持长请求或流式返回。';
+    }
+    return `LLM API ${response.status}${preview ? `: ${preview}` : ''}`;
+}
+
+function normalizeMemoryRecordLlmNetworkError(error: unknown): Error {
+    if (isAbortOrTimeoutError(error)) {
+        return new Error('LLM 请求超时。当前歌词生成请求较长，请确认 LLM 代理没有 100 秒左右的网关超时限制。');
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof TypeError || /failed to fetch|networkerror|cors|err_failed/i.test(message)) {
+        return new Error(
+            '浏览器无法连接当前 LLM 地址。常见原因是 CORS 没有放行 beta.sully-frontend.pages.dev，或 Cloudflare/trycloudflare 代理在长请求中返回 524。',
+        );
+    }
+
+    return error instanceof Error ? error : new Error(message);
+}
+
 async function callMemoryRecordLlm(
     apiConfig: APIConfig,
     messages: { role: 'system' | 'user'; content: string }[],
@@ -795,28 +880,41 @@ async function callMemoryRecordLlm(
         throw new Error('未配置 LLM，无法生成或修改歌词');
     }
 
-    const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiConfig.apiKey}`,
-        },
-        body: JSON.stringify({
-            model: apiConfig.model,
-            messages,
-            temperature: options?.temperature ?? 0.82,
-            max_tokens: options?.maxTokens ?? MEMORY_RECORD_LLM_MAX_TOKENS,
-            stream: false,
-        }),
-        signal: safeTimeoutSignal(options?.timeoutMs ?? 150000),
-    });
+    let response: Response;
+    try {
+        response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, text/event-stream',
+                Authorization: `Bearer ${apiConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages,
+                temperature: options?.temperature ?? 0.82,
+                max_tokens: options?.maxTokens ?? MEMORY_RECORD_LLM_MAX_TOKENS,
+                stream: true,
+            }),
+            signal: safeTimeoutSignal(options?.timeoutMs ?? 150000),
+        });
+    } catch (error) {
+        throw normalizeMemoryRecordLlmNetworkError(error);
+    }
 
-    const finishReason = getChoiceFinishReason(data);
+    if (!response.ok) {
+        throw new Error(await readMemoryRecordLlmError(response));
+    }
+
+    const { content, finishReason } = await readMemoryRecordLlmResponse(response);
     if (isLengthFinishReason(finishReason)) {
         throw new Error(`LLM 输出达到 max_tokens 上限（finish_reason: ${finishReason}），歌词可能未完整返回`);
     }
+    if (!content.trim()) {
+        throw new Error('LLM 返回了空内容，请检查当前模型是否支持流式输出或是否被上游代理拦截');
+    }
 
-    return extractContent(data);
+    return content;
 }
 
 function buildLyricAuditSystemPrompt(): string {

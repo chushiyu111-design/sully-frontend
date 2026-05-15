@@ -88,6 +88,13 @@ export function saveCrosstimeMessage(msg: Omit<CrosstimeMessage, 'id'>): number 
     }
 }
 
+/** 删除指定 ID 的消息（总结后释放存储空间） */
+export function deleteCrosstimeMessagesByIds(roomId: string, idsToDelete: number[]): void {
+    const idSet = new Set(idsToDelete);
+    const remaining = getCrosstimeMessages(roomId).filter(m => !idSet.has(m.id));
+    localStorage.setItem(MSGS_KEY_PREFIX + roomId, JSON.stringify(remaining));
+}
+
 /** 清空某房间的所有消息 */
 export function deleteCrosstimeMessages(roomId: string): void {
     try {

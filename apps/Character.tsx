@@ -13,6 +13,7 @@ import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryCenter from '../components/character/MemoryCenter';
 import CharacterCitySection from '../components/character/CharacterCitySection';
 import type { CharacterCitySectionHandle } from '../components/character/CharacterCitySection';
+import CharacterLifeProfileCard from '../components/character/CharacterLifeProfileCard';
 import CharacterLocationSummaryCard from '../components/character/CharacterLocationSummaryCard';
 import CharacterWeixinBindingCard from '../components/character/CharacterWeixinBindingCard';
 import { safeResponseJson } from '../utils/safeApi';
@@ -1315,6 +1316,12 @@ ${isInitialGeneration ? `
                                     onPreviewWorldbook={handlePreviewWorldbook}
                                     onMoveWorldbook={moveWorldbook}
                                     onUnmountWorldbook={unmountWorldbook}
+                                />
+
+                                <CharacterLifeProfileCard
+                                    character={formData}
+                                    userName={userProfile.name}
+                                    addToast={addToast}
                                 />
 
                                 <CharacterWeixinBindingCard

@@ -167,6 +167,7 @@ function buildOsContext(overrides: Record<string, unknown> = {}) {
         },
         closeApp: vi.fn(),
         openApp: vi.fn(),
+        appParams: {},
         customThemes: [],
         removeCustomTheme: vi.fn(),
         addToast: vi.fn(),
@@ -322,5 +323,38 @@ describe('Chat active character fallback', () => {
         expect(screen.getByTestId('chat-modals-state')).toHaveTextContent('selected:none');
         expect(screen.getAllByText('第一条可引用')).toHaveLength(1);
         expect(screen.getAllByText('第二条可引用')).toHaveLength(2);
+    });
+
+    it('loads a target message from app params and highlights it', async () => {
+        const messages = Array.from({ length: 45 }, (_, index) => ({
+            id: index + 1,
+            charId: 'char-1',
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            type: 'text',
+            content: `第 ${index + 1} 条消息`,
+            timestamp: 1000 + index,
+        }));
+
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
+            activeCharacterId: 'char-1',
+            appParams: {
+                targetCharId: 'char-1',
+                targetMessageId: 5,
+            },
+        }));
+        mockedDB.getMessagesByCharId.mockResolvedValue(messages as any);
+        mockedDB.getRecentMessagesWithCount.mockImplementation(async (_charId, limit) => ({
+            messages: messages.slice(-limit),
+            totalCount: messages.length,
+        }) as any);
+
+        render(<Chat />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('message-item-5')).toBeInTheDocument();
+        });
+
+        expect(screen.getByTestId('message-item-5').parentElement?.className).toContain('bg-amber-100');
     });
 });

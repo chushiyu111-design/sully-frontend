@@ -69,6 +69,7 @@ vi.mock('../../utils/memoryRecordShare', () => ({
         title: playable.name,
     })),
     formatMemoryRecordShareDuration: vi.fn(() => '3:12'),
+    generateWaveformHeights: vi.fn(() => [12, 18, 24, 16, 20, 14]),
     shareMemoryRecordPoster: vi.fn(),
 }));
 

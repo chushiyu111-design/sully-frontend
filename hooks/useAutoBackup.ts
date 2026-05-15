@@ -8,12 +8,14 @@
  * 逻辑:
  *   - 调 GET /api/backup/latest 检查最后备份时间
  *   - 距上次备份 ≥ 24h → 生成 ZIP 并上传
- *   - 上传前预检大小 ≤ 500MB
+ *   - 上传前预检大小 ≤ Cloudflare 入口上限
  *   - 静默运行，不阻塞 UI；失败仅 console.warn
  */
 
 import { useEffect, useRef, useCallback } from 'react';
 import {
+    CLOUD_BACKUP_MAX_BYTES,
+    CLOUD_BACKUP_MAX_DISPLAY,
     getLatestCloudBackup,
     uploadCloudBackup,
     isCloudBackupAvailable,
@@ -25,7 +27,6 @@ const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 const RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const AUTO_BACKUP_LOCK_TTL_MS = 60 * 60 * 1000;
 const VISIBILITY_CHECK_DEBOUNCE_MS = 60 * 1000;
-const MAX_BACKUP_BYTES = 500 * 1024 * 1024; // 500 MB
 const AUTO_BACKUP_STATE_KEY = 'csyos_auto_backup_state';
 const AUTO_BACKUP_LOCK_KEY = 'csyos_auto_backup_lock';
 const RECENT_BACKUP_ERROR_CODE = 'recent_backup_exists';
@@ -273,8 +274,8 @@ export function useAutoBackup(
             refreshAutoBackupLock(lockOwnerId);
 
             // 3. 预检大小
-            if (blob.size > MAX_BACKUP_BYTES) {
-                console.warn(`[AutoBackup] 数据 ${(blob.size / 1024 / 1024).toFixed(1)}MB 超过 500MB，跳过`);
+            if (blob.size > CLOUD_BACKUP_MAX_BYTES) {
+                console.warn(`[AutoBackup] 数据 ${(blob.size / 1024 / 1024).toFixed(1)}MB 超过 ${CLOUD_BACKUP_MAX_DISPLAY}，跳过`);
                 recordAutoBackupFailure('backup_too_large', TWENTY_FOUR_HOURS, blob.size);
                 return;
             }

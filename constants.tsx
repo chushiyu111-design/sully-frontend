@@ -77,7 +77,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   LoveShow: ({ className }) => <Heart className={className} weight="fill" />,
 };
 
-export const INSTALLED_APPS: AppConfig[] = [
+export const APP_CONFIGS: AppConfig[] = [
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
   { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' },
@@ -112,8 +112,15 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.VoiceCall, name: '语音通话', icon: 'VoiceCall', color: 'slate' },
   { id: AppID.CognitiveNetwork, name: '认知网络', icon: 'CognitiveNetwork', color: 'violet' },
   { id: AppID.StatusWorkshop, name: '状态栏工坊', icon: 'StatusWorkshop', color: 'slate' },
+  { id: AppID.EchoRecord, name: '回声唱片', icon: 'Music', color: 'amber' },
   { id: AppID.Music, name: 'Emo Cloud', icon: 'Music', color: 'red' },
   { id: AppID.HalfSugar, name: '半糖主义', icon: 'HalfSugar', color: 'teal' },
 ];
+
+const HIDDEN_LAUNCHER_APPS = new Set<AppID>([
+  AppID.Crosstime,
+]);
+
+export const INSTALLED_APPS: AppConfig[] = APP_CONFIGS.filter(app => !HIDDEN_LAUNCHER_APPS.has(app.id));
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

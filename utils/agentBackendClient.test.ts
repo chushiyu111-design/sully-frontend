@@ -3,7 +3,9 @@
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import {
     buildAgentSseUrl,
+    fetchAgentLifeProfile,
     fetchPendingAgentMessages,
+    generateAgentLifeProfile,
     startAgentOnBackend,
 } from './agentBackendClient';
 import { getBackendToken } from './backendConfig';
@@ -85,5 +87,52 @@ describe('agentBackendClient', () => {
         expect(parsed.searchParams.get('userId')).toBe('csy-user-1');
         expect(parsed.searchParams.get('_clientId')).toBe('csy-client-1');
         expect(parsed.searchParams.get('token')).toBe(getBackendToken());
+    });
+
+    it('fetches a life profile by character id', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'missing' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(fetchAgentLifeProfile('char-1')).resolves.toEqual({ status: 'missing' });
+
+        expect(String(fetchMock.mock.calls[0][0])).toBe(
+            `${BACKEND_URL}/api/agent/life-profile?charId=char-1`,
+        );
+    });
+
+    it('posts context and optional secondary API config when generating a life profile', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ready', profile: { summary: 'ok' } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        }));
+
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(generateAgentLifeProfile('char-1', {
+            charId: 'char-1',
+            charName: 'Sully',
+        }, {
+            baseUrl: 'https://llm.example.com',
+            apiKey: 'sub-key',
+            model: 'profile-model',
+        })).resolves.toMatchObject({ status: 'ready' });
+
+        expect(String(fetchMock.mock.calls[0][0])).toBe(`${BACKEND_URL}/api/agent/life-profile/generate`);
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+            charId: 'char-1',
+            contextSnapshot: {
+                charId: 'char-1',
+                charName: 'Sully',
+            },
+            apiConfig: {
+                baseUrl: 'https://llm.example.com',
+                apiKey: 'sub-key',
+                model: 'profile-model',
+            },
+        });
     });
 });

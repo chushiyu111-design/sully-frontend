@@ -1,5 +1,5 @@
 import React,{ useState,useEffect } from 'react';
-import { INSTALLED_APPS,Icons } from '../../constants';
+import { APP_CONFIGS,Icons } from '../../constants';
 import { AppID } from '../../types';
 
 /**
@@ -47,7 +47,7 @@ const AppSplashScreen: React.FC<AppSplashScreenProps> = ({ appId }) => {
     if (!visible) return null;
 
     // 获取 App 元数据
-    const appConfig = appId ? INSTALLED_APPS.find(a => a.id === appId) : null;
+    const appConfig = appId ? APP_CONFIGS.find(a => a.id === appId) : null;
     const appName = appConfig?.name ?? 'SullyOS';
     const iconKey = appConfig?.icon ?? '';
     const colorKey = appConfig?.color ?? '';

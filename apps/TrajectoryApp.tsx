@@ -8,7 +8,7 @@ import type { CharacterProfile } from '../types';
 import { AppID } from '../types';
 import type { TrajectoryNode, TrajectoryMood } from '../types/trajectory';
 import { MOOD_COLORS } from '../types/trajectory';
-import { getTrajectoryNodes, saveTrajectoryNode } from '../utils/db/trajectoryStore';
+import { getTrajectoryNodes, saveTrajectoryNode, deleteTrajectoryNode } from '../utils/db/trajectoryStore';
 import {
     hasAnyMessages, initTrajectory, regenTrajectory, continueTrajectory, generateMonologue,
     generateAfterMonologue, generateWhisperResponse, createManualAfterNode, generateDreamEcho,
@@ -41,6 +41,7 @@ const TrajectoryApp: React.FC = () => {
     const [addTitle, setAddTitle] = useState('');
     const [addKeywords, setAddKeywords] = useState('');
     const [showRegenConfirm, setShowRegenConfirm] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isTtsPlaying, setIsTtsPlaying] = useState(false);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const audioUrlRef = useRef<string | null>(null);
@@ -250,6 +251,36 @@ const TrajectoryApp: React.FC = () => {
     }, [char, monoText, isTtsPlaying, stopTts, addToast]);
 
     useEffect(() => () => { stopTts(); }, []);
+
+    // ── Regenerate Monologue ──
+    const handleRegenMonologue = useCallback(async () => {
+        if (!char || !api || !activeNode || isMonoGen) return;
+        setIsMonoGen(true);
+        setMonoText('');
+        try {
+            const text = activeNode.era === 'before_meeting'
+                ? await generateMonologue(char, activeNode, api)
+                : await generateAfterMonologue(char, activeNode, userProfile.name, api);
+            setMonoText(text);
+            const updated = { ...activeNode, monologue: text, monologueGeneratedAt: Date.now() };
+            saveTrajectoryNode(updated);
+            setActiveNode(updated);
+            setNodes(prev => prev.map(n => n.id === activeNode.id ? updated : n));
+        } catch { addToast('重写失败', 'error'); }
+        finally { setIsMonoGen(false); }
+    }, [char, api, activeNode, isMonoGen, userProfile]);
+
+    // ── Delete Node ──
+    const handleDeleteNode = useCallback(() => {
+        if (!activeNode || !char) return;
+        deleteTrajectoryNode(char.id, activeNode.id);
+        setNodes(prev => prev.filter(n => n.id !== activeNode.id));
+        setView('timeline');
+        setActiveNode(null);
+        setMonoText('');
+        setShowDeleteConfirm(false);
+        addToast('节点已删除', 'info');
+    }, [activeNode, char, addToast]);
 
     // ── Helpers ──
     /** Capitalize first letter for decorative display */
@@ -812,6 +843,22 @@ const TrajectoryApp: React.FC = () => {
                                     whisper
                                 </button>
                             )}
+                            <button className="traj-mono-btn" onClick={handleRegenMonologue} disabled={isMonoGen}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 105.64-8.36L1 10"/></svg>
+                                rewrite
+                            </button>
+                            <button className="traj-mono-btn traj-mono-btn--danger" onClick={() => setShowDeleteConfirm(true)}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                                delete
+                            </button>
+                        </div>
+                    )}
+                    {/* Delete confirm */}
+                    {showDeleteConfirm && (
+                        <div className="traj-regen-toast">
+                            <span>确定删除这个节点吗？独白和窃语记录都会丢失</span>
+                            <button className="traj-regen-toast-btn traj-regen-toast-btn--cancel" onClick={() => setShowDeleteConfirm(false)}>取消</button>
+                            <button className="traj-regen-toast-btn traj-regen-toast-btn--confirm" onClick={handleDeleteNode}>删除</button>
                         </div>
                     )}
             </div>

@@ -42,6 +42,10 @@ vi.mock('../components/character/CharacterLocationSummaryCard', () => ({
     },
 }));
 
+vi.mock('../components/character/CharacterLifeProfileCard', () => ({
+    default: () => <div>Life Profile Card</div>,
+}));
+
 vi.mock('../utils/file', () => ({
     processImage: vi.fn(),
 }));

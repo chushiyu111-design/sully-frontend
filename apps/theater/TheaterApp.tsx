@@ -115,6 +115,42 @@ const getCurrentTheaterSessionMessages = (msgs: Message[], branchId?: string) =>
     return openingIndex >= 0 ? theatMsgs.slice(openingIndex) : theatMsgs;
 };
 
+const getTimelineRawMessagesForSummaryLookup = (allMsgs: Message[], charId: string, timelineId: string | null): Message[] => {
+    if (!timelineId) return allMsgs.filter(m => isTheaterRawMessage(m)).sort((a, b) => a.timestamp - b.timestamp);
+    const chain = resolveForkChain(charId, timelineId);
+    const result: Message[] = [];
+
+    for (let i = 0; i < chain.length; i++) {
+        const segment = chain[i];
+        const segmentMsgs = allMsgs.filter(m => isTheaterRawMessage(m, segment.timelineId));
+        if (i < chain.length - 1) {
+            const nextForkId = chain[i + 1].forkAfterMessageId;
+            result.push(...(nextForkId !== null ? segmentMsgs.filter(m => m.id <= nextForkId) : segmentMsgs));
+        } else {
+            result.push(...segmentMsgs);
+        }
+    }
+
+    return result.sort((a, b) => a.timestamp - b.timestamp);
+};
+
+const getSavedTheaterSummariesForTimeline = (allMsgs: Message[], charId: string, timelineId: string | null): Message[] => {
+    const sessionMessages = getCurrentTheaterSessionMessages(getTimelineRawMessagesForSummaryLookup(allMsgs, charId, timelineId));
+    if (sessionMessages.length === 0) return [];
+    const sessionStartMsgId = sessionMessages[0].id;
+    const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+    return allMsgs
+        .filter(isTheaterSummaryMessage)
+        .filter(summary =>
+            summary.metadata?.sessionStartMsgId === sessionStartMsgId
+            || (
+                Array.isArray(summary.metadata?.coveredMsgIds)
+                && summary.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
+            )
+        )
+        .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
+};
+
 const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
     const sessionMessages = getCurrentTheaterSessionMessages(msgs);
     if (sessionMessages.length === 0) return '';
@@ -173,6 +209,10 @@ const TheaterApp: React.FC = () => {
     const [pendingAutoSummary, setPendingAutoSummary] = useState<SummaryDraft | null>(null);
     const [showSummarySettings, setShowSummarySettings] = useState(false);
     const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
+    const [savedSummaryMessages, setSavedSummaryMessages] = useState<Message[]>([]);
+    const [showSavedSummaries, setShowSavedSummaries] = useState(false);
+    const [editingSavedSummary, setEditingSavedSummary] = useState<Message | null>(null);
+    const [savedSummaryEditContent, setSavedSummaryEditContent] = useState('');
     const summaryGeneratingRef = useRef(false);
 
     // ── Gallery Carousel State ──
@@ -331,6 +371,7 @@ const TheaterApp: React.FC = () => {
         const allMsgs = await DB.getMessagesByCharId(char.id);
         const visibleMsgs = getTimelineVisibleMessages(allMsgs, char.id, timeline.timelineId);
         setTheaterMessages(visibleMsgs);
+        setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, timeline.timelineId));
 
         if (loc) {
             setMode('session');
@@ -360,6 +401,8 @@ const TheaterApp: React.FC = () => {
         };
         setSession(newSession);
         setCurrentTimelineId(null); // will be created on first location
+        setSavedSummaryMessages([]);
+        setShowSavedSummaries(false);
         setMode('map');
     }, [char, addToast]);
 
@@ -664,9 +707,11 @@ const TheaterApp: React.FC = () => {
         const tlId = timelineIdRef.current;
         if (tlId) {
             setTheaterMessages(getTimelineVisibleMessages(allMsgs, char.id, tlId));
+            setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, tlId));
         } else {
             // Legacy fallback (no timeline yet)
             setTheaterMessages(allMsgs.filter(m => isTheaterMessage(m)).sort((a, b) => a.timestamp - b.timestamp));
+            setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, null));
         }
         return allMsgs;
     };
@@ -1080,9 +1125,14 @@ ${exitPromptContent}
 
     const saveSummaryDraft = async (draft: SummaryDraft) => {
         if (!char) return;
+        const content = draft.content.trim();
+        if (!content) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
         // Save summary as pure summary — NO bridge flag in metadata.
         const savedId = await DB.saveMessage({
-            charId: char.id, role: 'system', type: 'text', content: draft.content,
+            charId: char.id, role: 'system', type: 'text', content,
             metadata: {
                 source: 'theater', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
                 coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
@@ -1107,13 +1157,13 @@ ${exitPromptContent}
                 if (!embedKey) {
                     addToast('无法刻入向量记忆：未配置 Embedding API Key', 'error');
                 } else {
-                    const vector = await EmbeddingService.embed(draft.content, 'VECTOR_MEMORY', embedKey);
+                    const vector = await EmbeddingService.embed(content, 'VECTOR_MEMORY', embedKey);
                     const newMemId = crypto.randomUUID();
                     const newMem = {
                         id: newMemId,
                         charId: char.id,
                         title: '约会记忆总结',
-                        content: draft.content,
+                        content,
                         vector,
                         modelId: embedConfig.model,
                         source: 'import' as const,
@@ -1214,6 +1264,40 @@ ${exitPromptContent}
         addToast('总结设置已保存', 'success');
     };
 
+    const openSavedSummaryEditor = (summary: Message) => {
+        setShowSavedSummaries(false);
+        setEditingSavedSummary(summary);
+        setSavedSummaryEditContent(summary.content);
+    };
+
+    const closeSavedSummaryEditor = () => {
+        setEditingSavedSummary(null);
+        setSavedSummaryEditContent('');
+    };
+
+    const saveSavedSummaryEdit = async () => {
+        if (!editingSavedSummary) return;
+        const content = savedSummaryEditContent.trim();
+        if (!content) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
+
+        await DB.updateMessage(editingSavedSummary.id, content);
+        const allMsgs = await DB.getMessagesByCharId(editingSavedSummary.charId);
+        const bridges = allMsgs.filter(m =>
+            m.metadata?.source === editingSavedSummary.metadata?.source
+            && m.metadata?.isDateContextBridge === true
+            && m.metadata?.summarySourceMsgId === editingSavedSummary.id
+        );
+        await Promise.all(bridges.map(bridge => DB.updateMessage(bridge.id, content)));
+
+        closeSavedSummaryEditor();
+        await refreshTimelineMessages();
+        setShowSavedSummaries(true);
+        addToast('总结已保存', 'success');
+    };
+
     // ══════════════════════════════════════════════
     //  Exit & Sync
     // ══════════════════════════════════════════════
@@ -1229,6 +1313,10 @@ ${exitPromptContent}
         setCurrentLocation(null);
         setCurrentTimelineId(null);
         setTheaterMessages([]);
+        setSavedSummaryMessages([]);
+        setShowSavedSummaries(false);
+        setEditingSavedSummary(null);
+        setSavedSummaryEditContent('');
         setCurrentEvent(null);
         setIsTransitioning(false);
         setTransitionLocationName('');
@@ -1758,6 +1846,8 @@ ${exitPromptContent}
                     }}
                     onChangeThreshold={(t) => updateCharacter(char.id, { theaterSummaryAutoThreshold: t })}
                     onOpenSummarySettings={openSummarySettings}
+                    savedSummaryCount={savedSummaryMessages.length}
+                    onOpenSavedSummaries={() => setShowSavedSummaries(true)}
                     isTransitioning={isTransitioning}
                     transitionLocationName={transitionLocationName}
                     pendingLocationSuggestion={pendingLocationSuggestion}
@@ -1795,19 +1885,79 @@ ${exitPromptContent}
                     )}
                 </Modal>
 
+                {/* Saved Summaries Modal */}
+                <Modal isOpen={showSavedSummaries} title="已保存总结" onClose={() => setShowSavedSummaries(false)} footer={
+                    <button onClick={() => setShowSavedSummaries(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">关闭</button>
+                }>
+                    <div className="space-y-3">
+                        {savedSummaryMessages.length === 0 ? (
+                            <div className="py-8 text-center text-xs text-slate-400">当前世界线还没有保存过总结</div>
+                        ) : savedSummaryMessages.map(summary => (
+                            <div key={summary.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                        {summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结'}
+                                    </div>
+                                    <button
+                                        onClick={() => openSavedSummaryEditor(summary)}
+                                        className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-white rounded-full hover:bg-slate-100 transition-colors"
+                                    >
+                                        编辑
+                                    </button>
+                                </div>
+                                <div className="text-xs leading-relaxed text-slate-700">
+                                    {renderMarkdown(summary.content)}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </Modal>
+
+                {/* Saved Summary Edit Modal */}
+                <Modal isOpen={!!editingSavedSummary} title="编辑总结" onClose={closeSavedSummaryEditor} footer={
+                    <>
+                        <button onClick={closeSavedSummaryEditor} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">取消</button>
+                        <button disabled={!savedSummaryEditContent.trim()} onClick={saveSavedSummaryEdit} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50">保存</button>
+                    </>
+                }>
+                    <textarea
+                        value={savedSummaryEditContent}
+                        onChange={e => setSavedSummaryEditContent(e.target.value)}
+                        rows={10}
+                        className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                    />
+                </Modal>
+
                 {/* Summary Preview Modal */}
                 {activeSummaryDraft && (
                     <Modal isOpen={!!activeSummaryDraft} title="剧场总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
                         <>
                             <button onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">复制</button>
                             <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
-                            <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{activeSummaryDraft.bridgeOnSave ? '保存并同步' : '保存'}</button>
+                            <button disabled={!activeSummaryDraft.content.trim()} onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50">{activeSummaryDraft.bridgeOnSave ? '保存并同步' : '保存'}</button>
                         </>
                     }>
                         <div className="flex flex-col gap-4">
-                            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
-                                {renderMarkdown(activeSummaryDraft.content)}
+                            <div>
+                                <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                    <span>总结正文</span>
+                                    <span>{activeSummaryDraft.content.trim().length} 字</span>
+                                </div>
+                                <textarea
+                                    value={activeSummaryDraft.content}
+                                    onChange={e => setActiveSummaryDraft(current => current ? { ...current, content: e.target.value } : current)}
+                                    rows={10}
+                                    className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                                />
                             </div>
+                            {activeSummaryDraft.content.trim() && (
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">排版预览</div>
+                                    <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+                                        {renderMarkdown(activeSummaryDraft.content)}
+                                    </div>
+                                </div>
+                            )}
                             {activeSummaryDraft.summaryType === 'manual' && activeSummaryDraft.bridgeOnSave && (
                                 <label className="flex items-center gap-2 mt-4 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200 transition-colors hover:bg-slate-100">
                                     <input 

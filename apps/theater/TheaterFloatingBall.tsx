@@ -63,6 +63,8 @@ interface TheaterFloatingBallProps {
     onToggleAutoHideSummary?: (enabled: boolean) => void;
     onChangeThreshold?: (threshold: number) => void;
     onOpenSummarySettings?: () => void;
+    savedSummaryCount?: number;
+    onOpenSavedSummaries?: () => void;
     /** Character state for reading toggles */
     theaterSummaryAutoEnabled?: boolean;
     theaterSummaryAutoHideEnabled?: boolean;
@@ -137,7 +139,9 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
     summaryDisabledReason,
     onRequestSummary, onReviewPendingSummary, onDiscardPendingSummary,
     onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold: _onChangeThreshold,
-    onOpenSummarySettings: _onOpenSummarySettings,
+    onOpenSummarySettings,
+    savedSummaryCount = 0,
+    onOpenSavedSummaries,
     theaterSummaryAutoEnabled, theaterSummaryAutoHideEnabled, theaterSummaryAutoThreshold: _theaterSummaryAutoThreshold,
 }) => {
     const storageKey = `theater_ball_pos_${charId}`;
@@ -439,6 +443,10 @@ const TheaterFloatingBall: React.FC<TheaterFloatingBallProps> = memo(({
                                                 <button type="button" onClick={onDiscardPendingSummary} style={{fontSize:8,padding:'3px 6px',borderRadius:6,background:'rgba(200,180,190,0.12)',color:P.textSec,border:'none',cursor:'pointer'}}>丢弃</button>
                                             </div>
                                         )}
+                                        <div style={{display:'flex',gap:4,marginBottom:5}}>
+                                            <button type="button" onClick={()=>{setPanelOpen(false);onOpenSavedSummaries?.();}} disabled={savedSummaryCount===0} style={{flex:1,fontSize:8,padding:'4px 0',borderRadius:8,background:'rgba(255,245,250,0.65)',color:savedSummaryCount>0?P.textPri:P.textSec,border:`1px solid ${P.divider}`,cursor:savedSummaryCount>0?'pointer':'default',fontWeight:700,opacity:savedSummaryCount>0?1:0.45}}>已存总结 {savedSummaryCount}</button>
+                                            <button type="button" onClick={()=>{setPanelOpen(false);onOpenSummarySettings?.();}} style={{fontSize:8,padding:'4px 7px',borderRadius:8,background:'rgba(255,245,250,0.65)',color:P.textSec,border:`1px solid ${P.divider}`,cursor:'pointer',fontWeight:600}}>设置</button>
+                                        </div>
                                         <div style={{display:'flex',justifyContent:'center'}}>
                                             <button type="button" onClick={onRequestSummary} disabled={isSummaryGenerating||!canManualSummary} style={{width:'78%',fontSize:9,padding:'5px 0',borderRadius:10,background:P.btnPinkSolid,color:'#fff',border:'none',cursor:'pointer',fontWeight:700,opacity:(isSummaryGenerating||!canManualSummary)?0.35:1,boxShadow:'0 2px 6px rgba(255,107,149,0.25)'}}>
                                                 {isSummaryGenerating ? '整理中…' : '✦ 立即整理'}

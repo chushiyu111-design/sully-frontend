@@ -168,7 +168,9 @@ describe('ChatPrompts life anchor injection', () => {
         );
 
         expect(systemPrompt).toContain('<cot_ds>');
-        expect(systemPrompt).toContain('回复前先在 <think> 内完成下面 3 步简短检查；闭合 </think> 后再输出正文。');
+        expect(systemPrompt).toContain('回复前先在 <think> 内做一轮「角色心绪校准」');
+        expect(systemPrompt).toContain('━━ Step 0: 回到我自己 ━━');
+        expect(systemPrompt).toContain('━━ Step 5: 发出去前 ━━');
         expect(systemPrompt).not.toContain('<CRITICAL_OUTPUT_FORMAT>');
         expect(systemPrompt).not.toContain('First token must be');
         expect(systemPrompt).not.toContain('开始思考，不得遗漏起始标签');

@@ -1,7 +1,6 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars,migrateCloudCharacterInstance } from '../utils/backendClient';
 import { DB } from '../utils/db';
 import { useOS } from '../context/OSContext';
@@ -10,14 +9,8 @@ import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig
 import { safeTimeoutSignal } from '../utils/safeTimeout';
 import { findCharacterByAnyId,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
 import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
-import { MEMORY_RECORD_MODE_COPY,produceMemoryRecordAudio,shouldGenerateMemoryRecordMonologue,generateLyrics,checkLyricSingability,optimizeLyrics,generateStylePrompt,createRecordId,COVER_GRADIENTS,type MemoryRecordMemoryHeader,type SingabilityCheckResult,type StylePromptResult } from '../utils/memoryRecordService';
-import { getMemoryRecordCoverImage } from '../utils/memoryRecordCovers';
-import { hasPlayableMemoryRecordAudio,memoryRecordToPlayable } from '../utils/memoryRecordPlayable';
-import { shareMemoryRecordPoster } from '../utils/memoryRecordShare';
-import type { CharacterProfile,MemoryRecord,MemoryRecordMode,MemoryRecordSongRequest } from '../types';
-import type { MemoryRecordPlayable } from '../types/music';
-import { MEMORY_RECORD_STATUS_LABELS } from '../types';
-import MemoryRecordShareModal from '../components/music/MemoryRecordShareModal';
+import { AppID,type CharacterProfile } from '../types';
+import MemoryBrowser from '../components/cognitive/MemoryBrowser';
 
 /* Recovered comment */
 
@@ -92,52 +85,6 @@ interface DistillResult {
     resetStats?: DistillResetStats;
 }
 
-type MemoryRecordFlowStatus =
-    | 'idle'
-    | 'generating_lyrics'
-    | 'lyrics_ready'
-    | 'checking_singability'
-    | 'singability_checked'
-    | 'optimizing_lyrics'
-    | 'lyrics_optimized'
-    | 'revising_lyrics'
-    | 'lyrics_confirmed'
-    | 'generating_style'
-    | 'style_ready'
-    | 'generating_song'
-    | 'song_ready'
-    | 'error';
-
-interface LyricsEditorDraft {
-    title: string;
-    lyrics: string;
-    stylePrompt: string;
-    negativeStylePrompt: string;
-    revisionInstruction: string;
-    lyricistReference: string;
-    optimizedLyrics?: string;
-    optimizedTitle?: string;
-    optimizationNotes?: import('../types').OptimizationNotes;
-}
-
-const createEmptySongRequest = (): MemoryRecordSongRequest => ({
-    theme: '',
-    mood: '',
-    style: '',
-    perspective: '',
-    voicePreference: '',
-    extraRequirements: '',
-});
-
-const createEmptyLyricsDraft = (): LyricsEditorDraft => ({
-    title: '',
-    lyrics: '',
-    stylePrompt: '',
-    negativeStylePrompt: '',
-    revisionInstruction: '',
-    lyricistReference: '',
-});
-
 const ORPHAN_PREVIEW_LIMIT = 3;
 
 function formatOrphanPreviewDate(timestamp?: number): string {
@@ -167,17 +114,6 @@ function getOrphanGroupLabel(index: number, total: number): string {
     return total > 1 ? `第 ${index + 1} 组待归档回忆` : '一组待归档回忆';
 }
 
-function normalizeSongRequest(request: MemoryRecordSongRequest): MemoryRecordSongRequest {
-    return {
-        theme: request.theme.trim(),
-        mood: request.mood.trim(),
-        style: request.style.trim(),
-        perspective: request.perspective.trim(),
-        voicePreference: request.voicePreference?.trim() || undefined,
-        extraRequirements: request.extraRequirements?.trim() || undefined,
-    };
-}
-
 /* Recovered comment */
 
 const HOME_MEMORY_MOTES = [
@@ -194,12 +130,11 @@ const HOME_MEMORY_MOTES = [
 ] as const;
 
 const CognitiveNetworkApp: React.FC = () => {
-    const { closeApp, addToast, characters, userProfile, apiConfig, ttsConfig } = useOS();
-    const { playSong } = useAudioPlayer();
+    const { closeApp, openApp, addToast, characters, userProfile, setActiveCharacterId } = useOS();
     const [allStats, setAllStats] = useState<PerCharStatsResponse | null>(null);
     const [statsFailed, setStatsFailed] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [selectedCharId, setSelectedCharId] = useState<string | null>(null); // null = 鍏ㄩ儴瑙掕壊
+    const [selectedCharId, setSelectedCharId] = useState<string | null>(null); // null = 全部角色
     const [backfillResult, setBackfillResult] = useState<BackfillResult | null>(null);
     const [semanticResult, setSemanticResult] = useState<SemanticResult | null>(null);
     const [backfilling, setBackfilling] = useState(false);
@@ -231,38 +166,6 @@ const CognitiveNetworkApp: React.FC = () => {
     const [distillRebuilding, setDistillRebuilding] = useState(false);
     const [distillResetStats, setDistillResetStats] = useState<({ charId: string } & DistillResetStats) | null>(null);
 
-    // Memory Browser state
-    const [browserOpen, setBrowserOpen] = useState(false);
-    const [browserMemories, setBrowserMemories] = useState<any[] | null>(null);
-    const [browserLoading, setBrowserLoading] = useState(false);
-    const [browserLevel, setBrowserLevel] = useState<'all' | '0' | '1' | 'musing'>('all');
-    const [browserCounts, setBrowserCounts] = useState<{ total: number; l0: number; l1: number; musing: number }>({ total: 0, l0: 0, l1: 0, musing: 0 });
-    const [expandedMemId, setExpandedMemId] = useState<string | null>(null);
-    const [editingMemId, setEditingMemId] = useState<string | null>(null);
-    const [editDraft, setEditDraft] = useState<{ title: string; content: string; importance: number } | null>(null);
-    const [saving, setSaving] = useState(false);
-    const [recordMode, setRecordMode] = useState<MemoryRecordMode>('blind_box');
-    const [recordReference, setRecordReference] = useState('');
-    const [selectedRecordMemoryIds, setSelectedRecordMemoryIds] = useState<string[]>([]);
-    const [recordMemoryOptions, setRecordMemoryOptions] = useState<MemoryRecordMemoryHeader[]>([]);
-    const [recordMemoryOptionsLoading, setRecordMemoryOptionsLoading] = useState(false);
-    const [recordMemoryOptionsError, setRecordMemoryOptionsError] = useState('');
-    const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>([]);
-    const [shareModalPlayable, setShareModalPlayable] = useState<MemoryRecordPlayable | null>(null);
-    const [isSharingMemoryRecord, setIsSharingMemoryRecord] = useState(false);
-    const [recordGenerating, setRecordGenerating] = useState(false);
-    const [recordStatusText, setRecordStatusText] = useState('');
-    const [recordFlowStatus, setRecordFlowStatus] = useState<MemoryRecordFlowStatus>('idle');
-    const [recordSongRequest, setRecordSongRequest] = useState<MemoryRecordSongRequest>(() => createEmptySongRequest());
-    const [activeDraftRecordId, setActiveDraftRecordId] = useState<string | null>(null);
-    const [lyricsDraft, setLyricsDraft] = useState<LyricsEditorDraft>(() => createEmptyLyricsDraft());
-    const [recordFlowError, setRecordFlowError] = useState('');
-    const [singabilityResult, setSingabilityResult] = useState<SingabilityCheckResult | null>(null);
-    const [stylePromptResult, setStylePromptResult] = useState<StylePromptResult | null>(null);
-    const [showOptimizedLyrics, setShowOptimizedLyrics] = useState(false);
-    const monologuePreviewRef = React.useRef<HTMLAudioElement | null>(null);
-    const monologuePreviewUrlRef = React.useRef<string | null>(null);
-
     // Cloud Sync state
     const [syncCodeVisible, setSyncCodeVisible] = useState(false);
     const [bindInput, setBindInput] = useState('');
@@ -286,15 +189,15 @@ const CognitiveNetworkApp: React.FC = () => {
         return found?.avatar || '';
     }, [characters]);
 
-    const selectedBrowserChar = useMemo(
+    const selectedMemoryChar = useMemo(
         () => findCharacterByAnyId(characters, selectedCharId),
         [characters, selectedCharId]
     );
 
     const selectedBackendCharId = useMemo(() => {
         if (!selectedCharId) return null;
-        return selectedBrowserChar ? selectedBrowserChar.id : selectedCharId;
-    }, [selectedBrowserChar, selectedCharId]);
+        return selectedMemoryChar ? selectedMemoryChar.id : selectedCharId;
+    }, [selectedMemoryChar, selectedCharId]);
 
     const authHeaders = useCallback(() => {
         const h = buildBackendHeaders();
@@ -313,8 +216,6 @@ const CognitiveNetworkApp: React.FC = () => {
     void semanticResult;
     void semanticRebuildResult;
     void distillResetStats;
-    void browserOpen;
-    void setBrowserOpen;
     void charAvatarMap;
     void hasSubApi;
     void hasEmbeddingApi;
@@ -374,7 +275,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
     const activeClaimPreview = claimDrawerCharId ? orphanPreviews[claimDrawerCharId] : undefined;
 
-    // 鍒濇杩炴帴鍚庡彧鎷夊彇涓€娆＄粺璁★紝閬垮厤閲嶅璇锋眰
+    // 初次连接后只拉取一次统计，避免重复请求
     const statsLoaded = React.useRef(false);
     useEffect(() => {
         if (isConnected && !statsLoaded.current) {
@@ -398,7 +299,7 @@ const CognitiveNetworkApp: React.FC = () => {
             setAllStats(data);
             setStatsFailed(false);
         } catch (e: any) {
-            console.warn('鍔犺浇鍥捐氨缁熻澶辫触', e);
+            console.warn('加载图谱统计失败', e);
             setStatsFailed(true);
             // Set empty stats so the page doesn't get stuck on spinner
             setAllStats(prev => prev ?? { characters: [], graph: { nodes: 0, edges: 0 } });
@@ -631,7 +532,7 @@ const CognitiveNetworkApp: React.FC = () => {
                 return;
             }
 
-            // 鍚庣鍏堟妸闇€瑕佽ˉ璇箟杈圭殑璁板繂鍏ラ槦锛岀湡姝ｉ€愭潯澶勭悊浠嶈蛋 semantic-process-one
+            // 后端先把需要补语义边的记忆入队，真正逐条处理仍走 semantic-process-one
             const { done, errors, aborted } = await runSemanticQueue(url, result.totalQueued, { mode: 'semantic' });
             if (!aborted && done > 0) {
                 addToast(`已为 ${done} 段回忆找到新的联系${errors > 0 ? `，另有 ${errors} 段暂未完成` : ''}`, 'success');
@@ -693,7 +594,7 @@ const CognitiveNetworkApp: React.FC = () => {
         }
     }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
 
-    // Distillation 闇€瑕佸畬鏁?embedding 閰嶇疆锛屽洜姝や娇鐢?fullHeaders
+    // Distillation 需要完整 embedding 配置，因此使用 fullHeaders
     const doDistill = useCallback(async () => {
         const url = getBackendUrl();
         if (!url || !selectedBackendCharId) return;
@@ -765,54 +666,6 @@ const CognitiveNetworkApp: React.FC = () => {
             setShowConfirm(prev => prev === 'distillRebuild' ? null : prev);
         }
     }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
-
-    // Memory browser
-    const fetchBrowserMemories = useCallback(async (level?: 'all' | '0' | '1' | 'musing') => {
-        const url = getBackendUrl();
-        if (!url || !selectedBackendCharId) return;
-        setBrowserLoading(true);
-        try {
-            const lvl = level || browserLevel;
-            // For 'musing', fetch all and filter client-side by source
-            const apiLevel = (lvl === 'musing' || lvl === 'all') ? undefined : lvl;
-            const params = apiLevel ? `?level=${apiLevel}` : '';
-            const resp = await fetch(`${url}/api/memories/browse/${selectedBackendCharId}${params}`, { headers: authHeaders() });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            const allMemories = data.memories || [];
-            const musingCount = allMemories.filter((m: any) => m.source === 'musing').length;
-            setBrowserMemories(lvl === 'musing' ? allMemories.filter((m: any) => m.source === 'musing') : allMemories);
-            setBrowserCounts({ total: data.count, l0: data.l0Count, l1: data.l1Count, musing: musingCount });
-        } catch (e: any) { addToast(`载入失败: ${e.message}`, 'error'); }
-        finally { setBrowserLoading(false); }
-    }, [authHeaders, selectedBackendCharId, browserLevel, addToast]);
-
-    // Auto-fetch when switching to browser tab
-    useEffect(() => {
-        if (activeTab === 'browser' && selectedBackendCharId && !browserMemories) {
-            fetchBrowserMemories();
-        }
-    }, [activeTab, selectedBackendCharId, browserMemories, fetchBrowserMemories]);
-
-    const doSaveEdit = useCallback(async (memId: string) => {
-        const url = getBackendUrl();
-        if (!url || !editDraft) return;
-        setSaving(true);
-        try {
-            const resp = await fetch(`${url}/api/memories/${memId}`, {
-                method: 'PATCH', headers: authHeaders(),
-                body: JSON.stringify({ title: editDraft.title, content: editDraft.content, importance: editDraft.importance }),
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            addToast('已保存', 'success');
-            setEditingMemId(null);
-            setEditDraft(null);
-            fetchBrowserMemories();
-        } catch (e: any) { addToast(`保存失败: ${e.message}`, 'error'); }
-        finally { setSaving(false); }
-    }, [authHeaders, editDraft, addToast, fetchBrowserMemories]);
-
-
 
     // ─── Sync helpers (used by sync view) ───
     const handleAbortSemantic = useCallback(() => {
@@ -913,7 +766,6 @@ const CognitiveNetworkApp: React.FC = () => {
 
             const movedCount = Number(cloudResult.counts?.memories || localResult.vectorMemories || pulled || 0);
             setSelectedCharId(targetChar.id);
-            setBrowserMemories(null);
             setSyncResult({ pushed: 0, pulled: movedCount });
             await fetchStats();
             addToast(`已把 ${movedCount} 段云端回忆归档到 ${targetChar.name}`, 'success');
@@ -929,10 +781,10 @@ const CognitiveNetworkApp: React.FC = () => {
 
     const openClaimDrawer = useCallback((cloudCharId: string) => {
         setClaimDrawerCharId(cloudCharId);
-        setClaimTargetCharId(selectedBrowserChar?.id || null);
+        setClaimTargetCharId(selectedMemoryChar?.id || null);
         fetchOrphanPreview(cloudCharId, { retry: true });
         haptic.light();
-    }, [fetchOrphanPreview, selectedBrowserChar]);
+    }, [fetchOrphanPreview, selectedMemoryChar]);
 
     const closeClaimDrawer = useCallback(() => {
         setClaimDrawerCharId(null);
@@ -972,730 +824,13 @@ const CognitiveNetworkApp: React.FC = () => {
         haptic.medium();
     }, [addToast, bindInput]);
 
-    const activeDraftRecord = useMemo(
-        () => activeDraftRecordId ? memoryRecords.find(record => record.id === activeDraftRecordId) || null : null,
-        [activeDraftRecordId, memoryRecords]
-    );
-
-    const upsertMemoryRecord = useCallback((record: MemoryRecord) => {
-        setMemoryRecords(prev => {
-            const next = [record, ...prev.filter(item => item.id !== record.id)];
-            return next.sort((a, b) => b.createdAt - a.createdAt);
+    const handleOpenSourceInChat = useCallback((charId: string, messageId: number) => {
+        setActiveCharacterId(charId);
+        openApp(AppID.Chat, {
+            targetCharId: charId,
+            targetMessageId: messageId,
         });
-    }, []);
-
-    const loadMemoryRecords = useCallback(async () => {
-        if (!selectedCharId) {
-            setMemoryRecords([]);
-            return;
-        }
-
-        try {
-            const records = await DB.getMemoryRecords(selectedCharId);
-            setMemoryRecords(records);
-        } catch (e: any) {
-            addToast(`唱片载入失败: ${e.message}`, 'error');
-        }
-    }, [addToast, selectedCharId]);
-
-    useEffect(() => {
-        if (activeTab === 'browser') {
-            loadMemoryRecords();
-        }
-    }, [activeTab, loadMemoryRecords]);
-
-    const loadRecordIntoLyricsEditor = useCallback((record: MemoryRecord, status: MemoryRecordFlowStatus = 'lyrics_ready') => {
-        setActiveDraftRecordId(record.id);
-        setLyricsDraft({
-            title: record.title,
-            lyrics: record.lyrics,
-            stylePrompt: record.stylePrompt || record.musicPrompt || '',
-            negativeStylePrompt: record.negativeStylePrompt || '',
-            revisionInstruction: '',
-            lyricistReference: '',
-        });
-        setRecordSongRequest({
-            ...createEmptySongRequest(),
-            ...(record.songRequest || {}),
-        });
-        setSingabilityResult(record.singabilityCheck ? {
-            score: record.singabilityCheck.score,
-            summary: record.singabilityCheck.summary,
-            shouldOptimize: record.singabilityCheck.should_optimize,
-            issues: record.singabilityCheck.issues,
-        } : null);
-        if (record.musicDirectorNotes && (record.stylePrompt || record.musicPrompt)) {
-            setStylePromptResult({
-                musicDirectorNotes: record.musicDirectorNotes || {
-                    song_type: '', emotional_core: '', vocal_character: '', dynamic_curve: '',
-                    arrangement_strategy: '', chorus_strategy: '', bridge_strategy: '',
-                    final_chorus_strategy: '', outro_strategy: '', avoid: [],
-                },
-                stylePrompt: record.stylePrompt || record.musicPrompt || '',
-                negativeStylePrompt: record.negativeStylePrompt || '',
-            });
-        } else {
-            setStylePromptResult(null);
-        }
-        setShowOptimizedLyrics(false);
-        setRecordFlowError(record.error || '');
-        setRecordFlowStatus(status);
-    }, []);
-
-    useEffect(() => {
-        if (!selectedCharId) {
-            setActiveDraftRecordId(null);
-            setLyricsDraft(createEmptyLyricsDraft());
-            setRecordSongRequest(createEmptySongRequest());
-            setRecordFlowStatus('idle');
-            setRecordFlowError('');
-            return;
-        }
-
-        const active = activeDraftRecordId ? memoryRecords.find(record => record.id === activeDraftRecordId) : null;
-        if (active?.charId === selectedCharId) return;
-
-        const latestDraft = memoryRecords.find(record =>
-            record.charId === selectedCharId
-            && record.status === 'draft'
-            && !record.musicAudioId
-        );
-
-        if (latestDraft) {
-            loadRecordIntoLyricsEditor(latestDraft);
-        } else {
-            setActiveDraftRecordId(null);
-            setLyricsDraft(createEmptyLyricsDraft());
-            setRecordSongRequest(createEmptySongRequest());
-            setRecordFlowStatus('idle');
-            setRecordFlowError('');
-        }
-    }, [activeDraftRecordId, loadRecordIntoLyricsEditor, memoryRecords, selectedCharId]);
-
-    useEffect(() => {
-        setSelectedRecordMemoryIds([]);
-        setRecordMemoryOptions([]);
-        setRecordMemoryOptionsError('');
-    }, [selectedCharId, recordMode]);
-
-    useEffect(() => {
-        if (recordMode !== 'selected_memory' || !selectedCharId) {
-            setRecordMemoryOptionsLoading(false);
-            return;
-        }
-
-        let alive = true;
-        setRecordMemoryOptionsLoading(true);
-        setRecordMemoryOptionsError('');
-
-        DB.getVectorMemoryHeaders(selectedCharId)
-            .then((headers) => {
-                if (!alive) return;
-                const options = headers
-                    .filter((memory) => !memory.deprecated)
-                    .sort((a, b) => (b.lastMentioned || b.createdAt || 0) - (a.lastMentioned || a.createdAt || 0));
-                setRecordMemoryOptions(options);
-            })
-            .catch((error: any) => {
-                if (!alive) return;
-                setRecordMemoryOptions([]);
-                setRecordMemoryOptionsError(error?.message || '读取记忆失败');
-            })
-            .finally(() => {
-                if (alive) setRecordMemoryOptionsLoading(false);
-            });
-
-        return () => {
-            alive = false;
-        };
-    }, [recordMode, selectedCharId]);
-
-    const toggleRecordMemorySeed = useCallback((memoryId: string) => {
-        setSelectedRecordMemoryIds(prev => {
-            if (prev.includes(memoryId)) return prev.filter(id => id !== memoryId);
-            return [...prev, memoryId].slice(0, 8);
-        });
-        haptic.light();
-    }, []);
-
-    const playMemoryRecord = useCallback((record: MemoryRecord) => {
-        if (!hasPlayableMemoryRecordAudio(record)) {
-            addToast(record.monologueAudioId ? '独白已经生成，歌曲分轨还没回来，先重压一次' : '这张还停在内页里，先重压一次再听', 'info');
-            return;
-        }
-
-        const playable = memoryRecordToPlayable(record);
-        void playSong(playable, [playable]);
-        addToast('已放进 Emo Cloud', 'success');
-    }, [addToast, playSong]);
-
-    const stopMonologuePreview = useCallback(() => {
-        if (monologuePreviewRef.current) {
-            monologuePreviewRef.current.pause();
-            monologuePreviewRef.current = null;
-        }
-        if (monologuePreviewUrlRef.current) {
-            URL.revokeObjectURL(monologuePreviewUrlRef.current);
-            monologuePreviewUrlRef.current = null;
-        }
-    }, []);
-
-    useEffect(() => stopMonologuePreview, [stopMonologuePreview]);
-
-    const previewMemoryRecordMonologue = useCallback(async (record: MemoryRecord) => {
-        if (!shouldGenerateMemoryRecordMonologue(record.mode) || !record.monologueAudioId) {
-            addToast('这张没有可试听的独白分轨', 'info');
-            return;
-        }
-
-        try {
-            stopMonologuePreview();
-            const blob = await DB.getMemoryRecordAudio(record.monologueAudioId);
-            if (!blob) throw new Error('独白音频不在本机了');
-
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            monologuePreviewRef.current = audio;
-            monologuePreviewUrlRef.current = url;
-            audio.onended = stopMonologuePreview;
-            audio.onerror = stopMonologuePreview;
-            await audio.play();
-            addToast('正在试听独白', 'success');
-        } catch (e: any) {
-            stopMonologuePreview();
-            addToast(`独白试听失败: ${e.message}`, 'error');
-        }
-    }, [addToast, stopMonologuePreview]);
-
-    const persistMemoryRecord = useCallback(async (record: MemoryRecord): Promise<MemoryRecord> => {
-        await DB.saveMemoryRecord(record);
-        upsertMemoryRecord(record);
-        return record;
-    }, [upsertMemoryRecord]);
-
-    const saveActiveLyricsSnapshot = useCallback(async (): Promise<MemoryRecord> => {
-        if (!activeDraftRecord) {
-            throw new Error('还没有可确认的歌词草稿');
-        }
-
-        const next: MemoryRecord = {
-            ...activeDraftRecord,
-            title: lyricsDraft.title.trim(),
-            lyrics: lyricsDraft.lyrics.trim(),
-            musicPrompt: lyricsDraft.stylePrompt.trim() || activeDraftRecord.musicPrompt,
-            stylePrompt: lyricsDraft.stylePrompt.trim() || undefined,
-            negativeStylePrompt: lyricsDraft.negativeStylePrompt.trim() || undefined,
-            songRequest: normalizeSongRequest(recordSongRequest),
-            updatedAt: Date.now(),
-        };
-        return persistMemoryRecord(next);
-    }, [activeDraftRecord, lyricsDraft.lyrics, lyricsDraft.stylePrompt, lyricsDraft.negativeStylePrompt, lyricsDraft.title, persistMemoryRecord, recordSongRequest]);
-
-    const handleLyricsFieldChange = useCallback((field: keyof Pick<LyricsEditorDraft, 'title' | 'stylePrompt' | 'negativeStylePrompt' | 'lyrics' | 'revisionInstruction' | 'lyricistReference'>, value: string) => {
-        setLyricsDraft(prev => ({ ...prev, [field]: value }));
-
-        if (!activeDraftRecord || field === 'revisionInstruction' || field === 'lyricistReference') return;
-
-        const patch: Partial<MemoryRecord> =
-            field === 'title'
-                ? { title: value }
-                : field === 'stylePrompt'
-                    ? { musicPrompt: value, stylePrompt: value }
-                    : field === 'negativeStylePrompt'
-                        ? { negativeStylePrompt: value }
-                        : { lyrics: value };
-        const next: MemoryRecord = {
-            ...activeDraftRecord,
-            ...patch,
-            songRequest: normalizeSongRequest(recordSongRequest),
-            updatedAt: Date.now(),
-        };
-        upsertMemoryRecord(next);
-        void DB.saveMemoryRecord(next).catch((e: any) => {
-            addToast(`歌词草稿保存失败: ${e.message}`, 'error');
-        });
-    }, [activeDraftRecord, addToast, recordSongRequest, upsertMemoryRecord]);
-
-    const handleSongRequestChange = useCallback((field: keyof MemoryRecordSongRequest, value: string) => {
-        setRecordSongRequest(prev => {
-            const nextRequest = { ...prev, [field]: value };
-            if (activeDraftRecord) {
-                const nextRecord: MemoryRecord = {
-                    ...activeDraftRecord,
-                    songRequest: normalizeSongRequest(nextRequest),
-                    updatedAt: Date.now(),
-                };
-                upsertMemoryRecord(nextRecord);
-                void DB.saveMemoryRecord(nextRecord).catch((e: any) => {
-                    addToast(`写歌需求保存失败: ${e.message}`, 'error');
-                });
-            }
-            return nextRequest;
-        });
-    }, [activeDraftRecord, addToast, upsertMemoryRecord]);
-
-    const removeGeneratedMusicArtifacts = useCallback(async (record: MemoryRecord): Promise<void> => {
-        const ids = [record.musicAudioId, record.masterAudioId].filter((id): id is string => Boolean(id));
-        await Promise.all(ids.map(id => DB.deleteMemoryRecordAudio(id)));
-    }, []);
-
-    // ── 阶段 1: 只生成歌词（不含 style_prompt）──
-    const handleCreateMemoryRecord = useCallback(async () => {
-        if (!selectedCharId || !selectedBrowserChar) {
-            addToast('先选一个人，唱片匣才知道要为谁落针', 'info');
-            return;
-        }
-        if (!recordSongRequest.theme.trim()) {
-            addToast('先写一个歌曲主题，歌词才知道从哪里落笔', 'info');
-            return;
-        }
-        if (recordMode === 'selected_memory' && selectedRecordMemoryIds.length === 0) {
-            addToast('亲手封存要先挑至少一段记忆', 'info');
-            return;
-        }
-
-        setRecordGenerating(true);
-        setRecordFlowStatus('generating_lyrics');
-        setRecordFlowError('');
-        setRecordStatusText('正在生成歌词...');
-        setSingabilityResult(null);
-        setStylePromptResult(null);
-        setShowOptimizedLyrics(false);
-
-        try {
-            const memoryHeaders = await DB.getVectorMemoryHeaders(selectedCharId);
-            const result = await generateLyrics({
-                char: selectedBrowserChar,
-                userProfile,
-                mode: recordMode,
-                memories: memoryHeaders,
-                apiConfig,
-                selectedMemoryIds: recordMode === 'selected_memory' ? selectedRecordMemoryIds : undefined,
-                inspirationReference: recordReference,
-                songRequest: normalizeSongRequest(recordSongRequest),
-                contextBudget: 'expanded',
-            });
-
-            const now = Date.now();
-            const recordId = createRecordId();
-            const draft: MemoryRecord = {
-                id: recordId,
-                charId: selectedBrowserChar.id,
-                charName: selectedBrowserChar.name,
-                userName: userProfile.name || '你',
-                mode: recordMode,
-                status: 'draft',
-                title: result.title,
-                albumName: '回忆唱片匣',
-                artistName: selectedBrowserChar.name,
-                monologueText: '',
-                lyrics: result.lyrics,
-                musicPrompt: '',
-                lyricIntent: result.lyricIntent,
-                songRequest: normalizeSongRequest(recordSongRequest),
-                inspirationReference: recordReference?.trim() || undefined,
-                coverGradient: COVER_GRADIENTS[Math.floor(Math.random() * COVER_GRADIENTS.length)],
-                seedMemoryIds: [],
-                selectedMemoryIds: recordMode === 'selected_memory' ? selectedRecordMemoryIds?.slice() : undefined,
-                createdAt: now,
-                updatedAt: now,
-            };
-
-            await DB.saveMemoryRecord(draft);
-            upsertMemoryRecord(draft);
-            setLyricsDraft({
-                title: result.title,
-                lyrics: result.lyrics,
-                stylePrompt: '',
-                negativeStylePrompt: '',
-                revisionInstruction: '',
-                lyricistReference: '',
-            });
-            setActiveDraftRecordId(recordId);
-            setRecordFlowStatus('lyrics_ready');
-            addToast('歌词已生成，可以查看可唱性评分', 'success');
-        } catch (e: any) {
-            setRecordFlowStatus('error');
-            setRecordFlowError(e.message);
-            addToast(`歌词生成失败: ${e.message}`, 'error');
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [addToast, apiConfig, recordMode, recordReference, recordSongRequest, selectedBrowserChar, selectedCharId, selectedRecordMemoryIds, upsertMemoryRecord, userProfile]);
-
-    // ── 阶段 2: 可唱性自检 ──
-    const handleCheckSingability = useCallback(async () => {
-        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
-            addToast('先生成歌词再检查可唱性', 'info');
-            return;
-        }
-
-        setRecordGenerating(true);
-        setRecordFlowStatus('checking_singability');
-        setRecordFlowError('');
-        setRecordStatusText('正在检查歌词可唱性...');
-
-        try {
-            const result = await checkLyricSingability(
-                lyricsDraft.title || activeDraftRecord.title,
-                lyricsDraft.lyrics,
-                apiConfig,
-            );
-            setSingabilityResult(result);
-            setRecordFlowStatus('singability_checked');
-
-            // Persist to record
-            const updated: MemoryRecord = {
-                ...activeDraftRecord,
-                singabilityCheck: {
-                    score: result.score,
-                    summary: result.summary,
-                    should_optimize: result.shouldOptimize,
-                    issues: result.issues,
-                },
-                updatedAt: Date.now(),
-            };
-            await persistMemoryRecord(updated);
-
-            if (result.shouldOptimize) {
-                addToast(`可唱性评分 ${result.score}/100 — 建议优化歌词`, 'info');
-            } else {
-                addToast(`可唱性评分 ${result.score}/100 — 歌词结构良好`, 'success');
-            }
-        } catch (e: any) {
-            setRecordFlowError(e.message);
-            addToast(`可唱性检查失败: ${e.message}`, 'error');
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord]);
-
-    // ── 阶段 3: 歌词优化（用户可选）──
-    const handleOptimizeLyrics = useCallback(async () => {
-        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
-            addToast('先生成歌词再优化', 'info');
-            return;
-        }
-
-        setRecordGenerating(true);
-        setRecordFlowStatus('optimizing_lyrics');
-        setRecordFlowError('');
-        setRecordStatusText('正在优化歌词可唱性...');
-
-        try {
-            const current = await saveActiveLyricsSnapshot();
-            const result = await optimizeLyrics(
-                lyricsDraft.title || current.title,
-                lyricsDraft.lyrics,
-                apiConfig,
-                {
-                    singabilityReport: singabilityResult,
-                    userInstruction: lyricsDraft.revisionInstruction,
-                    songRequest: normalizeSongRequest(recordSongRequest),
-                    lyricistReference: lyricsDraft.lyricistReference,
-                },
-            );
-
-            // Save optimized version alongside original
-            setLyricsDraft(prev => ({
-                ...prev,
-                optimizedTitle: result.title,
-                optimizedLyrics: result.lyrics,
-                optimizationNotes: result.optimizationNotes,
-            }));
-            setShowOptimizedLyrics(true);
-            setRecordFlowStatus('lyrics_optimized');
-
-            // Persist optimization notes
-            const updated: MemoryRecord = {
-                ...current,
-                optimizationNotes: result.optimizationNotes,
-                updatedAt: Date.now(),
-            };
-            await persistMemoryRecord(updated);
-
-            addToast('歌词已优化，可以对比原版和优化版', 'success');
-        } catch (e: any) {
-            setRecordFlowError(e.message);
-            addToast(`歌词优化失败: ${e.message}`, 'error');
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft, persistMemoryRecord, recordSongRequest, saveActiveLyricsSnapshot, singabilityResult]);
-
-    // ── 用户选择采用优化版或原版 ──
-    const handleAdoptOptimizedLyrics = useCallback(() => {
-        if (!lyricsDraft.optimizedLyrics) return;
-        setLyricsDraft(prev => ({
-            ...prev,
-            title: prev.optimizedTitle || prev.title,
-            lyrics: prev.optimizedLyrics || prev.lyrics,
-            optimizedLyrics: undefined,
-            optimizedTitle: undefined,
-            revisionInstruction: '',
-        }));
-        setShowOptimizedLyrics(false);
-        setRecordFlowStatus('lyrics_ready');
-        addToast('已采用优化版歌词', 'success');
-    }, [addToast, lyricsDraft.optimizedLyrics, lyricsDraft.optimizedTitle]);
-
-    const handleKeepOriginalLyrics = useCallback(() => {
-        setShowOptimizedLyrics(false);
-        setRecordFlowStatus('lyrics_ready');
-    }, []);
-
-    // ── 确认歌词定稿（不生成歌曲，只标记定稿）──
-    const handleConfirmLyricsFinal = useCallback(async () => {
-        if (!activeDraftRecord) {
-            addToast('先生成歌词草稿', 'info');
-            return;
-        }
-        if (!lyricsDraft.title.trim() || !lyricsDraft.lyrics.trim()) {
-            addToast('歌名和歌词都不能为空', 'info');
-            return;
-        }
-
-        try {
-            const current = await saveActiveLyricsSnapshot();
-            const confirmed: MemoryRecord = {
-                ...current,
-                lyricsConfirmedAt: Date.now(),
-                updatedAt: Date.now(),
-            };
-            await persistMemoryRecord(confirmed);
-            setRecordFlowStatus('lyrics_confirmed');
-            addToast('歌词已定稿，现在可以生成曲风提示词', 'success');
-        } catch (e: any) {
-            setRecordFlowError(e.message);
-            addToast(`保存失败: ${e.message}`, 'error');
-        }
-    }, [activeDraftRecord, addToast, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord, saveActiveLyricsSnapshot]);
-
-    // ── 阶段 4: 生成曲风提示词 ──
-    const handleGenerateStylePrompt = useCallback(async () => {
-        if (!activeDraftRecord || !lyricsDraft.lyrics.trim()) {
-            addToast('先确认歌词定稿', 'info');
-            return;
-        }
-
-        setRecordGenerating(true);
-        setRecordFlowStatus('generating_style');
-        setRecordFlowError('');
-        setRecordStatusText('正在根据定稿歌词生成曲风方案...');
-
-        try {
-            const current = await saveActiveLyricsSnapshot();
-            const result = await generateStylePrompt(
-                lyricsDraft.lyrics,
-                lyricsDraft.title || current.title,
-                apiConfig,
-                {
-                    lyricIntent: current.lyricIntent,
-                    songRequest: normalizeSongRequest(recordSongRequest),
-                },
-            );
-
-            setStylePromptResult(result);
-            setLyricsDraft(prev => ({
-                ...prev,
-                stylePrompt: result.stylePrompt,
-                negativeStylePrompt: result.negativeStylePrompt,
-            }));
-            setRecordFlowStatus('style_ready');
-
-            // Persist
-            const updated: MemoryRecord = {
-                ...current,
-                stylePrompt: result.stylePrompt,
-                negativeStylePrompt: result.negativeStylePrompt,
-                musicPrompt: result.stylePrompt,
-                musicDirectorNotes: result.musicDirectorNotes,
-                updatedAt: Date.now(),
-            };
-            await persistMemoryRecord(updated);
-
-            addToast('曲风提示词已生成，你可以继续调整', 'success');
-        } catch (e: any) {
-            setRecordFlowError(e.message);
-            addToast(`曲风生成失败: ${e.message}`, 'error');
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [activeDraftRecord, addToast, apiConfig, lyricsDraft.lyrics, lyricsDraft.title, persistMemoryRecord, recordSongRequest, saveActiveLyricsSnapshot]);
-
-    const handleConfirmLyricsAndGenerateSong = useCallback(async () => {
-        if (!selectedBrowserChar) return;
-        if (!activeDraftRecord) {
-            addToast('先生成并确认歌词草稿', 'info');
-            return;
-        }
-        if (!lyricsDraft.title.trim() || !lyricsDraft.lyrics.trim()) {
-            addToast('歌名和歌词都不能为空', 'info');
-            return;
-        }
-        if (!lyricsDraft.stylePrompt.trim()) {
-            addToast('请先生成曲风提示词', 'info');
-            return;
-        }
-
-        setRecordGenerating(true);
-        setRecordFlowStatus('lyrics_confirmed');
-        setRecordFlowError('');
-        setRecordStatusText('词已定稿，正在准备谱曲...');
-
-        try {
-            const current = await saveActiveLyricsSnapshot();
-            await removeGeneratedMusicArtifacts(current);
-            const confirmed: MemoryRecord = {
-                ...current,
-                status: 'draft',
-                lyricsConfirmedAt: Date.now(),
-                musicAudioId: undefined,
-                masterAudioId: undefined,
-                model: undefined,
-                fallbackUsed: undefined,
-                durationMs: undefined,
-                error: undefined,
-                updatedAt: Date.now(),
-            };
-            await persistMemoryRecord(confirmed);
-
-            setRecordFlowStatus('generating_song');
-            setRecordStatusText('正在把定稿歌词送去谱曲...');
-            const finalRecord = await produceMemoryRecordAudio({
-                record: confirmed,
-                char: selectedBrowserChar,
-                ttsConfig,
-                onRecordUpdate: (next) => {
-                    upsertMemoryRecord(next);
-                    setRecordStatusText(MEMORY_RECORD_STATUS_LABELS[next.status] || next.status);
-                },
-            });
-
-            upsertMemoryRecord(finalRecord);
-            loadRecordIntoLyricsEditor(finalRecord, finalRecord.status === 'ready' ? 'song_ready' : 'error');
-            if (finalRecord.status === 'ready') {
-                addToast('这张唱片已经压好', 'success');
-                playMemoryRecord(finalRecord);
-            } else if (finalRecord.error) {
-                setRecordFlowError(finalRecord.error);
-                addToast(`生成歌曲失败: ${finalRecord.error}`, 'error');
-            } else {
-                addToast('这张还没压完，内页和分轨都替你留着', 'info');
-            }
-        } catch (e: any) {
-            setRecordFlowStatus('error');
-            setRecordFlowError(e.message);
-            addToast(`生成歌曲失败: ${e.message}`, 'error');
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [activeDraftRecord, addToast, loadRecordIntoLyricsEditor, lyricsDraft.lyrics, lyricsDraft.stylePrompt, lyricsDraft.title, persistMemoryRecord, playMemoryRecord, removeGeneratedMusicArtifacts, saveActiveLyricsSnapshot, selectedBrowserChar, ttsConfig, upsertMemoryRecord]);
-
-    const handleReturnToLyrics = useCallback(() => {
-        if (!activeDraftRecord) return;
-        setRecordFlowStatus('lyrics_ready');
-        setRecordFlowError(activeDraftRecord.error || '');
-        setRecordStatusText('');
-    }, [activeDraftRecord]);
-
-    const handleRetryMemoryRecord = useCallback(async (record: MemoryRecord) => {
-        if (!selectedBrowserChar) return;
-
-        setRecordGenerating(true);
-        setRecordStatusText('正在重新落针...');
-        try {
-            const next = await produceMemoryRecordAudio({
-                record,
-                char: selectedBrowserChar,
-                ttsConfig,
-                forceRemaster: true,
-                onRecordUpdate: (updated) => {
-                    upsertMemoryRecord(updated);
-                    setRecordStatusText(MEMORY_RECORD_STATUS_LABELS[updated.status] || updated.status);
-                },
-            });
-
-            upsertMemoryRecord(next);
-            if (next.status === 'ready') {
-                addToast('重新压好了', 'success');
-                playMemoryRecord(next);
-            } else if (next.error) {
-                addToast(`重压失败: ${next.error}`, 'error');
-            } else {
-                addToast('这次还没压完，内页和分轨还在', 'info');
-            }
-        } finally {
-            setRecordGenerating(false);
-            setRecordStatusText('');
-        }
-    }, [addToast, playMemoryRecord, selectedBrowserChar, ttsConfig, upsertMemoryRecord]);
-
-    const handleDeleteMemoryRecord = useCallback(async (record: MemoryRecord) => {
-        const confirmed = window.confirm(`删除《${record.title}》？歌词、独白和音频都会从本机移除。`);
-        if (!confirmed) return;
-
-        try {
-            await DB.deleteMemoryRecord(record.id);
-            setMemoryRecords(prev => prev.filter(item => item.id !== record.id));
-            addToast('唱片已删除', 'success');
-            haptic.medium();
-        } catch (e: any) {
-            addToast(`删除失败: ${e.message}`, 'error');
-        }
-    }, [addToast]);
-
-    const openMemoryRecordShare = useCallback((record: MemoryRecord) => {
-        if (!hasPlayableMemoryRecordAudio(record)) {
-            addToast('这首歌还没有可分享的音频', 'info');
-            return;
-        }
-
-        setShareModalPlayable(memoryRecordToPlayable(record));
-        haptic.light();
-    }, [addToast]);
-
-    const handleShareMemoryRecordPoster = useCallback(async (playable: MemoryRecordPlayable) => {
-        setIsSharingMemoryRecord(true);
-        try {
-            const result = await shareMemoryRecordPoster(playable);
-            setShareModalPlayable(null);
-            addToast(result.method === 'download' ? '分享海报已下载' : '已打开系统分享', 'success');
-        } catch (e: any) {
-            addToast(e?.message || '分享失败', 'error');
-        } finally {
-            setIsSharingMemoryRecord(false);
-        }
-    }, [addToast]);
-
-    const copyMemoryRecordError = useCallback((record: MemoryRecord) => {
-        const errorText = [
-            `曲目: ${record.title}`,
-            `状态: ${MEMORY_RECORD_STATUS_LABELS[record.status] || record.status}`,
-            `模式: ${MEMORY_RECORD_MODE_COPY[record.mode].label}`,
-            record.model ? `模型: ${record.model}${record.fallbackUsed ? ' (fallback)' : ''}` : '',
-            '',
-            record.error || '无错误详情',
-        ].filter(Boolean).join('\n');
-
-        try {
-            navigator.clipboard.writeText(errorText);
-        } catch {
-            const textarea = document.createElement('textarea');
-            textarea.value = errorText;
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-        }
-
-        addToast('错误详情已复制', 'success');
-    }, [addToast]);
+    }, [openApp, setActiveCharacterId]);
 
     /* ─── Render ─── */
 
@@ -1740,7 +875,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                 </div>
                                 <div>
                                     <h2 className="text-[#ffe8a3] font-bold text-[15px] tracking-widest font-serif">认知网络</h2>
-                                    <p className="mt-0.5 text-[8px] font-semibold tracking-[0.22em] text-[#d7b56c]/42">MEMORY INDEX</p>
+                                    <p className="mt-0.5 text-[8px] font-semibold tracking-[0.22em] text-[#d7b56c]/42">COGNITIVE NETWORK</p>
                                 </div>
                             </div>
                             <button
@@ -1756,8 +891,8 @@ const CognitiveNetworkApp: React.FC = () => {
                         {/* Nav Items */}
                         <nav className="relative z-10 flex flex-col gap-1 px-3 mt-2">
                     {([
-                        { id: 'home' as const, label: '认知全览', iconPath: 'M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z' },
-                        { id: 'browser' as const, label: '回忆唱片匣', iconPath: 'M2 4.25A2.25 2.25 0 0 1 4.25 2h11.5A2.25 2.25 0 0 1 18 4.25v8.5A2.25 2.25 0 0 1 15.75 15H4.25A2.25 2.25 0 0 1 2 12.75v-8.5Zm2.25-.75a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h11.5a.75.75 0 0 0 .75-.75v-8.5a.75.75 0 0 0-.75-.75H4.25ZM5 16.5a.75.75 0 0 0 0 1.5h10a.75.75 0 0 0 0-1.5H5Z' },
+                        { id: 'home' as const, label: '记忆全览', iconPath: 'M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z' },
+                        { id: 'browser' as const, label: '记忆浏览器', iconPath: 'M11.25 2.25c-2.347 0-4.25 1.903-4.25 4.25v.636a4.25 4.25 0 0 0 0 8.228v.636c0 2.347 1.903 4.25 4.25 4.25h4.25c2.347 0 4.25-1.903 4.25-4.25v-9.5c0-2.347-1.903-4.25-4.25-4.25h-4.25Zm-1.75 4.25c0-.966.784-1.75 1.75-1.75h4.25c.966 0 1.75.784 1.75 1.75v9.5c0 .966-.784 1.75-1.75 1.75h-4.25A1.75 1.75 0 0 1 9.5 16v-.25h2.75a.75.75 0 0 0 0-1.5H8.75a2.75 2.75 0 1 1 0-5.5h3.5a.75.75 0 0 0 0-1.5H9.5V6.5Z' },
                         { id: 'workshop' as const, label: '拾念', iconPath: 'M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401Z' },
                         { id: 'sync' as const, label: '漫游备份', iconPath: 'M4.913 2.658c2.075-.27 4.19-.408 6.337-.408 2.147 0 4.262.139 6.337.408 1.922.25 3.291 1.861 3.405 3.727a4.403 4.403 0 0 0-1.032-.211 50.89 50.89 0 0 0-8.42 0c-2.358.196-4.04 2.19-4.04 4.434v4.286a4.47 4.47 0 0 0 2.433 3.984L7.28 21.53A.75.75 0 0 1 6 21v-2.234a8.865 8.865 0 0 1-1.087-.215c-1.922-.25-3.291-1.86-3.405-3.727a46.606 46.606 0 0 1 0-8.862c.114-1.866 1.483-3.477 3.405-3.727ZM14.75 7.5c-1.946 0-3.87.078-5.77.226-1.46.122-2.48 1.362-2.48 2.682v4.286c0 1.32 1.02 2.56 2.48 2.682a48.93 48.93 0 0 0 5.77.226c1.946 0 3.87-.078 5.77-.226 1.46-.122 2.48-1.362 2.48-2.682v-4.286c0-1.32-1.02-2.56-2.48-2.682A48.574 48.574 0 0 0 14.75 7.5Z' },
                     ]).map(item => (
@@ -1878,7 +1013,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                     </p>
                                     <div className="mt-5 flex items-center gap-3 text-[9px] text-white/30 tracking-[0.14em]">
                                         <span className="h-px flex-1 bg-white/[0.08]" />
-                                        <span>COGNITIVE ARCHIVE</span>
+                                        <span>MEMORY ARCHIVE</span>
                                     </div>
                                 </div>
                             </section>
@@ -2092,788 +1227,14 @@ const CognitiveNetworkApp: React.FC = () => {
 
                 {/* ── BROWSER TAB ── */}
                 {activeTab === 'browser' && (
-                    <div className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar relative bg-[#08070b]">
-                        <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
-                            <img src="/music-skins/skin-ribbon.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-[0.34]" />
-                            <img src="/images/cognitive-vinyl/pressed-flower.png" alt="" className="absolute -left-16 top-32 w-44 opacity-[0.18] mix-blend-screen" />
-                            <img src="/images/cognitive-vinyl/ticket-stack.png" alt="" className="absolute -right-20 top-6 w-52 rotate-[-8deg] opacity-[0.14] mix-blend-screen" />
-                            <img src="/images/cognitive-vinyl/archive-card.png" alt="" className="absolute right-3 top-[42%] w-48 opacity-[0.08] mix-blend-screen" />
-                            <img src="/images/paper-texture.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-[0.07] mix-blend-soft-light" />
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(74,51,45,0.18)_0%,transparent_36%),linear-gradient(180deg,rgba(8,7,11,0.28)_0%,rgba(8,7,11,0.9)_52%,rgba(6,5,8,0.98)_100%)]" />
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,transparent_0%,transparent_44%,rgba(0,0,0,0.5)_100%)]" />
-                            <div className="absolute inset-x-0 top-0 h-56 bg-[linear-gradient(112deg,rgba(255,232,176,0.13),transparent_42%,rgba(151,102,73,0.1))]" />
-                            <div className="absolute inset-0 opacity-[0.045] [background-image:radial-gradient(circle_at_1px_1px,rgba(255,241,189,0.62)_1px,transparent_0)] [background-size:18px_18px]" />
-                        </div>
-
-                        <div className="relative z-10 mx-auto max-w-[860px] space-y-5 px-5 pt-[calc(4.25rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-                            <section className="relative min-h-[560px] overflow-hidden rounded-tl-[34px] rounded-tr-[24px] rounded-br-[42px] rounded-bl-[26px] border border-[#e6c486]/28 bg-[#1f171b]/72 px-7 py-8 shadow-[0_32px_68px_rgba(0,0,0,0.52),0_1px_0_rgba(255,244,214,0.16)_inset] backdrop-blur-2xl transition-[border-color,transform] duration-200 hover:border-[#f4d69b]/38 active:scale-[0.992] sm:min-h-[620px]">
-                                <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#ffe4a3]/68 to-transparent" />
-                                <div className="absolute -right-14 -top-5 h-44 w-44 rotate-[-8deg] rounded-[20px] bg-[#4a332d]/18 shadow-[0_18px_42px_rgba(0,0,0,0.22)]" />
-                                <div className="absolute -right-16 top-24 h-44 w-44 rounded-full border border-[#c5a06a]/16 bg-[radial-gradient(circle,#151216_0%,#151216_42%,#070609_43%,#070609_100%)] shadow-[inset_0_0_0_8px_rgba(255,255,255,0.02),0_18px_40px_rgba(0,0,0,0.38)]" />
-                                <img src="/images/cognitive-vinyl/archive-seal.png" alt="" className="absolute right-8 top-48 w-28 opacity-[0.12] mix-blend-screen" />
-                                <img src="/images/cognitive-vinyl/pressed-flower.png" alt="" className="absolute -left-8 top-48 w-32 opacity-[0.15] mix-blend-screen" />
-                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_8%,rgba(255,235,190,0.1)_0%,transparent_28%),radial-gradient(circle_at_62%_66%,rgba(255,214,148,0.12)_0%,transparent_28%),linear-gradient(145deg,rgba(255,255,255,0.052),transparent_48%)]" />
-
-                                <div className="relative z-10 max-w-[285px]">
-                                    <p className="text-[10px] font-semibold tracking-[0.46em] text-[#f3d092]/76">PRIVATE VINYL ARCHIVE</p>
-                                    <h2 className="mt-5 text-[43px] font-bold leading-none tracking-[0.13em] text-[#fff1bd] drop-shadow-[0_2px_12px_rgba(255,226,171,0.16)] sm:text-[58px]" style={{ fontFamily: "'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif" }}>
-                                        回忆唱片匣
-                                    </h2>
-                                    <div className="mt-4 h-px w-4 bg-[#f3d092]/72" />
-                                    <p className="mt-4 max-w-[250px] text-[14px] font-medium leading-[1.95] text-[#e9ddcf]/78" style={{ fontFamily: "'Noto Serif SC', serif" }}>
-                                        把他留下的瞬间收进唱片内页，等夜色安静时再轻轻翻到那一轨。
-                                    </p>
-                                </div>
-
-                                <div className="absolute left-6 top-[318px] z-20 max-w-[112px] sm:left-8">
-                                    <div className="flex items-center gap-2">
-                                        <p className="text-[18px] font-semibold tracking-[0.16em] text-[#e5bf7f]" style={{ fontFamily: "'Noto Serif SC', serif" }}>声纹片段</p>
-                                        <span className="h-1.5 w-1.5 rotate-45 bg-[#e5bf7f]/50" />
-                                    </div>
-                                    <p className="mt-1 text-[9px] tracking-[0.18em] text-[#d8bd90]/46">VOICE MEMORY</p>
-                                    <p className="mt-6 w-[94px] text-[12px] leading-relaxed text-[#d8d0c8]/42">那些未说完的话，都会被收录在这里。</p>
-                                </div>
-
-                                <div className="absolute bottom-1 left-[58%] z-10 h-[300px] w-[300px] max-w-[88vw] -translate-x-1/2 sm:h-[380px] sm:w-[380px]">
-                                    <img
-                                        src="/images/cognitive-vinyl/voice-player.png"
-                                        alt=""
-                                        className="absolute inset-0 h-full w-full opacity-[0.9] drop-shadow-[0_28px_44px_rgba(0,0,0,0.5)] [filter:invert(1)_sepia(0.78)_saturate(1.35)_hue-rotate(350deg)_brightness(0.74)_contrast(1.06)]"
-                                    />
-                                    <div className="absolute left-1/2 top-[34%] flex h-[58px] w-[58px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[#e6c486]/22 bg-[#171115]/72 shadow-[0_8px_20px_rgba(0,0,0,0.34),0_0_0_1px_rgba(255,255,255,0.04)_inset] backdrop-blur-sm">
-                                        {selectedBrowserChar ? (
-                                            <div className="relative h-11 w-11">
-                                                <img src={selectedBrowserChar.avatar} alt={selectedBrowserChar.name} className="absolute left-0 top-0 h-8 w-8 rounded-full object-cover ring-1 ring-[#e6c486]/34" />
-                                                <img src={userProfile.avatar} alt={userProfile.name} className="absolute bottom-0 right-0 h-7 w-7 rounded-full object-cover ring-1 ring-[#e6c486]/30" />
-                                                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-[#e6c486]/72" />
-                                            </div>
-                                        ) : (
-                                            <span className="h-2 w-2 rounded-full bg-[#e6c486]/66 shadow-[0_0_12px_rgba(230,196,134,0.42)]" />
-                                        )}
-                                    </div>
-                                </div>
-
-                                <p className="absolute bottom-16 right-10 hidden rotate-[-9deg] text-[28px] italic tracking-[0.08em] text-[#b99575]/20 sm:block" style={{ fontFamily: 'Georgia, serif' }}>Memories</p>
-                            </section>
-
-                            <section className="-mt-1 space-y-3">
-                                <div className="flex items-end justify-between px-1">
-                                    <div>
-                                        <p className="text-[18px] font-semibold tracking-[0.14em] text-[#e5bf7f]" style={{ fontFamily: "'Noto Serif SC', serif" }}>唱片归属</p>
-                                        <p className="mt-1 text-[8px] tracking-[0.18em] text-[#d8bd90]/40">SLEEVE OWNER</p>
-                                    </div>
-                                    <p className="text-[9px] tracking-[0.22em] text-[#d8bd90]/38">{characters.length} SLEEVES 〉</p>
-                                </div>
-                                <div className="flex gap-4 overflow-x-auto no-scrollbar -mx-5 scroll-px-16 px-16 pb-5 pt-6">
-                                    {characters.map(c => {
-                                        const isActive = selectedCharId === c.id;
-                                        return (
-                                            <button
-                                                key={c.id}
-                                                onClick={() => { setSelectedCharId(c.id); setBrowserMemories(null); haptic.light(); }}
-                                                className={`relative h-[122px] w-[104px] shrink-0 overflow-visible rounded-[14px] border text-center transition-all duration-200 active:scale-[0.97] sm:h-[142px] sm:w-[132px] ${
-                                                    isActive
-                                                        ? 'z-20 mx-5 -translate-y-1 border-[#e6c486]/58 bg-[#f3eadc] text-[#241814] shadow-[0_22px_38px_rgba(0,0,0,0.38),0_0_0_1px_rgba(255,241,189,0.18)_inset,-10px_0_0_-5px_rgba(197,139,71,0.78)]'
-                                                        : 'z-0 border-white/[0.09] bg-[#151319]/70 text-white/48 shadow-[0_16px_28px_rgba(0,0,0,0.2)] hover:border-[#e6c486]/26 hover:bg-white/[0.08]'
-                                                }`}
-                                            >
-                                                {isActive && (
-                                                    <>
-                                                        <span className="absolute -inset-2 z-0 rounded-[18px] border border-[#e6c486]/12 bg-[#fff1bd]/[0.035] shadow-[0_18px_34px_rgba(0,0,0,0.18)]" />
-                                                        <span className="absolute -left-8 top-7 z-0 h-16 w-16 rounded-full border border-[#c09254]/18 bg-[radial-gradient(circle,#171316_0%,#171316_42%,#050406_43%,#050406_100%)] opacity-[0.86] shadow-[0_10px_20px_rgba(0,0,0,0.38)] sm:-left-10 sm:h-20 sm:w-20" />
-                                                        <span className="absolute left-0 top-0 h-full w-[7px] bg-gradient-to-b from-[#c58b47] via-[#f2d290] to-[#a66b38]" />
-                                                    </>
-                                                )}
-                                                <span className="absolute inset-x-4 top-3 h-px bg-gradient-to-r from-transparent via-current/18 to-transparent" />
-                                                <span className="relative z-10 flex h-full flex-col items-center justify-center px-3">
-                                                    <img src={c.avatar} alt={c.name} className={`h-12 w-12 rounded-full object-cover shadow-[0_6px_12px_rgba(0,0,0,0.28)] ${isActive ? 'ring-2 ring-[#c58b47]/28' : 'ring-1 ring-white/18'}`} />
-                                                    <span className="mt-3 min-w-0 max-w-full">
-                                                        <span className="block truncate text-[15px] font-semibold tracking-wide" style={{ fontFamily: "'Noto Serif SC', serif" }}>{c.name}</span>
-                                                        <span className={`mt-2 block text-[9px] tracking-[0.28em] ${isActive ? 'text-[#8f6b3b]/72' : 'text-white/28'}`}>MEMORY</span>
-                                                    </span>
-                                                    <span className={`mt-3 h-1.5 w-1.5 rotate-45 ${isActive ? 'bg-[#c58b47]/72' : 'bg-[#e5bf7f]/24'}`} />
-                                                </span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </section>
-
-                            {selectedCharId && selectedBrowserChar ? (
-                                <>
-                                {/* ── 落针方式 ── */}
-                                <section className="rounded-[20px] border border-white/[0.07] bg-[#131016]/72 p-4">
-                                    <div className="mb-3">
-                                        <p className="text-[9px] font-semibold tracking-[0.28em] text-[#d8bd90]/48">NEEDLE DROP</p>
-                                        <h3 className="mt-1.5 text-[16px] font-semibold tracking-[0.10em] text-[#fff1bd]" style={{ fontFamily: "'Noto Serif SC', serif" }}>落针方式</h3>
-                                        <p className="mt-1 text-[11px] leading-relaxed text-white/36">选一种方式，决定这段旋律从哪里开始</p>
-                                    </div>
-                                    <div className="grid gap-2 sm:grid-cols-5">
-                                        {(Object.keys(MEMORY_RECORD_MODE_COPY) as MemoryRecordMode[]).map(mode => (
-                                            <button
-                                                key={mode}
-                                                type="button"
-                                                onClick={() => { setRecordMode(mode); haptic.light(); }}
-                                                className={`rounded-[14px] border px-3 py-3 text-left transition-all active:scale-[0.97] ${
-                                                    recordMode === mode
-                                                        ? 'border-[#f2d290]/54 bg-[#f2d290]/14 text-[#fff1bd]'
-                                                        : 'border-white/[0.07] bg-white/[0.035] text-white/48 hover:border-[#f2d290]/24'
-                                                }`}
-                                            >
-                                                <span className="block text-[12px] font-bold tracking-[0.08em]">{MEMORY_RECORD_MODE_COPY[mode].label}</span>
-                                                <span className="mt-1 block text-[9px] leading-relaxed opacity-62">{MEMORY_RECORD_MODE_COPY[mode].detail}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                    {recordMode === 'selected_memory' ? (
-                                        <div className="mt-3 rounded-[16px] border border-white/[0.07] bg-white/[0.035] p-3">
-                                            <div className="mb-2 flex items-center justify-between gap-3 text-[10px] text-white/40">
-                                                <span>封存片段</span>
-                                                <span>{selectedRecordMemoryIds.length}/8 · {recordMemoryOptions.length} 段可选</span>
-                                            </div>
-                                            {recordMemoryOptionsLoading ? (
-                                                <p className="text-[11px] leading-relaxed text-white/34">正在取出这位角色的全部记忆...</p>
-                                            ) : recordMemoryOptionsError ? (
-                                                <p className="text-[11px] leading-relaxed text-[#ffb4a8]/70">读取记忆失败：{recordMemoryOptionsError}</p>
-                                            ) : recordMemoryOptions.length > 0 ? (
-                                                <div className="max-h-[220px] overflow-y-auto no-scrollbar rounded-[12px] border border-white/[0.055] bg-black/12 p-2">
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {recordMemoryOptions.map((memory) => {
-                                                            const picked = selectedRecordMemoryIds.includes(memory.id);
-                                                            const label = memory.title || memory.content?.slice(0, 28) || '未命名回忆';
-                                                            return (
-                                                                <button
-                                                                    key={memory.id}
-                                                                    type="button"
-                                                                    title={label}
-                                                                    onClick={() => toggleRecordMemorySeed(memory.id)}
-                                                                    className={`max-w-full rounded-full border px-3 py-1.5 text-[10px] font-semibold transition-all active:scale-[0.97] ${
-                                                                        picked
-                                                                            ? 'border-[#f2d290]/54 bg-[#f2d290]/18 text-[#fff1bd]'
-                                                                            : 'border-white/[0.08] bg-black/14 text-white/44'
-                                                                    }`}
-                                                                >
-                                                                    <span className="block max-w-[220px] truncate">{label}</span>
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <p className="text-[11px] leading-relaxed text-white/34">这位角色本机还没有可封存的记忆。</p>
-                                            )}
-                                            <p className="mt-2 text-[10px] leading-relaxed text-white/30">已列出本机全部回忆，最多挑 8 段交给这张唱片。</p>
-                                        </div>
-                                    ) : null}
-                                </section>
-
-                                <section className="relative overflow-hidden rounded-[24px] border border-[#d4af37]/20 bg-[#131016]/82 p-5 shadow-[0_22px_44px_rgba(0,0,0,0.38),0_1px_0_rgba(255,244,214,0.08)_inset] backdrop-blur-2xl">
-                                    <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#ffe4a3]/42 to-transparent" />
-                                    <div className="absolute -right-10 -top-12 h-32 w-32 rounded-full bg-[#e5bf7f]/[0.045] blur-2xl" />
-                                    <div className="relative space-y-5">
-                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                            <div>
-                                                <p className="text-[9px] font-semibold tracking-[0.32em] text-[#d8bd90]/48">PRIVATE CUT</p>
-                                                <h3 className="mt-2 text-[20px] font-semibold tracking-[0.12em] text-[#fff1bd]" style={{ fontFamily: "'Noto Serif SC', serif" }}>词曲手札</h3>
-                                                <p className="mt-2 max-w-[460px] text-[12px] leading-relaxed text-white/42">把心事写成词，反复斟酌，最后让旋律替你轻声唱出来。</p>
-                                            </div>
-                                            <div className="grid grid-cols-4 gap-2 rounded-[16px] border border-white/[0.07] bg-black/16 p-1.5">
-                                                {[
-                                                    { step: 1, label: '写词', active: recordFlowStatus === 'idle' || recordFlowStatus === 'generating_lyrics' || recordFlowStatus === 'lyrics_ready' || recordFlowStatus === 'checking_singability' || recordFlowStatus === 'singability_checked' || recordFlowStatus === 'optimizing_lyrics' || recordFlowStatus === 'lyrics_optimized' },
-                                                    { step: 2, label: '定稿', active: recordFlowStatus === 'lyrics_confirmed' },
-                                                    { step: 3, label: '曲风', active: recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready' },
-                                                    { step: 4, label: '生歌', active: recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready' },
-                                                ].map(item => (
-                                                    <div
-                                                        key={item.step}
-                                                        className={`min-w-0 rounded-[12px] px-3 py-2 text-center ${item.active ? 'bg-[#f2d290] text-[#241814]' : 'text-white/34'}`}
-                                                    >
-                                                        <div className="text-[10px] font-black leading-none">{item.step}</div>
-                                                        <div className="mt-1 truncate text-[9px] font-bold tracking-[0.08em]">{item.label}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        <div className="rounded-[18px] border border-white/[0.07] bg-white/[0.035] p-4">
-                                            <div className="mb-3 flex items-center justify-between gap-3">
-                                                <div>
-                                                    <p className="text-[9px] font-semibold tracking-[0.24em] text-[#d8bd90]/48">STEP 1</p>
-                                                    <h4 className="mt-1 text-[15px] font-semibold text-[#fff1bd]">填写歌曲需求</h4>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    disabled={recordGenerating}
-                                                    onClick={handleCreateMemoryRecord}
-                                                    className="shrink-0 rounded-full bg-[#f2d290] px-4 py-2 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
-                                                >
-                                                    {recordFlowStatus === 'generating_lyrics' ? '生成中...' : '生成歌词草稿'}
-                                                </button>
-                                            </div>
-
-                                            {/* 歌词方向 */}
-                                            <div className="rounded-[16px] border border-[#f2d290]/10 bg-[#f2d290]/[0.025] p-3">
-                                                <p className="mb-2.5 text-[9px] font-semibold tracking-[0.18em] text-[#f2d290]/52">歌词方向 — 影响歌词的内容和口吻</p>
-                                                <div className="grid gap-2.5 sm:grid-cols-3">
-                                                    {([
-                                                        ['theme', '歌曲主题', '雨夜重逢、秘密恋爱、梦醒前的告白'],
-                                                        ['mood', '情绪/氛围', '暧昧、克制、热烈、失落但不伤感'],
-                                                        ['perspective', '叙事口吻', '我唱给你听、第三人称旁观、像在讲故事'],
-                                                    ] as const).map(([field, label, placeholder]) => (
-                                                        <label key={field} className="block">
-                                                            <span className="mb-1 block text-[10px] font-semibold tracking-[0.06em] text-white/48">{label}</span>
-                                                            <input
-                                                                value={String(recordSongRequest[field as keyof MemoryRecordSongRequest] || '')}
-                                                                onChange={e => handleSongRequestChange(field as keyof MemoryRecordSongRequest, e.target.value)}
-                                                                placeholder={placeholder}
-                                                                className="w-full rounded-[12px] border border-white/[0.08] bg-black/18 px-3.5 py-2.5 text-[12px] text-[#fff1bd] outline-none placeholder:text-white/22 focus:border-[#f2d290]/34"
-                                                            />
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                            </div>
-
-                                            {/* 音乐方向 */}
-                                            <div className="rounded-[16px] border border-white/[0.06] bg-white/[0.02] p-3">
-                                                <p className="mb-2.5 text-[9px] font-semibold tracking-[0.18em] text-white/36">音乐方向 — 影响旋律、编曲和声音质感</p>
-                                                <div className="grid gap-2.5 sm:grid-cols-2">
-                                                    {([
-                                                        ['style', '曲风', 'R&B、抒情流行、电子梦核、city pop'],
-                                                        ['voicePreference', '声线描述', '女声、低沉男声、气声、少年感 — 写入音乐提示词而非直接选声'],
-                                                    ] as const).map(([field, label, placeholder]) => (
-                                                        <label key={field} className="block">
-                                                            <span className="mb-1 block text-[10px] font-semibold tracking-[0.06em] text-white/48">{label}</span>
-                                                            <input
-                                                                value={String(recordSongRequest[field as keyof MemoryRecordSongRequest] || '')}
-                                                                onChange={e => handleSongRequestChange(field as keyof MemoryRecordSongRequest, e.target.value)}
-                                                                placeholder={placeholder}
-                                                                className="w-full rounded-[12px] border border-white/[0.08] bg-black/18 px-3.5 py-2.5 text-[12px] text-[#fff1bd] outline-none placeholder:text-white/22 focus:border-[#f2d290]/34"
-                                                            />
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                                <input
-                                                    value={recordReference}
-                                                    onChange={e => setRecordReference(e.target.value)}
-                                                    placeholder="审美参考（可选）：歌手、歌曲、电影或年代"
-                                                    className="mt-2.5 w-full rounded-[12px] border border-white/[0.08] bg-black/18 px-3.5 py-2.5 text-[12px] text-[#fff1bd] outline-none placeholder:text-white/26 focus:border-[#f2d290]/34"
-                                                />
-                                            </div>
-
-                                            {/* 额外要求 — 影响歌词+音乐 */}
-                                            <label className="block">
-                                                <span className="mb-1 block text-[10px] font-semibold tracking-[0.06em] text-white/48">额外要求（可选）— 同时影响歌词和音乐</span>
-                                                <input
-                                                    value={String(recordSongRequest.extraRequirements || '')}
-                                                    onChange={e => handleSongRequestChange('extraRequirements', e.target.value)}
-                                                    placeholder="副歌更有 Hook、不要太伤感、适合睡前听"
-                                                    className="w-full rounded-[12px] border border-white/[0.08] bg-black/18 px-3.5 py-2.5 text-[12px] text-[#fff1bd] outline-none placeholder:text-white/22 focus:border-[#f2d290]/34"
-                                                />
-                                            </label>
-
-                                        </div>
-
-                                        {/* ── STEP 2: 歌词工作区 ── */}
-                                        {activeDraftRecord ? (
-                                            <div className="rounded-[18px] border border-[#f2d290]/18 bg-black/18 p-4">
-                                                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div>
-                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#d8bd90]/48">STEP 2</p>
-                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#fff1bd]">歌词工作区</h4>
-                                                    </div>
-                                                    <div className="text-[10px] font-semibold text-white/38">
-                                                        {recordGenerating ? '处理中...' : '草稿会自动保存到本机'}
-                                                    </div>
-                                                </div>
-
-                                                {/* 歌名 + 歌词 */}
-                                                <label className="block">
-                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">歌名 title</span>
-                                                    <input
-                                                        value={lyricsDraft.title}
-                                                        onChange={e => handleLyricsFieldChange('title', e.target.value)}
-                                                        className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[13px] font-semibold text-[#fff1bd] outline-none focus:border-[#f2d290]/34"
-                                                    />
-                                                </label>
-
-                                                <label className="mt-3 block">
-                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">完整歌词 lyrics</span>
-                                                    <textarea
-                                                        value={lyricsDraft.lyrics}
-                                                        onChange={e => handleLyricsFieldChange('lyrics', e.target.value)}
-                                                        className="min-h-[320px] w-full resize-y rounded-[16px] border border-white/[0.08] bg-[#08070b]/72 px-4 py-4 font-mono text-[12px] leading-6 text-[#fff6d8] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34 sm:min-h-[400px]"
-                                                        spellCheck={false}
-                                                    />
-                                                </label>
-
-                                                {/* 可唱性评分卡片 */}
-                                                {singabilityResult ? (
-                                                    <div className={`mt-3 rounded-[14px] border p-3 ${singabilityResult.score >= 80 ? 'border-[#81b29a]/24 bg-[#81b29a]/[0.06]' : singabilityResult.score >= 60 ? 'border-[#f2d290]/24 bg-[#f2d290]/[0.06]' : 'border-[#d99aae]/24 bg-[#d99aae]/[0.06]'}`}>
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="text-[11px] font-semibold text-white/60">可唱性评分</span>
-                                                            <span className={`text-[18px] font-black ${singabilityResult.score >= 80 ? 'text-[#81b29a]' : singabilityResult.score >= 60 ? 'text-[#f2d290]' : 'text-[#d99aae]'}`}>{singabilityResult.score}<span className="text-[11px] font-normal">/100</span></span>
-                                                        </div>
-                                                        {singabilityResult.summary ? <p className="mt-1.5 text-[10px] leading-relaxed text-white/48">{singabilityResult.summary}</p> : null}
-                                                        {singabilityResult.issues.length > 0 ? (
-                                                            <div className="mt-2 space-y-1.5">
-                                                                {singabilityResult.issues.slice(0, 5).map((issue, i) => (
-                                                                    <div key={i} className="flex items-start gap-2 text-[10px]">
-                                                                        <span className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold ${issue.severity === 'high' ? 'bg-[#d99aae]/20 text-[#d99aae]' : issue.severity === 'medium' ? 'bg-[#f2d290]/18 text-[#f2d290]' : 'bg-white/[0.06] text-white/40'}`}>{issue.severity}</span>
-                                                                        <span className="text-white/52">{issue.problem}{issue.suggestion ? ` → ${issue.suggestion}` : ''}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        ) : null}
-                                                    </div>
-                                                ) : null}
-
-                                                {/* 优化版歌词预览 */}
-                                                {showOptimizedLyrics && lyricsDraft.optimizedLyrics ? (
-                                                    <div className="mt-3 rounded-[14px] border border-[#81b29a]/22 bg-[#81b29a]/[0.06] p-3">
-                                                        <div className="flex items-center justify-between mb-2">
-                                                            <span className="text-[11px] font-semibold text-[#81b29a]">优化版歌词</span>
-                                                            <div className="flex gap-2">
-                                                                <button type="button" onClick={handleAdoptOptimizedLyrics} disabled={recordGenerating} className="rounded-full bg-[#81b29a] px-3 py-1.5 text-[10px] font-bold text-[#152033] active:scale-[0.97] disabled:opacity-45">采用优化版</button>
-                                                                <button type="button" onClick={handleKeepOriginalLyrics} disabled={recordGenerating} className="rounded-full border border-white/[0.12] px-3 py-1.5 text-[10px] font-bold text-white/52 active:scale-[0.97]">保留原版</button>
-                                                            </div>
-                                                        </div>
-                                                        {lyricsDraft.optimizationNotes ? (
-                                                            <div className="mb-2 space-y-1 text-[10px]">
-                                                                {lyricsDraft.optimizationNotes.kept.length > 0 ? <p className="text-[#81b29a]/70">保留：{lyricsDraft.optimizationNotes.kept.join('、')}</p> : null}
-                                                                {lyricsDraft.optimizationNotes.changed.length > 0 ? <p className="text-[#f2d290]/70">修改：{lyricsDraft.optimizationNotes.changed.join('、')}</p> : null}
-                                                                {lyricsDraft.optimizationNotes.reason ? <p className="text-white/38">原因：{lyricsDraft.optimizationNotes.reason}</p> : null}
-                                                            </div>
-                                                        ) : null}
-                                                        <pre className="max-h-[280px] overflow-y-auto rounded-[10px] bg-black/20 p-3 text-[11px] leading-5 text-[#dce9ff]/80 whitespace-pre-wrap font-mono">{lyricsDraft.optimizedLyrics}</pre>
-                                                    </div>
-                                                ) : null}
-
-                                                {/* 歌词操作按钮行 */}
-                                                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-between">
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {/* 可唱性检查 */}
-                                                        {['lyrics_ready', 'lyrics_optimized'].includes(recordFlowStatus) ? (
-                                                            <button type="button" disabled={recordGenerating} onClick={handleCheckSingability}
-                                                                className="rounded-full border border-[#cfe0ff]/28 px-3 py-2 text-[10px] font-bold text-[#cfe0ff] active:scale-[0.97] disabled:opacity-45">
-                                                                {recordFlowStatus === 'checking_singability' ? '检查中...' : '查看可唱性评分'}
-                                                            </button>
-                                                        ) : null}
-                                                        {/* 优化歌词 */}
-                                                        {singabilityResult?.shouldOptimize && ['singability_checked', 'lyrics_optimized'].includes(recordFlowStatus) ? (
-                                                            <button type="button" disabled={recordGenerating} onClick={handleOptimizeLyrics}
-                                                                className="rounded-full border border-[#f2d290]/30 px-3 py-2 text-[10px] font-bold text-[#fff1bd] active:scale-[0.97] disabled:opacity-45">
-                                                                {recordFlowStatus === 'optimizing_lyrics' ? '优化中...' : '优化歌词'}
-                                                            </button>
-                                                        ) : null}
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {/* 确认歌词定稿 */}
-                                                        {['lyrics_ready', 'singability_checked', 'lyrics_optimized'].includes(recordFlowStatus) ? (
-                                                            <button type="button" disabled={recordGenerating} onClick={handleConfirmLyricsFinal}
-                                                                className="rounded-full bg-[#f2d290] px-4 py-2.5 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] active:scale-[0.97] disabled:opacity-50">
-                                                                确认歌词定稿
-                                                            </button>
-                                                        ) : null}
-                                                    </div>
-                                                </div>
-
-                                                {/* 修改意见 + 词作人（折叠区） */}
-                                                {(recordFlowStatus === 'lyrics_ready' || recordFlowStatus === 'singability_checked' || recordFlowStatus === 'lyrics_optimized') ? (
-                                                    <div className="mt-3 border-t border-white/[0.06] pt-3">
-                                                        <label className="block">
-                                                            <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">修改意见（优化歌词时使用）</span>
-                                                            <textarea
-                                                                value={lyricsDraft.revisionInstruction}
-                                                                onChange={e => handleLyricsFieldChange('revisionInstruction', e.target.value)}
-                                                                placeholder="例如：副歌更暧昧一点，不要太伤感"
-                                                                className="min-h-[72px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
-                                                            />
-                                                        </label>
-                                                        <label className="mt-2 block">
-                                                            <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">想模仿的词作人 <span className="text-white/20">· 选填</span></span>
-                                                            <input type="text" value={lyricsDraft.lyricistReference} onChange={e => handleLyricsFieldChange('lyricistReference', e.target.value)}
-                                                                placeholder="例如：林夕、方文山、吴青峰"
-                                                                className="w-full rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[12px] leading-relaxed text-[#fff1bd] outline-none placeholder:text-white/24 focus:border-[#f2d290]/34"
-                                                            />
-                                                        </label>
-                                                    </div>
-                                                ) : null}
-                                            </div>
-                                        ) : null}
-
-                                        {/* ── STEP 3: 曲风生成（歌词定稿后）── */}
-                                        {activeDraftRecord && (recordFlowStatus === 'lyrics_confirmed' || recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready' || recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready') ? (
-                                            <div className="rounded-[18px] border border-[#cfe0ff]/18 bg-[#cfe0ff]/[0.04] p-4">
-                                                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div>
-                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#cfe0ff]/62">STEP 3</p>
-                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#dce9ff]">曲风制作</h4>
-                                                    </div>
-                                                </div>
-
-                                                {/* 曲风提示词编辑 */}
-                                                <label className="block">
-                                                    <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/42">style_prompt（英文，可手动调整）</span>
-                                                    <textarea
-                                                        value={lyricsDraft.stylePrompt}
-                                                        onChange={e => handleLyricsFieldChange('stylePrompt', e.target.value)}
-                                                        className="min-h-[72px] w-full resize-y rounded-[14px] border border-white/[0.08] bg-black/24 px-4 py-3 text-[11px] leading-relaxed text-[#fff1bd] outline-none focus:border-[#cfe0ff]/34 font-mono"
-                                                        spellCheck={false}
-                                                    />
-                                                </label>
-
-                                                {lyricsDraft.negativeStylePrompt ? (
-                                                    <label className="mt-2 block">
-                                                        <span className="mb-1.5 block text-[10px] font-semibold tracking-[0.08em] text-white/32">negative_style_prompt</span>
-                                                        <textarea
-                                                            value={lyricsDraft.negativeStylePrompt}
-                                                            onChange={e => handleLyricsFieldChange('negativeStylePrompt', e.target.value)}
-                                                            className="min-h-[48px] w-full resize-y rounded-[14px] border border-white/[0.06] bg-black/18 px-4 py-3 text-[11px] leading-relaxed text-white/48 outline-none focus:border-[#cfe0ff]/28 font-mono"
-                                                            spellCheck={false}
-                                                        />
-                                                    </label>
-                                                ) : null}
-
-                                                {/* music_director_notes */}
-                                                {stylePromptResult?.musicDirectorNotes ? (
-                                                    <div className="mt-3 rounded-[12px] border border-white/[0.06] bg-black/14 p-3">
-                                                        <p className="text-[9px] font-semibold tracking-[0.14em] text-white/32 mb-2">制作人笔记</p>
-                                                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
-                                                            {stylePromptResult.musicDirectorNotes.song_type ? <p className="text-white/42">类型：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.song_type}</span></p> : null}
-                                                            {stylePromptResult.musicDirectorNotes.emotional_core ? <p className="text-white/42">情绪：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.emotional_core}</span></p> : null}
-                                                            {stylePromptResult.musicDirectorNotes.vocal_character ? <p className="text-white/42">人声：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.vocal_character}</span></p> : null}
-                                                            {stylePromptResult.musicDirectorNotes.dynamic_curve ? <p className="text-white/42">动态：<span className="text-white/62">{stylePromptResult.musicDirectorNotes.dynamic_curve}</span></p> : null}
-                                                        </div>
-                                                    </div>
-                                                ) : null}
-
-                                                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                                    {/* 生成曲风按钮 */}
-                                                    {(recordFlowStatus === 'lyrics_confirmed' || recordFlowStatus === 'generating_style' || recordFlowStatus === 'style_ready') ? (
-                                                        <button type="button" disabled={recordGenerating} onClick={handleGenerateStylePrompt}
-                                                            className="rounded-full border border-[#cfe0ff]/30 px-4 py-2.5 text-[11px] font-bold text-[#dce9ff] active:scale-[0.97] disabled:opacity-45">
-                                                            {recordFlowStatus === 'generating_style' ? '生成中...' : '生成曲风提示词'}
-                                                        </button>
-                                                    ) : null}
-                                                    {/* 确认并生成歌曲 */}
-                                                    {(recordFlowStatus === 'style_ready' || recordFlowStatus === 'generating_song' || recordFlowStatus === 'song_ready') ? (
-                                                        <button type="button" disabled={recordGenerating} onClick={handleConfirmLyricsAndGenerateSong}
-                                                            className="rounded-full bg-[#f2d290] px-4 py-2.5 text-[11px] font-bold text-[#241814] shadow-[0_12px_24px_rgba(242,210,144,0.18)] active:scale-[0.97] disabled:opacity-50">
-                                                            {recordFlowStatus === 'generating_song' ? '歌曲生成中...' : '确认并生成歌曲'}
-                                                        </button>
-                                                    ) : null}
-                                                </div>
-                                            </div>
-                                        ) : null}
-
-                                        {/* ── STEP 4: 歌曲生成状态 ── */}
-                                        {(recordStatusText || recordFlowError || recordFlowStatus === 'song_ready') ? (
-                                            <div className="rounded-[18px] border border-[#8bb8f1]/18 bg-[#8bb8f1]/[0.055] p-4">
-                                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div>
-                                                        <p className="text-[9px] font-semibold tracking-[0.24em] text-[#cfe0ff]/62">STEP 4</p>
-                                                        <h4 className="mt-1 text-[15px] font-semibold text-[#dce9ff]">生成歌曲</h4>
-                                                        {recordStatusText ? <p className="mt-2 text-[11px] leading-relaxed text-[#dce9ff]/70">{recordStatusText}</p> : null}
-                                                        {recordFlowError ? <p className="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-[#ffd0d8]/82">{recordFlowError}</p> : null}
-                                                        {recordFlowStatus === 'song_ready' ? <p className="mt-2 text-[11px] leading-relaxed text-[#dce9ff]/70">歌曲已经生成，可以播放，也可以回到歌词继续修改后重新生成。</p> : null}
-                                                    </div>
-                                                    <div className="flex shrink-0 flex-wrap gap-2">
-                                                        <button type="button" disabled={!activeDraftRecord || !hasPlayableMemoryRecordAudio(activeDraftRecord)}
-                                                            onClick={() => activeDraftRecord && playMemoryRecord(activeDraftRecord)}
-                                                            className="rounded-full border border-[#8bb8f1]/30 px-3 py-2 text-[10px] font-bold text-[#dce9ff] disabled:opacity-35">
-                                                            播放
-                                                        </button>
-                                                        <button type="button" disabled={!activeDraftRecord || recordGenerating}
-                                                            onClick={handleReturnToLyrics}
-                                                            className="rounded-full bg-[#dce9ff] px-3 py-2 text-[10px] font-bold text-[#152033] disabled:opacity-45">
-                                                            返回修改歌词
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ) : null}
-
-                                        {memoryRecords.length > 0 ? (
-                                            <div className="space-y-2">
-                                                {memoryRecords.slice(0, 5).map(record => {
-                                                    const playable = hasPlayableMemoryRecordAudio(record);
-                                                    const canPreviewMonologue = shouldGenerateMemoryRecordMonologue(record.mode) && Boolean(record.monologueAudioId);
-                                                    const coverImage = getMemoryRecordCoverImage(record);
-                                                    return (
-                                                        <div key={record.id} className="rounded-[16px] border border-white/[0.07] bg-black/16 p-3">
-                                                            <div className="flex items-start gap-3">
-                                                                <div className="h-12 w-12 shrink-0 overflow-hidden rounded-[12px] border border-[#f2d290]/18 shadow-[0_8px_18px_rgba(0,0,0,0.24)]" style={coverImage ? undefined : { background: record.coverGradient }}>
-                                                                    {coverImage ? (
-                                                                        <img src={coverImage} alt={record.title} className="h-full w-full object-cover" />
-                                                                    ) : null}
-                                                                </div>
-                                                                <div className="min-w-0 flex-1">
-                                                                    <div className="truncate text-[13px] font-semibold text-[#fff1bd]">{record.title}</div>
-                                                                    <div className="mt-1 truncate text-[10px] text-white/38">
-                                                                        {MEMORY_RECORD_MODE_COPY[record.mode].label} · {MEMORY_RECORD_STATUS_LABELS[record.status] || record.status}
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                            {record.error ? (
-                                                                <details className="mt-3 w-full rounded-[10px] border border-[#d99aae]/18 bg-[#d99aae]/[0.055] px-2.5 py-2">
-                                                                    <summary className="cursor-pointer select-none text-[10px] font-semibold text-[#ffd0d8]/78 outline-none">
-                                                                        查看生成记录
-                                                                    </summary>
-                                                                    <pre className="mt-2 max-h-28 w-full overflow-auto whitespace-pre-wrap break-normal rounded-[8px] bg-black/20 p-2 text-left text-[9px] leading-relaxed text-[#ffe1e7]/76">{record.error}</pre>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => copyMemoryRecordError(record)}
-                                                                        className="mt-2 rounded-full border border-[#d99aae]/24 px-2.5 py-1 text-[9px] font-semibold text-[#ffd0d8]/82 active:scale-[0.97]"
-                                                                    >
-                                                                        复制记录
-                                                                    </button>
-                                                                </details>
-                                                            ) : null}
-                                                            <div className="mt-3 flex flex-wrap justify-end gap-2">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => loadRecordIntoLyricsEditor(record, playable ? 'song_ready' : 'lyrics_ready')}
-                                                                    className="rounded-full border border-[#f2d290]/28 px-3 py-1.5 text-[10px] font-semibold text-[#fff1bd]"
-                                                                >
-                                                                    编辑歌词
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    disabled={!playable}
-                                                                    onClick={() => playMemoryRecord(record)}
-                                                                    className="rounded-full border border-[#f2d290]/28 px-3 py-1.5 text-[10px] font-semibold text-[#fff1bd] disabled:opacity-32"
-                                                                >
-                                                                    播放
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    disabled={!playable}
-                                                                    onClick={() => openMemoryRecordShare(record)}
-                                                                    className="rounded-full border border-[#8bb8f1]/30 px-3 py-1.5 text-[10px] font-semibold text-[#cfe0ff] disabled:opacity-32"
-                                                                >
-                                                                    分享
-                                                                </button>
-                                                                {canPreviewMonologue ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => { void previewMemoryRecordMonologue(record); }}
-                                                                        className="rounded-full border border-[#8bb8f1]/30 px-3 py-1.5 text-[10px] font-semibold text-[#cfe0ff]"
-                                                                    >
-                                                                        试听独白
-                                                                    </button>
-                                                                ) : null}
-                                                                <button
-                                                                    type="button"
-                                                                    disabled={recordGenerating}
-                                                                    onClick={() => { void handleRetryMemoryRecord(record); }}
-                                                                    className="rounded-full bg-[#f2d290] px-3 py-1.5 text-[10px] font-bold text-[#241814] disabled:opacity-50"
-                                                                >
-                                                                    重压
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    disabled={recordGenerating}
-                                                                    onClick={() => { void handleDeleteMemoryRecord(record); }}
-                                                                    className="rounded-full border border-[#d99aae]/32 px-3 py-1.5 text-[10px] font-semibold text-[#ffd0d8] disabled:opacity-40"
-                                                                >
-                                                                    删除
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                </section>
-                                </>
-                            ) : null}
-
-                            {!selectedCharId ? (
-                                <section className="relative min-h-[260px] overflow-hidden rounded-[24px] border border-[#b98e5e]/24 bg-[#161217]/78 px-6 text-center shadow-[0_24px_44px_rgba(0,0,0,0.36),0_1px_0_rgba(255,244,214,0.08)_inset] backdrop-blur-2xl transition-[border-color,transform] duration-200 hover:border-[#e6c486]/30 active:scale-[0.992]">
-                                    <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#ffe4a3]/40 to-transparent" />
-                                    <div className="absolute left-1/2 top-9 h-28 w-28 -translate-x-1/2 rounded-full border border-[#d1aa73]/18">
-                                        <div className="absolute inset-5 rounded-full border border-[#d1aa73]/12" />
-                                        <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#e5bf7f]/70" />
-                                    </div>
-                                    <div className="relative flex min-h-[260px] flex-col items-center justify-center pt-12">
-                                        <p className="text-[17px] font-semibold tracking-[0.12em] text-[#e9d5ad]" style={{ fontFamily: "'Noto Serif SC', serif" }}>先抽出一张唱片</p>
-                                        <p className="mt-4 max-w-[250px] text-[13px] font-medium leading-relaxed text-white/44">选中一个角色后，匣子会只展开属于他的那一格回忆。</p>
-                                    </div>
-                                </section>
-                            ) : (
-                                <>
-                                    <div className="rounded-[28px] border border-[#b98e5e]/24 bg-[#111015]/78 px-2 py-2 shadow-[0_18px_34px_rgba(0,0,0,0.34),0_1px_0_rgba(255,244,214,0.08)_inset] backdrop-blur-xl">
-                                        <div className="grid grid-cols-4">
-                                            {(['all', '0', '1', 'musing'] as const).map(lvl => {
-                                                const count = lvl === 'all' ? browserCounts.total
-                                                    : lvl === '0' ? browserCounts.l0
-                                                    : lvl === '1' ? browserCounts.l1
-                                                    : browserCounts.musing;
-                                                const labelStr = lvl === 'all' ? '全部'
-                                                    : lvl === '0' ? '场景'
-                                                    : lvl === '1' ? '印象'
-                                                    : '碎念';
-                                                return (
-                                                    <button
-                                                        key={lvl}
-                                                        onClick={() => { setBrowserLevel(lvl); fetchBrowserMemories(lvl); haptic.light(); }}
-                                                        className={`relative min-w-0 px-2 py-2.5 text-[12px] font-bold tracking-[0.08em] transition-[color,transform] duration-200 active:scale-[0.97] after:absolute after:bottom-1 after:left-1/2 after:h-[2px] after:w-8 after:-translate-x-1/2 after:rounded-full after:transition-opacity ${
-                                                            browserLevel === lvl
-                                                                ? 'text-[#ffe3a0] after:bg-[#f0c878] after:opacity-100'
-                                                                : 'text-white/36 after:bg-transparent after:opacity-0 hover:text-white/58'
-                                                        }`}
-                                                        style={{ fontFamily: "'Noto Serif SC', serif" }}
-                                                    >
-                                                        {lvl !== 'all' && <span className="absolute left-0 top-1/2 h-8 w-px -translate-y-1/2 bg-white/[0.08]" />}
-                                                        <span className="block truncate">{labelStr}</span>
-                                                        <span className={`mt-1 block text-[10px] ${browserLevel === lvl ? 'text-[#ffe3a0]/76' : 'text-white/28'}`}>{count}</span>
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    {browserLoading ? (
-                                        <div className="flex justify-center py-12 opacity-70"><Spinner /></div>
-                                    ) : browserMemories && browserMemories.length > 0 ? (
-                                        <div className="space-y-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-                                            {browserMemories.map((m: any, index: number) => {
-                                                const isExpanded = expandedMemId === m.id;
-                                                const isEditing = editingMemId === m.id;
-                                                const timeStr = new Date(m.createdAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-                                                const tag = m.source === 'musing' ? '碎念' : m.level === 1 ? '印象' : '场景';
-                                                const tagClassName = m.source === 'musing'
-                                                    ? 'border-[#f7bfd2]/36 bg-[#f7bfd2]/12 text-[#ffdce8]'
-                                                    : m.level === 1
-                                                        ? 'border-[#b9e1c9]/30 bg-[#b9e1c9]/10 text-[#d9f3e4]'
-                                                        : 'border-[#fff1bd]/28 bg-[#fff1bd]/10 text-[#fff1bd]';
-                                                return (
-                                                    <div key={m.id} className={`relative overflow-hidden rounded-[16px] border bg-[#100c11]/76 shadow-[0_16px_32px_rgba(0,0,0,0.3),0_1px_0_rgba(255,255,255,0.06)_inset] backdrop-blur-xl transition-[border-color,transform,box-shadow] duration-200 hover:border-[#fff1bd]/20 active:scale-[0.992] ${isExpanded ? 'border-[#fff1bd]/20' : 'border-white/[0.075]'}`}>
-                                                        <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-[#fff1bd]/28 to-transparent" />
-                                                        <div className="absolute -left-8 top-1/2 h-24 w-24 -translate-y-1/2 rounded-full bg-[#fff1bd]/[0.025] blur-2xl" />
-                                                        <div className="absolute left-0 top-0 bottom-0 w-[4px] bg-gradient-to-b from-[#f7bfd2]/40 via-[#fff1bd]/46 to-[#a98bd8]/32" />
-                                                        <button
-                                                            onClick={() => { setExpandedMemId(isExpanded ? null : m.id); haptic.light(); }}
-                                                            className="relative flex w-full gap-3 px-4 py-4 pl-5 text-left"
-                                                        >
-                                                            <div className="shrink-0 pt-0.5">
-                                                                <div className="relative flex h-11 w-11 items-center justify-center rounded-full border border-[#fff1bd]/18 bg-[#09080c]/62 shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
-                                                                    <div className="absolute inset-2 rounded-full border border-white/[0.055]" />
-                                                                    <div className="absolute h-1.5 w-1.5 rounded-full bg-[#fff1bd]/70" />
-                                                                    <div className="relative mt-14 text-[10px] font-bold leading-none text-[#fff1bd]/84" style={{ fontFamily: 'Georgia, serif' }}>{String(index + 1).padStart(2, '0')}</div>
-                                                                </div>
-                                                            </div>
-                                                            <div className="min-w-0 flex-1">
-                                                                <div className="flex min-w-0 items-center gap-2">
-                                                                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[8px] font-bold tracking-[0.12em] ${tagClassName}`}>{tag}</span>
-                                                                    <span className="truncate text-[13px] font-semibold text-[#fffaf0]/90">{m.title || '未命名回忆'}</span>
-                                                                </div>
-                                                                <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[9px] text-white/34">
-                                                                    <span className="font-mono">{timeStr}</span>
-                                                                    <span>重要度 {m.importance || 5}/10</span>
-                                                                    {m.source === 'musing' && <span className="text-[#ffdce8]/62 italic">独处浮现录</span>}
-                                                                </div>
-                                                            </div>
-                                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-                                                                className={`mt-1 h-4 w-4 shrink-0 text-[#fff1bd]/56 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
-                                                                <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
-                                                            </svg>
-                                                        </button>
-
-                                                        {isExpanded && (
-                                                            <div className="relative px-4 pb-4 pt-1">
-                                                                <div className="absolute left-5 right-4 top-0 h-px bg-gradient-to-r from-transparent via-[#fff1bd]/18 to-transparent" />
-                                                                {!isEditing ? (
-                                                                    <div className="mt-3 rounded-[14px] border border-[#ead8b8]/70 bg-[#fff8ed]/[0.94] p-4 text-[#211913] shadow-[0_12px_24px_rgba(0,0,0,0.2),0_1px_0_rgba(255,255,255,0.62)_inset]">
-                                                                        <div className="mb-3 flex items-center gap-2 text-[8px] font-semibold tracking-[0.18em] text-[#9c7650]/62">
-                                                                            <span className="h-px flex-1 bg-[#d8b987]/34" />
-                                                                            INNER SLEEVE
-                                                                        </div>
-                                                                        <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-[#3a2f27]/82" style={{ fontFamily: "'Noto Serif SC', serif" }}>{m.content}</p>
-                                                                        {m.emotionalJourney && (
-                                                                            <div className="mt-4 rounded-[12px] border border-[#d99aae]/28 bg-[#f7bfd2]/18 p-3">
-                                                                                <p className="mb-1 text-[9px] font-semibold tracking-[0.16em] text-[#a45f76]/72">情绪余回</p>
-                                                                                <p className="text-[11px] italic leading-relaxed text-[#5c414a]/76">{m.emotionalJourney}</p>
-                                                                            </div>
-                                                                        )}
-                                                                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#d8b987]/26 pt-3">
-                                                                            <div className="text-[8px] tracking-[0.12em] text-[#9c7650]/58">ID <span className="font-mono">{String(m.id || '').split('-').pop()}</span></div>
-                                                                            <button
-                                                                                onClick={(e) => { e.stopPropagation(); setEditDraft({ title: m.title, content: m.content, importance: m.importance }); setEditingMemId(m.id); }}
-                                                                                className="rounded-full bg-[#211913] px-3.5 py-1.5 text-[10px] font-semibold text-[#fff1bd] shadow-[0_8px_18px_rgba(33,25,19,0.18)] transition-all active:scale-[0.97]"
-                                                                            >
-                                                                                修饰回忆
-                                                                            </button>
-                                                                        </div>
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="mt-3 flex flex-col gap-3 rounded-[14px] border border-[#ead8b8]/70 bg-[#fff8ed]/[0.95] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.2),0_1px_0_rgba(255,255,255,0.62)_inset]">
-                                                                        <input value={editDraft?.title || ''} onChange={e => setEditDraft(prev => prev ? { ...prev, title: e.target.value } : null)}
-                                                                            className="w-full rounded-[10px] border border-[#d8b987]/38 bg-white/62 px-3 py-2 text-[12px] font-semibold text-[#211913] outline-none focus:border-[#b88952]/54 focus:bg-white"
-                                                                            placeholder="回忆标题..." />
-                                                                        <textarea value={editDraft?.content || ''} onChange={e => setEditDraft(prev => prev ? { ...prev, content: e.target.value } : null)}
-                                                                            className="h-28 w-full resize-none rounded-[10px] border border-[#d8b987]/38 bg-white/62 px-3 py-2 text-[12px] leading-relaxed text-[#3a2f27] outline-none focus:border-[#b88952]/54 focus:bg-white"
-                                                                            placeholder="记忆内容..." />
-                                                                        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-                                                                            <label className="flex items-center gap-2 rounded-full border border-[#d8b987]/32 bg-white/58 px-3 py-1.5 text-[10px] font-semibold text-[#8f6b3b]">
-                                                                                重要度
-                                                                                <input type="number" min="1" max="10" value={editDraft?.importance || 5}
-                                                                                    onChange={e => setEditDraft(prev => prev ? { ...prev, importance: parseInt(e.target.value) || 5 } : null)}
-                                                                                    className="w-10 bg-transparent text-right text-[#211913] outline-none" />
-                                                                            </label>
-                                                                            <div className="flex gap-2">
-                                                                                <button onClick={() => setEditingMemId(null)} className="rounded-full px-4 py-1.5 text-[10px] font-semibold text-[#8f6b3b] transition-colors hover:bg-[#ead8b8]/28">取消</button>
-                                                                                <button disabled={saving} onClick={() => doSaveEdit(m.id)}
-                                                                                    className="rounded-full bg-[#211913] px-4 py-1.5 text-[10px] font-bold text-[#fff1bd] shadow-[0_8px_18px_rgba(33,25,19,0.18)] disabled:opacity-50">
-                                                                                    {saving ? '结晶中...' : '保存修改'}
-                                                                                </button>
-                                                                            </div>
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <section className="relative min-h-[300px] overflow-hidden rounded-[24px] border border-[#b98e5e]/28 bg-[#1a1416]/78 px-5 py-7 shadow-[0_24px_48px_rgba(0,0,0,0.4),0_1px_0_rgba(255,244,214,0.09)_inset] backdrop-blur-2xl transition-[border-color,transform] duration-200 hover:border-[#e6c486]/34 active:scale-[0.992] sm:px-6">
-                                            <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#ffe4a3]/38 to-transparent" />
-                                            <div className="absolute -left-12 bottom-8 h-44 w-44 rounded-full border border-[#c5a06a]/12 bg-[radial-gradient(circle,#171316_0%,#171316_42%,#050406_43%,#050406_100%)] shadow-[0_18px_38px_rgba(0,0,0,0.45)]" />
-                                            <div className="absolute left-2 bottom-9 h-36 w-36 sm:left-5">
-                                                <img src="/images/cognitive-vinyl/clock-postage.png" alt="" className="absolute -left-4 -top-5 w-40 rotate-[-8deg] opacity-[0.58] mix-blend-screen sm:w-44" />
-                                                <img src="/images/cognitive-vinyl/archive-card.png" alt="" className="absolute -right-8 bottom-1 w-24 rotate-[5deg] opacity-[0.22] mix-blend-screen sm:w-28" />
-                                            </div>
-                                            <div className="relative ml-[122px] flex min-h-[240px] min-w-0 max-w-none flex-col justify-center text-left sm:ml-auto sm:max-w-[380px] sm:pr-8">
-                                                <p className="text-[41px] leading-[0.9] text-[#f6d8a1] drop-shadow-[0_4px_18px_rgba(246,216,161,0.12)] sm:text-[52px]" style={{ fontFamily: "'Cognitive Vinyl Script', 'Pinyon Script', 'Bickham Script Pro', 'Edwardian Script ITC', cursive" }}>No Needle Yet</p>
-                                                <div className="mt-4 flex items-center gap-3">
-                                                    <span className="h-1.5 w-1.5 rotate-45 bg-[#e9c489]/70" />
-                                                    <span className="h-px w-28 bg-gradient-to-r from-[#e9c489]/46 to-transparent" />
-                                                </div>
-                                                <p className="mt-5 max-w-[170px] text-[12px] font-medium leading-relaxed text-[#d8d0c8]/54 sm:max-w-[250px] sm:text-[14px]">新的回忆写入后，会成为这里的第一首私人藏曲。</p>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => { setActiveTab('workshop'); haptic.medium(); }}
-                                                    className="mt-7 inline-flex w-fit max-w-full items-center justify-center gap-2 whitespace-nowrap rounded-[12px] border border-[#d8b987]/34 bg-white/[0.035] px-3.5 py-3 text-[11px] font-semibold tracking-[0.04em] text-[#e9c489] shadow-[0_12px_24px_rgba(0,0,0,0.2)] transition-[border-color,background-color,transform] duration-200 hover:border-[#e9c489]/48 hover:bg-white/[0.06] active:scale-[0.97] sm:px-5 sm:text-[13px]"
-                                                    style={{ fontFamily: "'Noto Serif SC', serif" }}
-                                                >
-                                                    <span className="text-[12px]">▸</span>
-                                                    记录一段回忆声纹
-                                                </button>
-                                            </div>
-                                        </section>
-                                    )}
-                                </>
-                            )}
-                            <div className="flex items-center justify-center gap-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 text-[11px] tracking-[0.22em] text-[#d8bd90]/28" style={{ fontFamily: "'Noto Serif SC', serif" }}>
-                                <span className="h-px w-16 bg-gradient-to-r from-transparent via-[#d8bd90]/22 to-transparent" />
-                                所有声音，仅为你而存
-                                <span className="h-px w-16 bg-gradient-to-r from-transparent via-[#d8bd90]/22 to-transparent" />
-                            </div>
-                        </div>
-                    </div>
+                    <MemoryBrowser
+                        characters={characters}
+                        selectedCharId={selectedCharId}
+                        onSelectedCharIdChange={setSelectedCharId}
+                        userName={userProfile.name}
+                        addToast={addToast}
+                        onOpenSourceInChat={handleOpenSourceInChat}
+                    />
                 )}
 
                 {/* ── WORKSHOP TAB ── */}
@@ -2948,7 +1309,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                     {queueStatus.lastError && (<div className="mt-3 text-[9px] text-rose-300/80 font-mono break-words bg-white/5 p-2 rounded-lg">{queueStatus.lastError}</div>)}
                                 </div>)}
                             </div>
-                            <div className="mt-20 mb-4 text-center"><div className="w-10 h-px bg-white/[0.06] mx-auto mb-5" /><p className="text-[8px] text-white/[0.1] tracking-[0.3em] italic leading-loose" style={{ fontFamily: "'Noto Serif SC', serif" }}>记忆从不褪色，只是被时间温柔收藏。</p><p className="text-[7px] text-white/[0.05] tracking-[0.15em] mt-3 italic" style={{ fontFamily: "Georgia, serif" }}>Cognitive Engine</p></div>
+                            <div className="mt-20 mb-4 text-center"><div className="w-10 h-px bg-white/[0.06] mx-auto mb-5" /><p className="text-[8px] text-white/[0.1] tracking-[0.3em] italic leading-loose" style={{ fontFamily: "'Noto Serif SC', serif" }}>记忆从不褪色，只是被时间温柔收藏。</p><p className="text-[7px] text-white/[0.05] tracking-[0.15em] mt-3 italic" style={{ fontFamily: "Georgia, serif" }}>Memory Engine</p></div>
                         </div></div>
                 )}
 
@@ -3260,16 +1621,6 @@ const CognitiveNetworkApp: React.FC = () => {
                 />
             )}
 
-            <MemoryRecordShareModal
-                playable={shareModalPlayable}
-                isSharing={isSharingMemoryRecord}
-                onClose={() => setShareModalPlayable(null)}
-                onShare={() => {
-                    if (shareModalPlayable) {
-                        void handleShareMemoryRecordPoster(shareModalPlayable);
-                    }
-                }}
-            />
         </div>
     );
 };
@@ -3303,8 +1654,6 @@ const ConfirmBar: React.FC<{ type: string; onConfirm: () => void; onCancel: () =
         </div>
     );
 };
-
-const Spinner = () => <div className="w-5 h-5 border-[2px] border-[#E8DDD4] border-t-[#8B7355] rounded-full animate-spin mx-auto" />;
 
 const ResultCard: React.FC<{
     title: string;

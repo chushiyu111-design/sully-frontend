@@ -268,19 +268,25 @@ const DateApp: React.FC = () => {
     const renderEditModal = () => (
         <Modal
             isOpen={isEditModalOpen}
-            title="编辑内容"
+            title={editTargetMsg?.metadata?.isSummary ? '编辑总结' : '编辑内容'}
             onClose={closeEditModal}
             footer={
                 <>
                     <button onClick={closeEditModal} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button>
-                    <button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button>
+                    <button
+                        disabled={editTargetMsg?.metadata?.isSummary && !editContent.trim()}
+                        onClick={confirmEditMessage}
+                        className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl disabled:opacity-50"
+                    >
+                        保存
+                    </button>
                 </>
             }
         >
             <textarea
                 value={editContent}
                 onChange={e => setEditContent(e.target.value)}
-                className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
+                className={`w-full bg-slate-100 rounded-2xl p-4 resize-y focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed ${editTargetMsg?.metadata?.isSummary ? 'h-64' : 'h-32'}`}
             />
         </Modal>
     );
@@ -488,9 +494,14 @@ ${exitPromptContent}
 
     const saveSummaryDraft = async (draft: SummaryDraft) => {
         if (!char) return;
+        const content = draft.content.trim();
+        if (!content) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
         // Save summary as pure summary — NO bridge flag in metadata.
         const savedSummaryId = await DB.saveMessage({
-            charId: char.id, role: 'system', type: 'text', content: draft.content,
+            charId: char.id, role: 'system', type: 'text', content,
             metadata: {
                 source: 'date', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
                 coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
@@ -515,13 +526,13 @@ ${exitPromptContent}
                 if (!embedKey) {
                     addToast('无法刻入向量记忆：未配置 Embedding API Key', 'error');
                 } else {
-                    const vector = await EmbeddingService.embed(draft.content, 'VECTOR_MEMORY', embedKey);
+                    const vector = await EmbeddingService.embed(content, 'VECTOR_MEMORY', embedKey);
                     const newMemId = crypto.randomUUID();
                     const newMem = {
                         id: newMemId,
                         charId: char.id,
                         title: '约会记忆总结',
-                        content: draft.content,
+                        content,
                         vector,
                         modelId: embedConfig.model,
                         source: 'import' as const,
@@ -734,6 +745,7 @@ ${exitPromptContent}
     const renderSummaryModal = () => {
         if (!activeSummaryDraft) return null;
         const saveLabel = activeSummaryDraft.exitState ? '保存并退出' : '保存';
+        const canSave = activeSummaryDraft.content.trim().length > 0;
         return (
             <Modal
                 isOpen={!!activeSummaryDraft}
@@ -748,14 +760,31 @@ ${exitPromptContent}
                             复制
                         </button>
                         <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
-                        <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{saveLabel}</button>
+                        <button disabled={!canSave} onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50">{saveLabel}</button>
                     </>
                 }
             >
                 <div className="flex flex-col gap-4">
-                    <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
-                        {renderMarkdown(activeSummaryDraft.content)}
+                    <div>
+                        <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-slate-400">
+                            <span>总结正文</span>
+                            <span>{activeSummaryDraft.content.trim().length} 字</span>
+                        </div>
+                        <textarea
+                            value={activeSummaryDraft.content}
+                            onChange={e => setActiveSummaryDraft(current => current ? { ...current, content: e.target.value } : current)}
+                            rows={10}
+                            className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
                     </div>
+                    {canSave && (
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">排版预览</div>
+                            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+                                {renderMarkdown(activeSummaryDraft.content)}
+                            </div>
+                        </div>
+                    )}
                     {activeSummaryDraft.summaryType === 'manual' && activeSummaryDraft.bridgeOnSave && (
                         <label className="flex items-center gap-2 mt-4 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200 transition-colors hover:bg-slate-100">
                             <input 
@@ -1114,11 +1143,31 @@ ${exitPromptContent}
         setDateMessages(prev => prev.filter(m => m.id !== msg.id));
     };
 
+    const updateSavedSummaryAndBridges = async (summary: Message, nextContent: string) => {
+        await DB.updateMessage(summary.id, nextContent);
+        const allMsgs = await DB.getMessagesByCharId(summary.charId);
+        const bridges = allMsgs.filter(m =>
+            m.metadata?.source === summary.metadata?.source
+            && m.metadata?.isDateContextBridge === true
+            && m.metadata?.summarySourceMsgId === summary.id
+        );
+        await Promise.all(bridges.map(bridge => DB.updateMessage(bridge.id, nextContent)));
+    };
+
     const confirmEditMessage = async () => {
         if (!editTargetMsg) return;
         const targetMsg = editTargetMsg;
-        const nextContent = editContent;
-        await DB.updateMessage(targetMsg.id, nextContent);
+        const isSummary = targetMsg.metadata?.isSummary === true;
+        const nextContent = isSummary ? editContent.trim() : editContent;
+        if (isSummary && !nextContent) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
+        if (isSummary) {
+            await updateSavedSummaryAndBridges(targetMsg, nextContent);
+        } else {
+            await DB.updateMessage(targetMsg.id, nextContent);
+        }
         if (mode === 'history') {
             await loadHistorySessions(targetMsg.charId);
         } else {
@@ -1278,8 +1327,16 @@ ${exitPromptContent}
                                             <div className="mt-3 space-y-3">
                                                 {session.summaries.map(summary => (
                                                     <div key={summary.id} className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-                                                        <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                                            {summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结'}
+                                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                                                {summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结'}
+                                                            </div>
+                                                            <button
+                                                                onClick={() => openEditModal(summary)}
+                                                                className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors"
+                                                            >
+                                                                编辑
+                                                            </button>
                                                         </div>
                                                         <div className="text-xs leading-relaxed text-slate-700">
                                                             {renderMarkdown(summary.content)}

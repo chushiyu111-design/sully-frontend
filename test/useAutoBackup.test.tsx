@@ -9,6 +9,8 @@ import {
 import { SystemBackupMode, SystemBackupOptions } from '../utils/systemBackup';
 
 vi.mock('../utils/cloudBackup', () => ({
+    CLOUD_BACKUP_MAX_BYTES: 100 * 1000 * 1000,
+    CLOUD_BACKUP_MAX_DISPLAY: '约100MB',
     getLatestCloudBackup: vi.fn(),
     isCloudBackupAvailable: vi.fn(),
     uploadCloudBackup: vi.fn(),

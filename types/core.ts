@@ -30,7 +30,8 @@ export enum AppID {
     Zhaixinglou = 'zhaixinglou', // 摘星楼 - Astrology & Divination
     CsyManual = 'csy_manual', // CSY二改版使用手册
     VoiceCall = 'voice_call', // 语音通话
-    CognitiveNetwork = 'cognitive_network', // 认知网络
+    CognitiveNetwork = 'cognitive_network', // 记忆浏览器
+    EchoRecord = 'echo_record', // 回声唱片
     StatusWorkshop = 'status_workshop', // 状态栏工坊
     HalfSugar = 'half_sugar', // 半糖主义
     Theater = 'theater', // 约会

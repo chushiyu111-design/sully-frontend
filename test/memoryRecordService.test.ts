@@ -5,6 +5,7 @@ import { pinyin } from 'pinyin-pro';
 import { DB } from '../utils/db';
 import {
     createMemoryRecordDraft,
+    generateLyrics,
     produceMemoryRecordAudio,
     reviseMemoryRecordLyrics,
     shouldGenerateMemoryRecordMonologue,
@@ -64,6 +65,18 @@ function openAiResponse(content: string, finishReason = 'stop'): Response {
     return new Response(JSON.stringify({
         choices: [{ message: { content }, finish_reason: finishReason }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+function openAiStreamResponse(content: string, finishReason = 'stop'): Response {
+    const midpoint = Math.max(1, Math.floor(content.length / 2));
+    const chunks = [content.slice(0, midpoint), content.slice(midpoint)];
+    const body = [
+        ...chunks.map(chunk => `data: ${JSON.stringify({ choices: [{ delta: { content: chunk }, finish_reason: '' }] })}\n\n`),
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+        'data: [DONE]\n\n',
+    ].join('');
+
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
 }
 
 const ttsConfig: TtsConfig = {
@@ -347,6 +360,39 @@ describe('memory record draft fallback', () => {
         const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
         expect(secondBody.temperature).toBe(0.72);
         expect(secondBody.max_tokens).toBe(16000);
+    });
+
+    it('reads generated lyrics from streaming LLM responses', async () => {
+        const payload = JSON.stringify({
+            title: '雨停以后',
+            lyric_intent: {
+                song_type: '私人回忆流行歌',
+                core_emotion: '克制重逢',
+                narrative_angle: '我对你唱',
+                hook: '靠近一点别走开',
+                structure_plan: 'Intro-Verse-Pre-Chorus-Chorus-Verse-Bridge-Final Chorus-Outro',
+                singability_strategy: '短句和副歌复现',
+            },
+            lyrics: releaseReadyLyrics,
+        });
+        const fetchMock = vi.fn().mockResolvedValue(openAiStreamResponse(payload));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const result = await generateLyrics({
+            char,
+            userProfile,
+            mode: 'relationship_theme',
+            memories: [],
+            apiConfig,
+            contextBudget: 'expanded',
+        });
+
+        expect(result.title).toBe('雨停以后');
+        expect(result.lyrics).toContain('[Final Chorus]');
+        const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+        expect(body.stream).toBe(true);
+        expect(body.max_tokens).toBe(16000);
+        expect(body.messages[1].content).toContain('【Sully的灵魂底色】');
     });
 
     it('keeps the initial draft when lyric self-check returns invalid JSON', async () => {

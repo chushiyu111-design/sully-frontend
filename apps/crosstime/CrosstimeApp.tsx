@@ -10,7 +10,7 @@ import type { CrosstimeParticipant, CrosstimeRoom, CrosstimeMessage } from '../.
 import { getTrajectoryNodes } from '../../utils/db/trajectoryStore';
 import {
     getCrosstimeRooms, saveCrosstimeRoom, deleteCrosstimeRoom,
-    getCrosstimeMessages, saveCrosstimeMessage,
+    getCrosstimeMessages, saveCrosstimeMessage, deleteCrosstimeMessagesByIds,
 } from '../../utils/db/crosstimeStore';
 import {
     buildGroupedParticipantContexts, buildCrosstimeDirectorPrompt,
@@ -22,6 +22,8 @@ import {
 import { safeResponseJson } from '../../utils/safeApi';
 import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
 import { extractThinking } from '../../utils/thinkingExtractor';
+import { safeUUID } from '../../utils/safeUUID';
+import { DREAMWEAVER_SYSTEM } from '../../utils/dreamweaver';
 import './crosstime.css';
 
 type View = 'setup' | 'room' | 'history';
@@ -83,13 +85,13 @@ const CrosstimeApp: React.FC = () => {
         if (!pickedChar) return;
         const p: CrosstimeParticipant = slice === 'current'
             ? {
-                id: crypto.randomUUID(),
+                id: safeUUID(),
                 charId: pickedChar.id,
                 timeSlice: 'current',
                 label: '现在',
             }
             : {
-                id: crypto.randomUUID(),
+                id: safeUUID(),
                 charId: pickedChar.id,
                 timeSlice: 'trajectory',
                 trajectoryNodeId: slice.id,
@@ -119,7 +121,7 @@ const CrosstimeApp: React.FC = () => {
         const roomName = names.join(' × ');
 
         const newRoom: CrosstimeRoom = {
-            id: crypto.randomUUID(),
+            id: safeUUID(),
             name: roomName,
             participants: [...participants],
             userMode: 'online',
@@ -212,7 +214,10 @@ const CrosstimeApp: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: 'user', content: prompt }],
+                    messages: [
+                        { role: 'system', content: DREAMWEAVER_SYSTEM + '你就是这个角色本身。直接输出回应，不加引号。' },
+                        { role: 'user', content: prompt },
+                    ],
                     temperature: 0.85,
                     max_tokens: 500,
                 }),
@@ -290,7 +295,10 @@ const CrosstimeApp: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: 'user', content: prompt }],
+                    messages: [
+                        { role: 'system', content: DREAMWEAVER_SYSTEM + '你是跨时空对话的导演。严格输出 JSON。' },
+                        { role: 'user', content: prompt },
+                    ],
                     temperature: 0.9,
                     max_tokens: 4000,
                 }),
@@ -310,7 +318,16 @@ const CrosstimeApp: React.FC = () => {
             try {
                 actions = JSON.parse(jsonStr);
                 if (!Array.isArray(actions)) actions = [];
-            } catch { console.error('[Crosstime] Parse error', jsonStr); }
+            } catch {
+                // Fallback: regex 逐个提取 JSON 对象
+                const regex = /"participantId"\s*:\s*"([^"]+)"[\s\S]*?"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+                let match;
+                while ((match = regex.exec(jsonStr)) !== null) {
+                    actions.push({ participantId: match[1], content: match[2].replace(/\\n/g, '\n').replace(/\\"/g, '"') });
+                }
+                if (actions.length > 0) console.warn('[Crosstime] JSON parse failed, regex fallback extracted', actions.length, 'actions');
+                else console.error('[Crosstime] Both JSON and regex parse failed:', jsonStr);
+            }
 
             // Execute actions
             for (const action of actions) {
@@ -410,7 +427,10 @@ const CrosstimeApp: React.FC = () => {
                 content: JSON.stringify(parsed),
                 timestamp: Date.now(),
             });
-            console.log('[Crosstime] Per-participant summary saved:', Object.keys(parsed));
+            // 释放已被总结的旧消息
+            const idsToDelete = check.messagesToSummarize.map(m => m.id);
+            deleteCrosstimeMessagesByIds(currentRoom.id, idsToDelete);
+            console.log('[Crosstime] Per-participant summary saved:', Object.keys(parsed), '| cleaned', idsToDelete.length, 'old messages');
         } catch (e) {
             console.warn('[Crosstime] Auto-summary failed:', e);
         } finally {

@@ -7,6 +7,8 @@ import {
   getLatestCloudBackup,
   downloadCloudBackup,
   isCloudBackupAvailable,
+  assertCloudBackupUploadSize,
+  CLOUD_BACKUP_MAX_DISPLAY,
   CloudBackupMeta,
 } from '../../utils/cloudBackup';
 import { readSystemBackupIncludeVoiceAudio } from '../../utils/systemBackup';
@@ -125,7 +127,8 @@ const CloudBackupPanel: React.FC = () => {
             const blob = await exportSystem('full', {
                 includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
             });
-            addToast('正在上传到云端...', 'info');
+            assertCloudBackupUploadSize(blob.size);
+            addToast(`备份已生成（${formatBytes(blob.size)}），正在上传到云端...`, 'info');
             const label = new Date().toLocaleString('zh-CN', {
                 month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit',
@@ -213,7 +216,7 @@ const CloudBackupPanel: React.FC = () => {
                                 <h2 className="text-sm font-bold text-slate-700 tracking-wide">云端备份</h2>
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                    <span className="text-[10px] text-emerald-600 font-medium">已连接 · 500MB</span>
+                                    <span className="text-[10px] text-emerald-600 font-medium">已连接 · {CLOUD_BACKUP_MAX_DISPLAY}</span>
                                 </div>
                             </div>
                         </div>
@@ -319,7 +322,7 @@ const CloudBackupPanel: React.FC = () => {
                 {/* Footer Tip */}
                 <div className="px-5 pb-4">
                     <p className="text-[10px] text-stone-400 leading-relaxed">
-                        每天自动备份一次，新备份会覆盖旧备份。数据存储在 Cloudflare R2 云端，换设备登录即可恢复。
+                        每天自动备份一次，新备份会覆盖旧备份。当前云端受 Cloudflare 上传入口限制，较大的音频和图片建议用本地备份保存。
                     </p>
                 </div>
             </section>

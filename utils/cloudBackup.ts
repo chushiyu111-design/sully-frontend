@@ -7,6 +7,38 @@
 
 import { buildBackendHeaders,getBackendToken,getBackendUrl } from './backendClient';
 
+type ViteEnvMap = Record<string, string | boolean | undefined>;
+
+function getViteEnv(): ViteEnvMap {
+    return ((import.meta as ImportMeta & { env?: ViteEnvMap }).env || {});
+}
+
+function readProcessEnv(key: string): string | undefined {
+    const processEnv = (globalThis as typeof globalThis & {
+        process?: { env?: Record<string, string | undefined> };
+    }).process?.env;
+    return processEnv?.[key];
+}
+
+function resolveCloudBackupMaxMB(): number {
+    const env = getViteEnv();
+    const configured = env.VITE_CSYOS_CLOUD_BACKUP_MAX_MB
+        || readProcessEnv('VITE_CSYOS_CLOUD_BACKUP_MAX_MB');
+    const configuredMB = typeof configured === 'string' ? Number(configured) : NaN;
+    if (Number.isFinite(configuredMB) && configuredMB > 0) {
+        return configuredMB;
+    }
+
+    const mode = typeof env.MODE === 'string'
+        ? env.MODE
+        : readProcessEnv('MODE');
+    return mode === 'staging' ? 100 : 500;
+}
+
+export const CLOUD_BACKUP_MAX_MB = resolveCloudBackupMaxMB();
+export const CLOUD_BACKUP_MAX_BYTES = CLOUD_BACKUP_MAX_MB * 1000 * 1000;
+export const CLOUD_BACKUP_MAX_DISPLAY = `约${CLOUD_BACKUP_MAX_MB}MB`;
+
 export interface CloudBackupMeta {
     key: string;
     size: number;
@@ -60,6 +92,18 @@ export class CloudBackupApiError extends Error {
     }
 }
 
+function formatBackupSizeMB(bytes: number): string {
+    return (bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0);
+}
+
+export function assertCloudBackupUploadSize(bytes: number): void {
+    if (bytes <= CLOUD_BACKUP_MAX_BYTES) return;
+
+    throw new Error(
+        `云端备份文件约 ${formatBackupSizeMB(bytes)}MB，超过当前云端入口 ${CLOUD_BACKUP_MAX_DISPLAY} 上传上限。请先关闭通话录音备份、清理较大的音频/图片，或改用本地备份保存完整媒体。`,
+    );
+}
+
 async function backupFetch(
     path: string,
     options: RequestInit = {},
@@ -102,6 +146,8 @@ export async function uploadCloudBackup(
     label?: string,
     source: CloudBackupSource = 'manual',
 ): Promise<CloudBackupUploadResponse> {
+    assertCloudBackupUploadSize(zipBlob.size);
+
     const headers: Record<string, string> = {
         'Content-Type': 'application/zip',
         'X-Backup-Source': source,

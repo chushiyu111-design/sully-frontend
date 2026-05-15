@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Chat from './Chat';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+import { AGENT_MESSAGE_SAVED_EVENT_NAME } from '../utils/autonomousAgent';
 
 vi.mock('../context/OSContext', () => ({
     useOS: vi.fn(),
@@ -141,6 +142,7 @@ vi.mock('../utils/autonomousAgent', () => ({
         notifyUserReplied: vi.fn(() => Promise.resolve()),
         refreshCharacterContext: vi.fn(() => Promise.resolve()),
     },
+    AGENT_MESSAGE_SAVED_EVENT_NAME: 'agent-message-saved',
     getLifeStreamVisibleInChat: vi.fn(() => false),
     LIFE_STREAM_VISIBILITY_EVENT_NAME: 'life-stream-visibility-change',
 }));
@@ -322,5 +324,69 @@ describe('Chat active character fallback', () => {
         expect(screen.getByTestId('chat-modals-state')).toHaveTextContent('selected:none');
         expect(screen.getAllByText('第一条可引用')).toHaveLength(1);
         expect(screen.getAllByText('第二条可引用')).toHaveLength(2);
+    });
+
+    it('reloads the current chat when a backend agent message is saved for the active character', async () => {
+        const clearUnread = vi.fn();
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
+            activeCharacterId: 'char-1',
+            clearUnread,
+        }));
+
+        render(<Chat />);
+
+        await waitFor(() => {
+            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalled();
+        });
+        mockedDB.getRecentMessagesWithCount.mockClear();
+        clearUnread.mockClear();
+
+        window.dispatchEvent(new CustomEvent(AGENT_MESSAGE_SAVED_EVENT_NAME, {
+            detail: {
+                charId: 'char-1',
+                contentCharId: 'char-1',
+                messageId: 99,
+                backendMessageId: 'backend-msg-99',
+                role: 'assistant',
+                source: 'autonomous',
+            },
+        }));
+
+        await waitFor(() => {
+            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalledWith('char-1', 30);
+        });
+        expect(clearUnread).toHaveBeenCalledWith('char-1');
+    });
+
+    it('ignores backend agent message events for other characters', async () => {
+        const clearUnread = vi.fn();
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
+            activeCharacterId: 'char-1',
+            clearUnread,
+        }));
+
+        render(<Chat />);
+
+        await waitFor(() => {
+            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalled();
+        });
+        mockedDB.getRecentMessagesWithCount.mockClear();
+        clearUnread.mockClear();
+
+        window.dispatchEvent(new CustomEvent(AGENT_MESSAGE_SAVED_EVENT_NAME, {
+            detail: {
+                charId: 'char-2',
+                contentCharId: 'char-2',
+                messageId: 100,
+                backendMessageId: 'backend-msg-100',
+                role: 'assistant',
+                source: 'autonomous',
+            },
+        }));
+
+        expect(mockedDB.getRecentMessagesWithCount).not.toHaveBeenCalled();
+        expect(clearUnread).not.toHaveBeenCalled();
     });
 });

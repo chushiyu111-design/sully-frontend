@@ -110,6 +110,16 @@ const AGENT_CONFIG_STORAGE_KEY = 'agent_config';
 const LIFE_STREAM_VISIBILITY_STORAGE_PREFIX = 'agent_lifestream_visibility_';
 const AUTONOMOUS_DEBUG_STORAGE_KEY = 'autonomous_debug';
 export const LIFE_STREAM_VISIBILITY_EVENT_NAME = 'agent-lifestream-visibility-changed';
+export const AGENT_MESSAGE_SAVED_EVENT_NAME = 'agent-message-saved';
+
+export interface AgentMessageSavedEventDetail {
+    charId: string;
+    contentCharId: string;
+    messageId: number;
+    backendMessageId: string;
+    role: string;
+    source: string;
+}
 
 type MemorySummary = Pick<
     VectorMemory,
@@ -633,7 +643,7 @@ export class BackendAgentManager {
         };
 
         // Save directly to messages store (bypass scheduled queue to avoid lost messages)
-        await DB.saveMessageOnceByBackendId({
+        const saveResult = await DB.saveMessageOnceByBackendId({
             charId: this.charId,
             role,
             type: 'text',
@@ -641,6 +651,19 @@ export class BackendAgentManager {
             timestamp: message.createdAt || message.created_at || now,
             metadata: msgMeta,
         });
+
+        if (saveResult.saved && typeof saveResult.id === 'number' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent<AgentMessageSavedEventDetail>(AGENT_MESSAGE_SAVED_EVENT_NAME, {
+                detail: {
+                    charId: this.uiCharId || this.charId,
+                    contentCharId: this.charId,
+                    messageId: saveResult.id,
+                    backendMessageId,
+                    role,
+                    source,
+                },
+            }));
+        }
     }
 
     private async acknowledgeMessages(

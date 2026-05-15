@@ -22,6 +22,8 @@ import { haptic } from '../utils/haptics';
 import { withCharacterTtsVoice } from '../utils/characterTts';
 import {
   BackendAgentManager,
+  AGENT_MESSAGE_SAVED_EVENT_NAME,
+  type AgentMessageSavedEventDetail,
   getLifeStreamVisibleInChat,
   LIFE_STREAM_VISIBILITY_EVENT_NAME,
 } from '../utils/autonomousAgent';
@@ -404,6 +406,21 @@ const Chat: React.FC = () => {
             clearUnread(activeCharacterId);
         }
     }, [lastMsgTimestamp, activeCharacterId, reloadMessages, clearUnread]);
+
+    useEffect(() => {
+        if (!activeCharacterId) return;
+
+        const handleAgentMessageSaved = (event: Event) => {
+            const detail = (event as CustomEvent<AgentMessageSavedEventDetail>).detail;
+            if (!detail || detail.charId !== activeCharacterId) return;
+
+            void reloadMessages(visibleCountRef.current);
+            clearUnread(activeCharacterId);
+        };
+
+        window.addEventListener(AGENT_MESSAGE_SAVED_EVENT_NAME, handleAgentMessageSaved);
+        return () => window.removeEventListener(AGENT_MESSAGE_SAVED_EVENT_NAME, handleAgentMessageSaved);
+    }, [activeCharacterId, reloadMessages, clearUnread]);
 
     useEffect(() => {
         visibleCountRef.current = visibleCount;

@@ -270,6 +270,7 @@ export function useAutoBackup(
             console.log('[AutoBackup] 开始生成备份...');
             const blob = await exportSystemRef.current('full', {
                 includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
+                includeMemoryRecordAudio: false,
             });
             refreshAutoBackupLock(lockOwnerId);
 

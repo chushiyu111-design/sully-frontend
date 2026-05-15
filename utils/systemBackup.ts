@@ -1,5 +1,5 @@
 
-import { APIConfig,OSTheme,CharacterProfile,ChatTheme,FullBackupData,UserProfile,ApiPreset,GroupProfile,Worldbook,NovelBook,Message,RealtimeConfig,TtsConfig,SttConfig,BackupMusicAssets,SerializedVoiceAudio } from '../types';
+import { APIConfig,OSTheme,CharacterProfile,ChatTheme,FullBackupData,UserProfile,ApiPreset,GroupProfile,Worldbook,NovelBook,Message,RealtimeConfig,TtsConfig,SttConfig,BackupMusicAssets,SerializedVoiceAudio,MemoryRecord } from '../types';
 import { DB } from './db';
 import { buildBackendHeaders,getBackendUrl } from './backendClient';
 import { loadJSZip } from './lazyThirdParty';
@@ -19,6 +19,7 @@ export type SystemBackupMode = 'text_only' | 'media_only' | 'full';
 
 export interface SystemBackupOptions {
     includeVoiceAudio?: boolean;
+    includeMemoryRecordAudio?: boolean;
 }
 
 export const SYSTEM_BACKUP_INCLUDE_VOICE_AUDIO_KEY = 'system_backup_include_voice_audio';
@@ -192,6 +193,30 @@ async function serializeVoiceAudioForBackup(items: any[]): Promise<SerializedVoi
         });
     }
     return serialized;
+}
+
+const MEMORY_RECORD_AUDIO_STATUSES = new Set(['monologue_ready', 'music_ready', 'mastering', 'ready']);
+
+function stripMemoryRecordAudioReferences(items: any[]): any[] {
+    if (!Array.isArray(items)) return items;
+
+    return items.map((item: MemoryRecord) => {
+        if (!item || typeof item !== 'object') return item;
+
+        const hasAudioReference = Boolean(item.monologueAudioId || item.musicAudioId || item.masterAudioId);
+        if (!hasAudioReference) return item;
+
+        return {
+            ...item,
+            status: MEMORY_RECORD_AUDIO_STATUSES.has(item.status) ? 'draft' : item.status,
+            durationMs: undefined,
+            lyricsOffsetMs: undefined,
+            lyricTiming: undefined,
+            monologueAudioId: undefined,
+            musicAudioId: undefined,
+            masterAudioId: undefined,
+        };
+    });
 }
 
 function getLocalStorageItem(key: string): string | undefined {
@@ -881,12 +906,20 @@ function restoreDeviceIdentitySnapshot(snapshot: DeviceIdentitySnapshot): void {
     }
 }
 
+function shouldIncludeMemoryRecordAudio(mode: SystemBackupMode, options: SystemBackupOptions = {}): boolean {
+    return mode !== 'text_only' && options.includeMemoryRecordAudio !== false;
+}
+
 function getStoresToProcess(mode: SystemBackupMode, options: SystemBackupOptions = {}): string[] {
     let stores: string[];
     if (mode === 'full') stores = [...ALL_STORES];
     else if (mode === 'text_only') stores = ALL_STORES.filter(s => s !== 'assets' && s !== 'memory_record_audio');
     // media_only
     else stores = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data', 'memory_records', 'memory_record_audio'];
+
+    if (!shouldIncludeMemoryRecordAudio(mode, options)) {
+        stores = stores.filter(s => s !== 'memory_record_audio');
+    }
 
     if (options.includeVoiceAudio && mode !== 'text_only' && !stores.includes('voice_audio')) {
         stores.push('voice_audio');
@@ -962,6 +995,7 @@ export async function exportSystemData(
     const processObject = (obj: any) => processObjectForZip(obj, assetsFolder, assetCounter);
 
     const storesToProcess = getStoresToProcess(mode, options);
+    const includeMemoryRecordAudio = shouldIncludeMemoryRecordAudio(mode, options);
 
     // Fetch Social App & Room Assets
     const sparkUserBg = await DB.getAsset('spark_user_bg');
@@ -1082,6 +1116,9 @@ export async function exportSystemData(
             }
 
             processedData = processObject(rawData);
+            if (storeName === 'memory_records' && !includeMemoryRecordAudio) {
+                processedData = stripMemoryRecordAudioReferences(processedData);
+            }
         }
 
         // Assign to Backup Data

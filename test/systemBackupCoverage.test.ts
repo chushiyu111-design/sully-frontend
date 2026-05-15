@@ -4,7 +4,7 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { DB } from '../utils/db';
-import { DB_NAME_CONST, STORE_VOICE_AUDIO } from '../utils/db/core';
+import { DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, STORE_VOICE_AUDIO } from '../utils/db/core';
 import {
     exportSystemData,
     importSystemData,
@@ -22,6 +22,7 @@ import {
     DEFAULT_TTS_CONFIG,
     type CharacterProfile,
     type FullBackupData,
+    type MemoryRecord,
 } from '../types';
 
 const noopProgress = () => {};
@@ -261,6 +262,67 @@ describe('system backup coverage', () => {
         expect(localStorage.getItem('os_sub_api_config')).toBe('{"model":"flash"}');
         expect(localStorage.getItem('chat_auto_tts_char-a')).toBe('true');
         expect(localStorage.getItem('csyos_backend_alive')).toBeNull();
+    }, 15000);
+
+    it('can export cloud-friendly memory record drafts without song audio', async () => {
+        const record: MemoryRecord = {
+            id: 'mrec-cloud',
+            charId: 'char-a',
+            charName: 'Sully',
+            userName: '你',
+            mode: 'dream_mix',
+            status: 'ready',
+            title: '月光唱片',
+            albumName: '回声唱片匣',
+            artistName: 'Sully',
+            monologueText: '开场独白',
+            lyrics: '[verse]\n一小段歌词',
+            musicPrompt: 'soft piano ballad',
+            coverGradient: 'linear-gradient(135deg,#111,#333)',
+            seedMemoryIds: [],
+            createdAt: 1,
+            updatedAt: 2,
+            durationMs: 123000,
+            lyricsOffsetMs: 1200,
+            lyricTiming: {
+                sourceHash: 'hash',
+                lineTimesMs: [1200],
+                updatedAt: 2,
+            },
+            monologueAudioId: 'mrec-cloud:monologue',
+            musicAudioId: 'mrec-cloud:music',
+            masterAudioId: 'mrec-cloud:master',
+        };
+        await DB.saveMemoryRecord(record);
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'mrec-cloud:master',
+            recordId: 'mrec-cloud',
+            kind: 'master',
+            blob: new Blob(['song-audio'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            durationMs: 123000,
+            createdAt: 2,
+            dataUrl: 'data:audio/mpeg;base64,c29uZy1hdWRpbw==',
+        });
+
+        const fullData = await readBackupData(await exportSystemData('full', makeStateSnapshot(), noopProgress));
+        expect(fullData.memoryRecordAudio?.[0].dataUrl).toContain('data:audio/mpeg');
+        expect(fullData.memoryRecords?.[0].masterAudioId).toBe('mrec-cloud:master');
+
+        const cloudData = await readBackupData(await exportSystemData('full', makeStateSnapshot(), noopProgress, {
+            includeMemoryRecordAudio: false,
+        }));
+        const cloudRecord = cloudData.memoryRecords?.[0];
+
+        expect(cloudData.memoryRecordAudio).toBeUndefined();
+        expect(cloudRecord?.lyrics).toContain('一小段歌词');
+        expect(cloudRecord?.status).toBe('draft');
+        expect(cloudRecord?.monologueAudioId).toBeUndefined();
+        expect(cloudRecord?.musicAudioId).toBeUndefined();
+        expect(cloudRecord?.masterAudioId).toBeUndefined();
+        expect(cloudRecord?.durationMs).toBeUndefined();
+        expect(cloudRecord?.lyricsOffsetMs).toBeUndefined();
+        expect(cloudRecord?.lyricTiming).toBeUndefined();
     }, 15000);
 
     it('does not export or restore device identity localStorage keys', async () => {

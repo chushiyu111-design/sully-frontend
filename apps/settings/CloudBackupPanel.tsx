@@ -126,9 +126,10 @@ const CloudBackupPanel: React.FC = () => {
             addToast('正在生成备份...', 'info');
             const blob = await exportSystem('full', {
                 includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
+                includeMemoryRecordAudio: false,
             });
             assertCloudBackupUploadSize(blob.size);
-            addToast(`备份已生成（${formatBytes(blob.size)}），正在上传到云端...`, 'info');
+            addToast(`备份已生成（${formatBytes(blob.size)}，不含歌曲音频），正在上传到云端...`, 'info');
             const label = new Date().toLocaleString('zh-CN', {
                 month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit',
@@ -322,7 +323,7 @@ const CloudBackupPanel: React.FC = () => {
                 {/* Footer Tip */}
                 <div className="px-5 pb-4">
                     <p className="text-[10px] text-stone-400 leading-relaxed">
-                        每天自动备份一次，新备份会覆盖旧备份。当前云端受 Cloudflare 上传入口限制，较大的音频和图片建议用本地备份保存。
+                        每天自动备份一次，新备份会覆盖旧备份。云端备份会保留歌词和唱片记录，但不上传歌曲音频；完整歌曲请用本地备份保存。
                     </p>
                 </div>
             </section>

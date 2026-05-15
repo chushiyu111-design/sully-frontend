@@ -81,6 +81,10 @@ describe('useAutoBackup', () => {
         await advanceStartupTimer();
 
         expect(firstExportSystem).toHaveBeenCalledTimes(1);
+        expect(firstExportSystem).toHaveBeenCalledWith('full', {
+            includeVoiceAudio: false,
+            includeMemoryRecordAudio: false,
+        });
         expect(uploadCloudBackup).toHaveBeenCalledTimes(1);
         expect(uploadCloudBackup).toHaveBeenCalledWith(
             expect.any(Blob),

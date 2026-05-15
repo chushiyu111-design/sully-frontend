@@ -14,10 +14,8 @@ function getViteEnv(): ViteEnvMap {
 }
 
 function readProcessEnv(key: string): string | undefined {
-    const processEnv = (globalThis as typeof globalThis & {
-        process?: { env?: Record<string, string | undefined> };
-    }).process?.env;
-    return processEnv?.[key];
+    if (typeof process === 'undefined') return undefined;
+    return process.env?.[key];
 }
 
 function resolveCloudBackupMaxMB(): number {
@@ -29,9 +27,8 @@ function resolveCloudBackupMaxMB(): number {
         return configuredMB;
     }
 
-    const mode = typeof env.MODE === 'string'
-        ? env.MODE
-        : readProcessEnv('MODE');
+    const mode = readProcessEnv('MODE')
+        || (typeof env.MODE === 'string' ? env.MODE : undefined);
     return mode === 'staging' ? 100 : 500;
 }
 

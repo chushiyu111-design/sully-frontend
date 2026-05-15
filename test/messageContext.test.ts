@@ -49,7 +49,7 @@ describe('message context formatter', () => {
             }),
         ], 10, character, user, []);
 
-        expect(apiMessages[0]?.content).toContain('[糯米发送了语音消息] 我刚才说的是饭团，不是别的。');
+        expect(apiMessages[0]?.content).toContain('[你上一条语音] 我刚才说的是饭团，不是别的。');
     });
 
     it('keeps user read-aloud voice via sourceText', () => {
@@ -98,6 +98,72 @@ describe('message context formatter', () => {
         expect(formatted.join('\n')).toContain('标题: 探店');
         expect(formatted.join('\n')).toContain('用户转发了与 Sully 的 2 条聊天记录');
         expect(formatted.join('\n')).toContain('[语音] 早安呀');
+    });
+
+    it('uses low-induction formats for main chat generation context', () => {
+        const assistantEmoji = formatMessageForContext(msg({
+            role: 'assistant',
+            type: 'emoji',
+            content: 'sticker-url',
+        }), {
+            surface: 'chat',
+            charName: '糯米',
+            emojis: [{ name: '挥手', url: 'sticker-url' }],
+        });
+        const userEmoji = formatMessageForContext(msg({
+            role: 'user',
+            type: 'emoji',
+            content: 'sticker-url',
+        }), {
+            surface: 'chat',
+            charName: '糯米',
+            emojis: [{ name: '挥手', url: 'sticker-url' }],
+        });
+        const assistantTransfer = formatMessageForContext(msg({
+            role: 'assistant',
+            type: 'transfer',
+            content: '[转账]',
+            metadata: { amount: '52.00', status: 'pending' },
+        }), {
+            surface: 'chat',
+            charName: '糯米',
+        });
+        const userTransfer = formatMessageForContext(msg({
+            role: 'user',
+            type: 'transfer',
+            content: '[转账]',
+            metadata: { amount: '52.00', status: 'pending' },
+        }), {
+            surface: 'chat',
+            charName: '糯米',
+        });
+
+        expect(assistantEmoji).toBe('[[SEND_EMOJI: 挥手]]');
+        expect(assistantEmoji).not.toContain('发送了表情包');
+        expect(userEmoji).toBe('[用户发来的表情包「挥手」]');
+        expect(assistantTransfer).toBe('[[ACTION:TRANSFER:52.00]]');
+        expect(userTransfer).toBe('[用户给你转账 ¥52.00，等待你收款]');
+    });
+
+    it('keeps secondary model summaries unchanged while group director is low-induction', () => {
+        const source = msg({
+            role: 'assistant',
+            type: 'emoji',
+            content: 'sticker-url',
+        });
+        const secondary = formatMessageForContext(source, {
+            surface: 'secondaryModel',
+            charName: '糯米',
+            emojis: [{ name: '挥手', url: 'sticker-url' }],
+        });
+        const groupDirector = formatMessageForContext(source, {
+            surface: 'groupDirector',
+            charName: '糯米',
+            emojis: [{ name: '挥手', url: 'sticker-url' }],
+        });
+
+        expect(secondary).toBe('[发送了表情包: 挥手]');
+        expect(groupDirector).toBe('[[SEND_EMOJI: 挥手]]');
     });
 
     it('includes hidden soul_reflection with the follow-up constraint', () => {

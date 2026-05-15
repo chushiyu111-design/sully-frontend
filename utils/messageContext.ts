@@ -1,6 +1,6 @@
 import type { Emoji, Message } from '../types';
 
-export type MessageContextSurface = 'chat' | 'memoryExtraction' | 'voiceCall' | 'secondaryModel' | 'retrieval' | 'agent';
+export type MessageContextSurface = 'chat' | 'groupDirector' | 'memoryExtraction' | 'voiceCall' | 'secondaryModel' | 'retrieval' | 'agent';
 
 export interface ContextMessage {
     id?: number;
@@ -71,10 +71,23 @@ function roleLabel(role: string, options: FormatMessageContextOptions): string {
     return '系统';
 }
 
-function actorLabel(role: string, options: FormatMessageContextOptions): string {
-    if (role === 'user') return '用户';
-    if (role === 'assistant') return options.charName || '你';
-    return '系统';
+function isGenerationSurface(options: FormatMessageContextOptions): boolean {
+    return options.surface === 'chat' || options.surface === 'groupDirector';
+}
+
+function isAssistantRole(message: ContextMessage): boolean {
+    return message.role === 'assistant';
+}
+
+function normalizeTransferAmount(value: unknown): string {
+    const raw = formatScalar(value, '?').trim();
+    if (raw === '?') return raw;
+    const cleaned = raw
+        .replace(/[￥¥]/g, '')
+        .replace(/[，,]/g, '')
+        .replace(/\s+/g, '');
+    const match = cleaned.match(/\d+(?:\.\d{1,2})?/);
+    return match?.[0] || raw;
 }
 
 function hasStatusCardShape(value: any): boolean {
@@ -112,10 +125,29 @@ function formatReplyPrefix(message: ContextMessage): string {
     return `[回复 "${reply.content.substring(0, 50)}..."]: `;
 }
 
-function formatTransfer(message: ContextMessage): string {
-    const amt = message.metadata?.amount || '?';
+function formatTransfer(message: ContextMessage, options: FormatMessageContextOptions): string {
+    const amt = normalizeTransferAmount(message.metadata?.amount);
     const status = message.metadata?.status || 'pending';
     const isFromUser = message.role === 'user';
+
+    if (isGenerationSurface(options)) {
+        if (isAssistantRole(message)) {
+            const statusSuffix: Record<string, string> = {
+                pending: '',
+                accepted: '（历史状态：用户已收款）',
+                returned: '（历史状态：用户已退还）',
+            };
+            return `[[ACTION:TRANSFER:${amt}]]${statusSuffix[status] || ''}`;
+        }
+
+        const userStatusMap: Record<string, string> = {
+            pending: `用户给你转账 ¥${amt}，等待你收款`,
+            accepted: `你已收取用户的 ¥${amt} 转账`,
+            returned: `你已退还用户的 ¥${amt} 转账`,
+        };
+        return `[${userStatusMap[status] || userStatusMap.pending}]`;
+    }
+
     const statusMap: Record<string, string> = isFromUser
         ? {
             pending: `用户给你转账 ¥${amt}，等待你收款`,
@@ -179,15 +211,17 @@ function formatVoice(message: ContextMessage, options: FormatMessageContextOptio
     const text = formatScalar(message.metadata?.sourceText || message.content, '').trim();
     const duration = message.metadata?.duration || '?';
     const neutral = options.surface !== 'chat';
+    const generation = isGenerationSurface(options);
 
     if (message.role === 'user') {
         if (neutral && text) return `[语音消息] ${clipText(text, options.maxContentChars)}`;
         if (neutral) return `[语音消息（${duration}秒）]`;
         if (text) return `[🎤用户语音] ${clipText(text, options.maxContentChars)}`;
-        return `[🎤用户发送了一条语音消息（${duration}秒）]`;
+        return `[用户发来一条语音消息（${duration}秒）]`;
     }
 
     if (message.role === 'assistant') {
+        if (generation) return text ? `[你上一条语音] ${clipText(text, options.maxContentChars)}` : `[你上一条语音（${duration}秒）]`;
         if (neutral) return text ? `[语音消息] ${clipText(text, options.maxContentChars)}` : `[语音消息（${duration}秒）]`;
         const name = options.charName || '角色';
         return `[${name}发送了语音消息]${text ? ` ${clipText(text, options.maxContentChars)}` : ''}`;
@@ -213,20 +247,31 @@ function formatMessageBody(message: ContextMessage, options: FormatMessageContex
             return formatVoice(message, { ...options, maxContentChars });
         case 'image': {
             const caption = message.metadata?.caption || message.metadata?.description || message.metadata?.ocrText;
-            const prefix = options.surface === 'chat' ? `${actorLabel(message.role, options)}发送了` : '发送了';
+            if (isGenerationSurface(options)) {
+                const label = isAssistantRole(message) ? '你上一条图片' : '用户发来的图片';
+                return caption
+                    ? `[${label}] ${clipText(String(caption), maxContentChars)}`
+                    : `[${label}]`;
+            }
+            const prefix = '发送了';
             return caption
                 ? `[${prefix}一张图片] ${clipText(String(caption), maxContentChars)}`
                 : `[${prefix}一张图片]`;
         }
         case 'emoji': {
             const stickerName = options.emojis?.find(e => e.url === message.content)?.name || message.metadata?.name || '表情包';
-            const prefix = options.surface === 'chat' ? `${actorLabel(message.role, options)}发送了` : '发送了';
+            if (isGenerationSurface(options)) {
+                return isAssistantRole(message)
+                    ? `[[SEND_EMOJI: ${stickerName}]]`
+                    : `[用户发来的表情包「${stickerName}」]`;
+            }
+            const prefix = '发送了';
             return `[${prefix}表情包: ${stickerName}]`;
         }
         case 'interaction':
             return message.role === 'user' ? '[系统: 用户戳了你一下]' : '[系统: 你戳了用户一下]';
         case 'transfer':
-            return formatTransfer(message);
+            return formatTransfer(message, options);
         case 'social_card':
             return formatSocialCard(message, options);
         case 'xhs_card':

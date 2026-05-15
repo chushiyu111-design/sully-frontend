@@ -112,6 +112,30 @@ function normalizeSongShareTags(text: string): string {
     return result;
 }
 
+const SPEAKER_PREFIX_RE = String.raw`(?:(?:\{\{char\}\}|[\w\u4e00-\u9fa5·•._ -]{1,40})\s*)?`;
+const TO_USER_RE = String.raw`(?:(?:向|给|給)\s*你\s*)?`;
+const MONEY_RE = String.raw`[¥￥]?\s*(\d+(?:\.\d{1,2})?)`;
+
+function normalizeDegradedActionTags(text: string): string {
+    return text
+        .replace(
+            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}${TO_USER_RE}(?:发送|發送|发|發|送)?(?:了)?(?:一个|一個)?\s*(?:表情包?|貼圖|贴图)\s*[：:]\s*([^】\]]+?)\s*[】\]]`, 'g'),
+            (_match, name: string) => `[[SEND_EMOJI: ${stripOuterTagJunk(name)}]]`,
+        )
+        .replace(
+            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}${TO_USER_RE}(?:发送|發送|发|發|送)?(?:了)?\s*(?:转账|轉帳|转帐|轉账)\s*[：:]\s*${MONEY_RE}\s*[】\]]`, 'g'),
+            (_match, amount: string) => `[[ACTION:TRANSFER:${amount}]]`,
+        )
+        .replace(
+            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}(?:收取|接收|接受|收下|领取|領取)(?:了)?(?:你|用户|用戶)?(?:的)?\s*(?:转账|轉帳|转帐|轉账)\s*[】\]]`, 'g'),
+            '[[ACTION:RECEIVE_TRANSFER]]',
+        )
+        .replace(
+            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}(?:退还|退還|返还|返還|拒收|拒绝|拒絕)(?:了)?(?:你|用户|用戶)?(?:的)?\s*(?:转账|轉帳|转帐|轉账)\s*[】\]]`, 'g'),
+            '[[ACTION:RETURN_TRANSFER]]',
+        );
+}
+
 function parseSongShareContent(content: string): SongShareCard | null {
     const cleaned = stripOuterTagJunk(content)
         .replace(/^(?:SHARE_SONG|分享(?:歌曲|音乐)|(?:share[-_]?)?song)\s*[:：]\s*/i, '')
@@ -275,7 +299,7 @@ export const ChatParser = {
         charName: string,
         addToast: (msg: string, type: 'info' | 'success' | 'error') => void
     ) => {
-        let content = aiContent;
+        let content = ChatParser.cleanAiSecondPass(aiContent);
 
         // POKE
         const pokeMatch = content.match(/(?:\[{1,2}|【|\()(?:ACTION\s*[:：]\s*)?POKE(?:\]{1,2}|】|\))/i);
@@ -285,7 +309,7 @@ export const ChatParser = {
         }
 
         // TRANSFER (AI initiates a transfer to the user)
-        const transferMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*TRANSFER\s*[:：]\s*(\d+)(?:\]{1,2}|】|\))/i);
+        const transferMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*TRANSFER\s*[:：]\s*(\d+(?:\.\d{1,2})?)(?:\]{1,2}|】|\))/i);
         if (transferMatch) {
             await DB.saveMessage({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1], status: 'pending' } });
             content = content.replace(transferMatch[0], '').trim();
@@ -388,7 +412,7 @@ export const ChatParser = {
             // Layer 3: EMOJI TAG RESCUE — normalize variants → [[SEND_EMOJI: name]]
             // Order: most specific first, then progressively broader
             // ══════════════════════════════════════════════════════════════
-            // 3a. AI mimics history log: [你 发送了表情包: xxx] [发送表情: xxx] [我发送了表情包：xxx]
+            // 3a. AI mimics history log: [你 发送了表情包: xxx] [夏以昼发送了表情包: xxx] [{{char}}向你發送表情包：xxx]
             .replace(/[【\[](?:(?:你|我|User|用户|System|系统)\s*)?发送了?(?:一个)?表情包?[：:]\s*(.+?)[】\]]/g, '[[SEND_EMOJI: $1]]')
             // 3b. Shortened: [表情包: xxx] 【表情包：xxx】 [表情: xxx] 【表情：xxx】
             .replace(/[【\[]表情包?\s*[：:]\s*(.+?)[】\]]/g, '[[SEND_EMOJI: $1]]')
@@ -432,6 +456,7 @@ export const ChatParser = {
             // 5f. [用户 发送了xxx] [你 发送了xxx] — any remaining log-style action description
             .replace(/[【\[](?:用户|你|我|User)\s*发送了[\s\S]*?[】\]]/g, '');
 
+        result = normalizeDegradedActionTags(result);
         result = normalizeSongShareTags(result);
         // Strip any CoT protocol residual that leaked through (e.g. from Gemini native thinking)
         result = stripCoTResidual(result);

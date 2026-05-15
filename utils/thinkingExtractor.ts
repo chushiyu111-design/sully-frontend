@@ -13,6 +13,12 @@ export interface ExtractionResult {
     thinking?: string;
 }
 
+export const THINKING_CONTENT_FALLBACK_REPLY = '嗯...刚刚卡了一下';
+
+export function safeThinkingFallbackReply(_thinkingContent?: string): string {
+    return THINKING_CONTENT_FALLBACK_REPLY;
+}
+
 /**
  * 从 LLM 原始输出中提取思考链并清洗内容。
  *

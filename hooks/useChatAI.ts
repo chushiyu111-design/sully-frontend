@@ -497,7 +497,7 @@ mode 可选值：
 
             // CLEAN UP prefixes and timestamps LAST, so the regex anchors correctly
             // at the start of the string (now that <thinking> is gone!)
-            aiContent = ChatParser.cleanAiSecondPass(aiContent);
+            aiContent = ChatParser.cleanAiSecondPass(aiContent, { charName: char.name });
 
             // Execute any parsed actions BEFORE side effect handlers like Search/Recall
             aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast);

@@ -5,6 +5,7 @@ import { DB } from '../utils/db';
 import { XhsStockImage } from '../types';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { getGuardedInputProps } from '../utils/inputGuards';
+import { Trash } from '@phosphor-icons/react';
 
 const XhsStockApp: React.FC = () => {
     const { closeApp, addToast } = useOS();
@@ -203,11 +204,11 @@ const XhsStockApp: React.FC = () => {
                             {/* Delete button */}
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(img); }}
-                                className="absolute top-1 right-1 w-6 h-6 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity"
+                                aria-label="删除这张图片"
+                                title="删除图片"
+                                className="absolute top-1.5 right-1.5 w-8 h-8 bg-white/90 text-red-500 backdrop-blur-sm rounded-full shadow-md ring-1 ring-black/5 flex items-center justify-center active:scale-90 transition-transform"
                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-3.5 h-3.5">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                                </svg>
+                                <Trash className="w-4 h-4" weight="bold" />
                             </button>
                         </div>
                     ))}
@@ -223,7 +224,7 @@ const XhsStockApp: React.FC = () => {
                 title={confirmDialog?.title || ''}
                 message={confirmDialog?.message || ''}
                 variant={confirmDialog?.variant}
-                confirmText="确认"
+                confirmText="删除"
                 onConfirm={confirmDialog?.onConfirm || (() => setConfirmDialog(null))}
                 onCancel={() => setConfirmDialog(null)}
             />

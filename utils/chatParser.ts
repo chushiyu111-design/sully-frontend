@@ -112,27 +112,92 @@ function normalizeSongShareTags(text: string): string {
     return result;
 }
 
-const SPEAKER_PREFIX_RE = String.raw`(?:(?:\{\{char\}\}|[\w\u4e00-\u9fa5·•._ -]{1,40})\s*)?`;
-const TO_USER_RE = String.raw`(?:(?:向|给|給)\s*你\s*)?`;
-const MONEY_RE = String.raw`[¥￥]?\s*(\d+(?:\.\d{1,2})?)`;
+export interface ChatParserCleanContext {
+    charName?: string;
+}
 
-function normalizeDegradedActionTags(text: string): string {
+const BROAD_SPEAKER_PREFIX_RE = String.raw`(?:(?:\{\{char\}\}|[\w\u4e00-\u9fa5·•._ -]{1,40})\s*)?`;
+const TO_USER_RE = String.raw`(?:(?:向|给|給)\s*你\s*)?`;
+const MONEY_RE = String.raw`[¥￥]?\s*(\d+(?:\.\d{1,2})?)\s*(?:元)?`;
+const TAG_OPEN_RE = String.raw`[【\[(（]`;
+const TAG_CLOSE_RE = String.raw`[】\])）]`;
+const ACTION_TAG_OPEN_RE = String.raw`(?:\[\[|${TAG_OPEN_RE})`;
+const STICKER_WORD_RE = String.raw`(?:表情包?|貼圖|贴图|貼紙|贴纸)`;
+const TRANSFER_WORD_RE = String.raw`(?:转账|轉帳|转帐|轉账)`;
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getAssistantSpeakerPrefixRe(context?: ChatParserCleanContext): string {
+    const charName = context?.charName?.trim();
+    if (!charName) return BROAD_SPEAKER_PREFIX_RE;
+
+    const escapedName = escapeRegExp(charName).replace(/\s+/g, String.raw`\s*`);
+    return String.raw`(?:(?:\{\{char\}\}|${escapedName})\s*)?`;
+}
+
+function getNextActionLookahead(context?: ChatParserCleanContext): string {
+    const charName = context?.charName?.trim();
+    const escapedName = charName ? `|${escapeRegExp(charName).replace(/\s+/g, String.raw`\s*`)}` : '';
+    const actionLead = String.raw`(?:\{\{char\}\}${escapedName}|SEND_EMOJI|ACTION|SHARE_SONG|语音|語音|voice|表情|emoji|sticker|分享|转账|轉帳|转帐|戳一戳|发送|發送|发|發)`;
+    return String.raw`(?=$|${ACTION_TAG_OPEN_RE}\s*${actionLead})`;
+}
+
+function normalizeVoiceTagBody(value: string): string {
+    return stripOuterTagJunk(value)
+        .replace(/^[\s"'“”「」『』]+|[\s"'“”「」『』]+$/g, '')
+        .replace(/\s*(?:\r\n|\r|\n)+\s*/g, ' ')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+}
+
+function normalizeDegradedActionTags(text: string, context?: ChatParserCleanContext): string {
+    const speakerPrefixRe = getAssistantSpeakerPrefixRe(context);
+    const emojiActionRe = new RegExp(
+        String.raw`${TAG_OPEN_RE}\s*${speakerPrefixRe}${TO_USER_RE}(?:(?:(?:发送|發送|发|發|送)(?:了|来|來)?|发来|發來)(?:一个|一個|一张|一張)?\s*)?${STICKER_WORD_RE}\s*[：:]\s*([^】\]\)）]+?)\s*${TAG_CLOSE_RE}`,
+        'g',
+    );
+    const transferActionRe = new RegExp(
+        String.raw`${TAG_OPEN_RE}\s*${speakerPrefixRe}(?:(?:${TO_USER_RE}(?:(?:发送|發送|发起|發起|发|發|送)(?:了)?\s*)?${TRANSFER_WORD_RE})|(?:(?:(?:发送|發送|发起|發起|发|發|送)(?:了)?\s*)?${TRANSFER_WORD_RE}\s*(?:(?:给|給|向)\s*你)?))\s*[：:]\s*${MONEY_RE}\s*${TAG_CLOSE_RE}`,
+        'g',
+    );
+    const receiveTransferRe = new RegExp(
+        String.raw`${TAG_OPEN_RE}\s*${speakerPrefixRe}(?:收取|接收|接受|收下|领取|領取|收了|收款)(?:了)?(?:你|用户|用戶)?(?:的)?\s*${TRANSFER_WORD_RE}\s*${TAG_CLOSE_RE}`,
+        'g',
+    );
+    const returnTransferRe = new RegExp(
+        String.raw`${TAG_OPEN_RE}\s*${speakerPrefixRe}(?:退还|退還|返还|返還|拒收|拒绝|拒絕|退回)(?:了)?(?:你|用户|用戶)?(?:的)?\s*${TRANSFER_WORD_RE}\s*${TAG_CLOSE_RE}`,
+        'g',
+    );
+    const emptyVoiceRe = new RegExp(
+        String.raw`${TAG_OPEN_RE}\s*${speakerPrefixRe}${TO_USER_RE}(?:(?:发送|發送|发|發|送)(?:了|来|來)?|发来|發來)(?:一?条|一?條)?\s*(?:语音|語音)(?:消息)?\s*${TAG_CLOSE_RE}([\s\S]*?)${getNextActionLookahead(context)}`,
+        'g',
+    );
+
     return text
         .replace(
-            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}${TO_USER_RE}(?:发送|發送|发|發|送)?(?:了)?(?:一个|一個)?\s*(?:表情包?|貼圖|贴图)\s*[：:]\s*([^】\]]+?)\s*[】\]]`, 'g'),
+            emojiActionRe,
             (_match, name: string) => `[[SEND_EMOJI: ${stripOuterTagJunk(name)}]]`,
         )
         .replace(
-            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}${TO_USER_RE}(?:发送|發送|发|發|送)?(?:了)?\s*(?:转账|轉帳|转帐|轉账)\s*[：:]\s*${MONEY_RE}\s*[】\]]`, 'g'),
+            transferActionRe,
             (_match, amount: string) => `[[ACTION:TRANSFER:${amount}]]`,
         )
         .replace(
-            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}(?:收取|接收|接受|收下|领取|領取)(?:了)?(?:你|用户|用戶)?(?:的)?\s*(?:转账|轉帳|转帐|轉账)\s*[】\]]`, 'g'),
+            receiveTransferRe,
             '[[ACTION:RECEIVE_TRANSFER]]',
         )
         .replace(
-            new RegExp(String.raw`[【\[]\s*${SPEAKER_PREFIX_RE}(?:退还|退還|返还|返還|拒收|拒绝|拒絕)(?:了)?(?:你|用户|用戶)?(?:的)?\s*(?:转账|轉帳|转帐|轉账)\s*[】\]]`, 'g'),
+            returnTransferRe,
             '[[ACTION:RETURN_TRANSFER]]',
+        )
+        .replace(
+            emptyVoiceRe,
+            (_match, body: string) => {
+                const voiceText = normalizeVoiceTagBody(body);
+                return voiceText ? `【语音消息：${voiceText}】` : '';
+            },
         );
 }
 
@@ -299,7 +364,7 @@ export const ChatParser = {
         charName: string,
         addToast: (msg: string, type: 'info' | 'success' | 'error') => void
     ) => {
-        let content = ChatParser.cleanAiSecondPass(aiContent);
+        let content = ChatParser.cleanAiSecondPass(aiContent, { charName });
 
         // POKE
         const pokeMatch = content.match(/(?:\[{1,2}|【|\()(?:ACTION\s*[:：]\s*)?POKE(?:\]{1,2}|】|\))/i);
@@ -392,7 +457,7 @@ export const ChatParser = {
      * Strips leaked timestamps, name prefixes, and normalises sticker tags.
      * Called after every API completion (initial + re-calls from search/diary/xhs).
      */
-    cleanAiSecondPass: (text: string): string => {
+    cleanAiSecondPass: (text: string, context?: ChatParserCleanContext): string => {
         let result = stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text))
             // ══════════════════════════════════════════════════════════════
             // Layer 1: TIMESTAMP STRIPPING
@@ -412,8 +477,7 @@ export const ChatParser = {
             // Layer 3: EMOJI TAG RESCUE — normalize variants → [[SEND_EMOJI: name]]
             // Order: most specific first, then progressively broader
             // ══════════════════════════════════════════════════════════════
-            // 3a. AI mimics history log: [你 发送了表情包: xxx] [夏以昼发送了表情包: xxx] [{{char}}向你發送表情包：xxx]
-            .replace(/[【\[](?:(?:你|我|User|用户|System|系统)\s*)?发送了?(?:一个)?表情包?[：:]\s*(.+?)[】\]]/g, '[[SEND_EMOJI: $1]]')
+            // 3a. AI mimics action logs; role-name matching is context-aware in normalizeDegradedActionTags().
             // 3b. Shortened: [表情包: xxx] 【表情包：xxx】 [表情: xxx] 【表情：xxx】
             .replace(/[【\[]表情包?\s*[：:]\s*(.+?)[】\]]/g, '[[SEND_EMOJI: $1]]')
             // 3c. English variants: [emoji: xxx] [sticker: xxx]
@@ -452,11 +516,11 @@ export const ChatParser = {
             // 5d. [系统: xxx] [系统提示: xxx] [System: xxx] — leaked system tags
             .replace(/[【\[]\s*(?:系统|System)\s*(?:提示|消息|通知)?\s*[：:]\s*[^\]】]*[】\]]\s*/gi, '')
             // 5e. [时间感知] [情境补充] [系统功能] — leaked internal prompt section tags
-            .replace(/[【\[]\s*(?:时间感知|情境补充|系统功能|思考链格式锁定|Reminder)\s*[：:]?\s*[^\]】]*[】\]]\s*/gi, '')
-            // 5f. [用户 发送了xxx] [你 发送了xxx] — any remaining log-style action description
-            .replace(/[【\[](?:用户|你|我|User)\s*发送了[\s\S]*?[】\]]/g, '');
+            .replace(/[【\[]\s*(?:时间感知|情境补充|系统功能|思考链格式锁定|Reminder)\s*[：:]?\s*[^\]】]*[】\]]\s*/gi, '');
 
-        result = normalizeDegradedActionTags(result);
+        result = normalizeDegradedActionTags(result, context);
+        // 5f. [用户 发送了xxx] [你 发送了xxx] — any remaining log-style action description
+        result = result.replace(/[【\[](?:用户|你|我|User)\s*发送了[\s\S]*?[】\]]/g, '');
         result = normalizeSongShareTags(result);
         // Strip any CoT protocol residual that leaked through (e.g. from Gemini native thinking)
         result = stripCoTResidual(result);

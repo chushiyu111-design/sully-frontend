@@ -123,6 +123,8 @@ export interface Message {
         id: number;
         content: string;
         name: string;
+        type?: MessageType;
+        duration?: number;
     };
 }
 

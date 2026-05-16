@@ -2,6 +2,7 @@
 import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { stripCoTResidual } from './thinkingExtractor';
+import { stripLeakedVoiceContextTags } from './chatQuote';
 import type { SongShareCard } from '../types/music';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -524,7 +525,7 @@ export const ChatParser = {
         result = normalizeSongShareTags(result);
         // Strip any CoT protocol residual that leaked through (e.g. from Gemini native thinking)
         result = stripCoTResidual(result);
-        return stripLeakedChatLinePrefixes(result);
+        return stripLeakedVoiceContextTags(stripLeakedChatLinePrefixes(result));
     },
 
     /**
@@ -534,7 +535,7 @@ export const ChatParser = {
      * Preserves [[SEND_EMOJI:]] and [[SHARE_SONG:]] for downstream splitResponse.
      */
     sanitize: (text: string): string => {
-        return stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text))
+        return stripLeakedVoiceContextTags(stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text))
             // ── Strip leaked timestamps ──
             .replace(/\[\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}[：:]\d{2}\]\s*/g, '')
             .replace(/\[\d{1,2}[-/]\d{1,2}\s+\d{1,2}[：:]\d{2}\]\s*/g, '')
@@ -576,7 +577,7 @@ export const ChatParser = {
             .replace(/%%TRANS%%[\s\S]*/gi, '')
             // ── Collapse excessive whitespace ──
             .replace(/\n{3,}/g, '\n\n')
-            .trim();
+            .trim());
     },
 
     /**

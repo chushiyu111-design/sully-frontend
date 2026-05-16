@@ -385,6 +385,7 @@ export const ChatPrompts = {
 ${emojiContextStr}
 
 **引用回复**: \`[[QUOTE: 引用内容]]\`
+如果要引用用户发来的语音，也使用 \`[[QUOTE: 语音转写文字]]\`；不要把 \`[用户语音]\`、\`[你上一条语音]\` 这类上下文标签写进回复正文。
 **回戳**: \`[[ACTION:POKE]]\`
 **转账**: \`[[ACTION:TRANSFER:金额]]\`
 **收取转账**: 当${userProfile.name}给你转账且你愿意收下时，输出 \`[[ACTION:RECEIVE_TRANSFER]]\`。

@@ -277,6 +277,17 @@ const MessageItem = React.memo(({
         </div>
     );
 
+    const renderReplyPreview = (replyTo: Message['replyTo']) => {
+        if (!replyTo) return null;
+
+        return (
+            <div className={`mb-1 max-w-[200px] text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-black/20 opacity-60 flex flex-col gap-0.5 overflow-hidden ${isUser ? 'self-end' : 'self-start'}`}>
+                <span className="font-bold opacity-90 truncate">{replyTo.name}{replyTo.type === 'voice' ? ' · 语音' : ''}</span>
+                <span className="truncate italic">"{replyTo.content}"</span>
+            </div>
+        );
+    };
+
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
         // Clean up text: remove [System:] or [系统:] prefix for display
@@ -719,6 +730,7 @@ const MessageItem = React.memo(({
 
         return commonLayout(
             <div className="flex flex-col gap-1">
+                {renderReplyPreview(m.replyTo)}
                 <div className={`flex items-center gap-1.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
                     <BubbleComponent
                         duration={isCompat ? compatDuration : (m.metadata?.duration ?? 0)}
@@ -810,6 +822,8 @@ const MessageItem = React.memo(({
         prev.msg.replyTo?.id === next.msg.replyTo?.id &&
         prev.msg.replyTo?.name === next.msg.replyTo?.name &&
         prev.msg.replyTo?.content === next.msg.replyTo?.content &&
+        prev.msg.replyTo?.type === next.msg.replyTo?.type &&
+        prev.msg.replyTo?.duration === next.msg.replyTo?.duration &&
         prev.isFirstInGroup === next.isFirstInGroup &&
         prev.isLastInGroup === next.isLastInGroup &&
         prev.activeTheme === next.activeTheme &&

@@ -1,6 +1,6 @@
 import React,{ useRef,useEffect,useState } from 'react';
 import { renderMarkdown } from '../../utils/markdownLite';
-import type { BubbleStyle } from '../../types/chat';
+import type { BubbleStyle,Message } from '../../types/chat';
 
 /**
  * ChatBubble — 可主题化气泡壳组件
@@ -27,7 +27,7 @@ interface ChatBubbleProps {
     styleConfig: BubbleStyle;
     displayContent: string;
     sourceTag?: string;
-    replyTo?: { name: string; content: string } | null;
+    replyTo?: Message['replyTo'] | null;
     showTranslateButton?: boolean;
     isShowingTarget?: boolean;
     onTranslateToggle?: () => void;
@@ -224,7 +224,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({
                 {/* Layer 3: Reply/Quote Block */}
                 {replyTo && (
                     <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-black/20 opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
-                        <span className="font-bold opacity-90 truncate">{replyTo.name}</span>
+                        <span className="font-bold opacity-90 truncate">{replyTo.name}{replyTo.type === 'voice' ? ' · 语音' : ''}</span>
                         <span className="truncate italic">"{replyTo.content}"</span>
                     </div>
                 )}

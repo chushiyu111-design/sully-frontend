@@ -33,6 +33,7 @@ import {
     shouldInjectPlaybackLyricSnapshot,
 } from '../utils/playbackLyricsRuntime';
 import { shouldInjectPlaybackContextFromState } from '../utils/playbackContextRuntime';
+import { resolveReplyTargetFromContent } from '../utils/chatQuote';
 
 interface UseChatAIProps {
     char: CharacterProfile | undefined;
@@ -53,6 +54,8 @@ interface UseChatAIProps {
     injectPlaybackContext?: boolean; // 开启后向 AI 注入当前播放歌曲上下文
     onMoodUpdate?: (charId: string, moodState: any, statusCardData?: any) => void; // MindSnapshot / CreativeCard 完成后回调
 }
+
+type ReplyTargetData = NonNullable<Message['replyTo']>;
 
 export const useChatAI = ({
     char,
@@ -566,30 +569,11 @@ mode 可选值：
                 onIncomingCall?.(callMode, callReason);
             }
 
-            // 7. Handle Quote/Reply Logic (Robust: handles [[QUOTE:...]], [QUOTE:...], typos like QUATE/QOUTE, Chinese 引用, and [回复 "..."] format)
-            const QUOTE_RE_DOUBLE = /\[\[(?:QU[OA]TE|引用)[：:]\s*([\s\S]*?)\]\]/;
-            const QUOTE_RE_SINGLE = /\[(?:QU[OA]TE|引用)[：:]\s*([^\]]*)\]/;
-            // Match [回复 "content"] or [回复 "content"]: (AI mimics history context format)
-            const REPLY_RE_CN = /\[回复\s*[""\u201C]([^""\u201D]*?)[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/;
-            const QUOTE_CLEAN_DOUBLE = /\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g;
-            const QUOTE_CLEAN_SINGLE = /\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g;
-            const REPLY_CLEAN_CN = /\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g;
-            let aiReplyTarget: { id: number, content: string, name: string } | undefined;
-            const firstQuoteMatch = aiContent.match(QUOTE_RE_DOUBLE) || aiContent.match(QUOTE_RE_SINGLE) || aiContent.match(REPLY_RE_CN);
-            if (firstQuoteMatch) {
-                const quotedText = firstQuoteMatch[1].trim();
-                if (quotedText) {
-                    // Try exact include first, then fuzzy match (first 10 chars)
-                    const targetMsg = historySlice.slice().reverse().find((m: Message) => m.role === 'user' && m.content.includes(quotedText))
-                        || (quotedText.length > 10 ? historySlice.slice().reverse().find((m: Message) => m.role === 'user' && m.content.includes(quotedText.slice(0, 10))) : undefined);
-                    if (targetMsg) {
-                        const truncated = targetMsg.content.length > 10 ? targetMsg.content.slice(0, 10) + '...' : targetMsg.content;
-                        aiReplyTarget = { id: targetMsg.id, content: truncated, name: userProfile.name };
-                    }
-                }
-            }
-            // Clean all quote tag variants from content
-            aiContent = aiContent.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').replace(REPLY_CLEAN_CN, '').trim();
+            // 7. Handle Quote/Reply Logic (supports text and transcribed voice messages)
+            let aiReplyTarget: ReplyTargetData | undefined;
+            const topLevelQuoteResult = resolveReplyTargetFromContent(aiContent, historySlice, userProfile.name);
+            aiReplyTarget = topLevelQuoteResult.replyTo;
+            aiContent = topLevelQuoteResult.content;
 
             // 7.5 Bare emoji name rescue — AI sometimes outputs [emojiName] without proper tags
             // If content inside single brackets exactly matches a known emoji, convert to [[SEND_EMOJI:]]
@@ -651,7 +635,7 @@ mode 可选值：
                  */
                 const saveTextOrVoiceChunk = async (
                     cleanChunk: string,
-                    replyData: { id: number; content: string; name: string } | undefined
+                    replyData: ReplyTargetData | undefined
                 ): Promise<number> => {
                     let saved = 0;
                     const durMatch = cleanChunk.match(VOICE_DURATION_RE);
@@ -759,7 +743,7 @@ mode 可选值：
 
                 const saveSongCard = async (
                     songCard: SongCardMetadata,
-                    replyData: { id: number; content: string; name: string } | undefined,
+                    replyData: ReplyTargetData | undefined,
                 ): Promise<number> => {
                     // Auto-search: backfill real songId when AI outputs 0
                     if (songCard.songId === 0 && songCard.songName) {
@@ -941,20 +925,9 @@ mode 可选值：
                                 const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
                                 await new Promise(r => setTimeout(r, delay));
 
-                                let chunkReplyTarget: { id: number, content: string, name: string } | undefined;
-                                const chunkQuoteMatch = chunk.match(QUOTE_RE_DOUBLE) || chunk.match(QUOTE_RE_SINGLE);
-                                if (chunkQuoteMatch) {
-                                    const quotedText = chunkQuoteMatch[1].trim();
-                                    if (quotedText) {
-                                        const targetMsg = historySlice.slice().reverse().find((m: Message) => m.role === 'user' && m.content.includes(quotedText))
-                                            || (quotedText.length > 10 ? historySlice.slice().reverse().find((m: Message) => m.role === 'user' && m.content.includes(quotedText.slice(0, 10))) : undefined);
-                                        if (targetMsg) {
-                                            const truncated = targetMsg.content.length > 10 ? targetMsg.content.slice(0, 10) + '...' : targetMsg.content;
-                                            chunkReplyTarget = { id: targetMsg.id, content: truncated, name: userProfile.name };
-                                        }
-                                    }
-                                    chunk = chunk.replace(QUOTE_CLEAN_DOUBLE, '').replace(QUOTE_CLEAN_SINGLE, '').trim();
-                                }
+                                const chunkQuoteResult = resolveReplyTargetFromContent(chunk, historySlice, userProfile.name);
+                                const chunkReplyTarget = chunkQuoteResult.replyTo;
+                                chunk = chunkQuoteResult.content;
 
                                 const replyData = chunkReplyTarget || (globalMsgIndex === 0 ? aiReplyTarget : undefined);
 

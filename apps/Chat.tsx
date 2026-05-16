@@ -27,6 +27,7 @@ import {
   getLifeStreamVisibleInChat,
   LIFE_STREAM_VISIBILITY_EVENT_NAME,
 } from '../utils/autonomousAgent';
+import { buildReplyToFromMessage } from '../utils/chatQuote';
 
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, appParams, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
@@ -566,11 +567,7 @@ const Chat: React.FC = () => {
         const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
 
         if (replyTarget) {
-            msgPayload.replyTo = {
-                id: replyTarget.id,
-                content: replyTarget.content,
-                name: replyTarget.role === 'user' ? '我' : char.name
-            };
+            msgPayload.replyTo = buildReplyToFromMessage(replyTarget, replyTarget.role === 'user' ? '我' : char.name);
             setReplyTarget(null);
         }
 
@@ -1405,6 +1402,10 @@ const Chat: React.FC = () => {
         haptic.medium();
 
         try {
+            const pendingReplyTo = replyTarget
+                ? buildReplyToFromMessage(replyTarget, replyTarget.role === 'user' ? '我' : char.name)
+                : undefined;
+
             // 1. Save user voice message (visual bubble) immediately
             const voiceMsgId = await DB.saveMessage({
                 charId: char.id,
@@ -1418,7 +1419,9 @@ const Chat: React.FC = () => {
                     sttStatus: 'pending',
                     transcribedText: '',
                 },
+                replyTo: pendingReplyTo,
             });
+            if (pendingReplyTo) setReplyTarget(null);
 
             // 2. Save audio blob to IDB
             await DB.saveVoiceAudio(voiceMsgId, blob);
@@ -1478,7 +1481,7 @@ const Chat: React.FC = () => {
             addToast('语音消息发送失败', 'error');
             setSttProcessing(false);
         }
-    }, [char, addToast, reloadMessages, sttConfig]);
+    }, [char, addToast, reloadMessages, replyTarget, sttConfig]);
 
     if (!char) {
         return (
@@ -1499,6 +1502,9 @@ const Chat: React.FC = () => {
     }
 
     const activeCharName = char.name || '';
+    const replyTargetPreview = replyTarget
+        ? buildReplyToFromMessage(replyTarget, replyTarget.role === 'user' ? '我' : activeCharName || '角色')
+        : null;
 
     return (
         <div
@@ -1747,9 +1753,9 @@ const Chat: React.FC = () => {
             </div>
 
             <div className="relative z-40">
-                {replyTarget && (
+                {replyTargetPreview && (
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
-                        <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content}</span></div>
+                        <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTargetPreview.type === 'voice' ? '语音 · ' : ''}{replyTargetPreview.content}</span></div>
                         <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
                     </div>
                 )}

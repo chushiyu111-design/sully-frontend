@@ -27,6 +27,13 @@ describe('theaterDialogueFormat', () => {
         ]);
     });
 
+    it('does not duplicate quotes when user speech already includes them', () => {
+        expect(formatTheaterUserBeatsForMessage([
+            { kind: 'speech', text: '“我知道了”' },
+            { kind: 'action', text: '她停在门口' },
+        ])).toBe('“我知道了”\n她停在门口');
+    });
+
     it('strips common paired quotes from assistant dialogue lines', () => {
         expect(parseTheaterAssistantPages('[normal] "你好。"', 'a')).toEqual([
             { role: 'assistant', type: 'dialogue', text: '你好。', msgId: 'a' },

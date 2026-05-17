@@ -31,12 +31,9 @@ import {
     type TheaterVNPage,
 } from '../../utils/theaterDialogueFormat';
 
-const EVENT_TYPE_ZH: Record<string, string> = {
-    ambient: '氛围', encounter: '偶遇', romantic: '浪漫',
-    callback: '回忆', conflict: '冲突', surprise: '惊喜',
-};
-
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
+
+type TheaterExitSyncMode = 'summary' | 'raw' | 'none';
 
 interface TheaterInputBeat extends TheaterUserBeat {
     id: string;
@@ -62,7 +59,7 @@ interface TheaterSessionProps {
     showLocationSheet: boolean;
     onCloseLocationSheet: () => void;
     onOpenLocationSheet: () => void;
-    onExit: () => void;
+    onExit: (syncMode?: TheaterExitSyncMode) => void;
     // Inner Whispers (内心低语)
     activeWhispers?: InnerWhisper[];
     onWhisperClick?: (whisper: InnerWhisper) => void;
@@ -247,7 +244,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     onToggleAutoSummary, onToggleAutoHideSummary, onChangeThreshold,
     onOpenSummarySettings, savedSummaryCount, onOpenSavedSummaries,
     activeWhispers = [], onWhisperClick,
-    isTransitioning, transitionLocationName,
+    isTransitioning, transitionLocationName: _transitionLocationName,
     pendingLocationSuggestion, onAcceptLocationSuggestion, onDeclineLocationSuggestion,
     onGenerateGiftReaction, onGenerateFarewell, onGenerateMetaLetter, onSaveMetaLetter,
 }) => {
@@ -280,6 +277,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const [autoMode, setAutoMode] = useState(false);
     const [showLog, setShowLog] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showExitModal, setShowExitModal] = useState(false);
     const [hideDialog, setHideDialog] = useState(false);
     const [inputBeats, setInputBeats] = useState<TheaterInputBeat[]>(() => [createInputBeat('speech')]);
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -318,6 +316,12 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
     const currentPage = pages[pageIndex] || null;
+    const isUserPage = currentPage?.role === 'user';
+    const isSpeechPage = currentPage?.type === 'dialogue' || currentPage?.type === 'user';
+    const shouldShowSpeakerBadge = !!currentPage && (isUserPage || currentPage.type === 'dialogue');
+    const speakerName = isUserPage ? (userProfile.name || '你') : char.name;
+    const speakerAvatar = isUserPage ? userProfile.avatar : char.avatar;
+    const speakerInitial = Array.from((speakerName || '').trim())[0] || (isUserPage ? '你' : '角');
     const isLastPage = pageIndex >= pages.length - 1;
     const isLoading = isAiLoading || isDirectorLoading;
     const sendableInputBeats = useMemo(
@@ -435,13 +439,14 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     // ── Back handler ──
     useEffect(() => {
         const unreg = registerBackHandler(() => {
+            if (showExitModal) { setShowExitModal(false); return true; }
             if (showLog) { setShowLog(false); return true; }
             if (showInput) { setShowInput(false); return true; }
-            if (window.confirm('离开当前场景？')) onExit();
+            setShowExitModal(true);
             return true;
         });
         return unreg;
-    }, [showInput, showLog, registerBackHandler, onExit]);
+    }, [showExitModal, showInput, showLog, registerBackHandler]);
 
     // ── Click to advance / go back ──
     const handlePrevPage = useCallback((e?: React.MouseEvent) => {
@@ -531,15 +536,15 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     type EndingPhase = 'none' | 'gift' | 'gift-reaction' | 'farewell' | 'fade' | 'letter';
     const [endingPhase, setEndingPhase] = useState<EndingPhase>('none');
     const [giftInput, setGiftInput] = useState('');
-    const [giftReactionItems, setGiftReactionItems] = useState<{text: string, emotion: string}[]>([]);
+    const [, setGiftReactionItems] = useState<{text: string, emotion: string}[]>([]);
     const [giftReactionQueue, setGiftReactionQueue] = useState<{text: string, emotion: string}[]>([]);
-    const [farewellItems, setFarewellItems] = useState<{text: string, emotion: string}[]>([]);
+    const [, setFarewellItems] = useState<{text: string, emotion: string}[]>([]);
     const [farewellQueue, setFarewellQueue] = useState<{text: string, emotion: string}[]>([]);
     const [letterContent, setLetterContent] = useState('');
     const [endingLoading, setEndingLoading] = useState(false);
     const [endingCurrentText, setEndingCurrentText] = useState('');
     const [endingDisplayedText, setEndingDisplayedText] = useState('');
-    const [endingCurrentEmotion, setEndingCurrentEmotion] = useState('normal');
+    const [, setEndingCurrentEmotion] = useState('normal');
     const letterRef = useRef<HTMLDivElement>(null);
 
     const parseEndingDialogue = (text: string) => {
@@ -560,8 +565,9 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     };
 
     const handleStartEnding = () => {
+        setShowExitModal(false);
         if (!onGenerateGiftReaction) {
-            onExit();
+            onExit('summary');
             return;
         }
         setEndingPhase('gift');
@@ -569,7 +575,14 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
     const handleSkipToSync = () => {
         setEndingPhase('none');
-        onExit();
+        setShowExitModal(false);
+        onExit('summary');
+    };
+
+    const handleExitChoice = (syncMode: TheaterExitSyncMode) => {
+        setShowExitModal(false);
+        setEndingPhase('none');
+        onExit(syncMode);
     };
 
     useEffect(() => {
@@ -631,7 +644,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     };
 
     const triggerLetter = async () => {
-        if (!onGenerateMetaLetter) { setEndingPhase('none'); onExit(); return; }
+        if (!onGenerateMetaLetter) { setEndingPhase('none'); onExit('summary'); return; }
         setEndingLoading(true);
         try {
             const rawContent = await onGenerateMetaLetter();
@@ -641,7 +654,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
         } catch (e) {
             addToast('信件生成失败', 'error');
             setEndingPhase('none');
-            onExit();
+            onExit('summary');
         } finally {
             setEndingLoading(false);
         }
@@ -745,7 +758,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 <div className="theater-transition-overlay">
                     <div className="theater-transition-content">
                         <div className="flex gap-2">
-                            <button onClick={handleStartEnding} className="flex-1 py-3 text-sm font-bold rounded-xl transition-all" style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)' }}>结束约会</button>
+                            <button onClick={handleStartEnding} className="flex-1 py-3 text-sm font-bold rounded-xl transition-all" style={{ background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)' }}>仪式感</button>
                             <button onClick={() => setShowInput(false)} className="py-3 px-4 text-sm font-bold rounded-xl transition-all" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>取消</button>
                         </div>
                         <div className="theater-transition-sub">场景切换中</div>
@@ -756,7 +769,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
             {/* Top Bar — minimal */}
             <div className="relative z-50 flex items-center justify-between px-4 pt-12 pb-3 shrink-0" onClick={e => e.stopPropagation()}>
-                <button onClick={onExit} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <button onClick={() => setShowExitModal(true)} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="rgba(255,255,255,0.6)" width={16} height={16}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                     </svg>
@@ -776,32 +789,92 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 </div>
             </div>
 
+            {showExitModal && (
+                <div
+                    className="absolute inset-0 z-[290] flex items-end justify-center px-4 pb-6 pt-20 sm:items-center sm:pb-0"
+                    style={{ background: 'rgba(4, 4, 8, 0.72)', backdropFilter: 'blur(14px)' }}
+                    onClick={() => setShowExitModal(false)}
+                >
+                    <div
+                        className="w-full max-w-md rounded-[28px] p-4"
+                        style={{
+                            background: 'linear-gradient(180deg, rgba(24,22,31,0.96), rgba(10,10,16,0.98))',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            boxShadow: '0 24px 80px rgba(0,0,0,0.5)',
+                            animation: 'letterCardIn 0.32s ease-out both',
+                        }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="mb-3 px-1">
+                            <div className="text-white/88 text-[15px] font-semibold tracking-wide">离开剧场</div>
+                            <div className="mt-1 text-white/42 text-xs leading-relaxed">可以把今天收成一段角色之后会自然记得的经历。</div>
+                        </div>
+
+                        <button
+                            onClick={handleStartEnding}
+                            className="group relative w-full overflow-hidden rounded-2xl p-[1px] text-left transition-all active:scale-[0.99]"
+                            style={{
+                                background: 'linear-gradient(135deg, rgba(255,196,218,0.9), rgba(255,255,255,0.18), rgba(255,116,169,0.55))',
+                                boxShadow: '0 0 30px rgba(255,139,184,0.22), inset 0 0 18px rgba(255,255,255,0.08)',
+                            }}
+                        >
+                            <div
+                                className="relative rounded-2xl px-4 py-4"
+                                style={{ background: 'linear-gradient(135deg, rgba(46,30,42,0.98), rgba(22,18,28,0.98))' }}
+                            >
+                                <div className="absolute right-3 top-3 rounded-full px-2 py-0.5 text-[9px] font-semibold tracking-[0.18em]" style={{ color: 'rgba(255,215,228,0.92)', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.12)' }}>520</div>
+                                <div className="flex items-center gap-3 pr-12">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: 'rgba(255,170,205,0.14)', border: '1px solid rgba(255,205,224,0.2)' }}>
+                                        <span className="text-sm text-white/80">✦</span>
+                                    </div>
+                                    <div>
+                                        <div className="text-[18px] font-semibold tracking-wide text-white">仪式感</div>
+                                        <div className="mt-1 text-[12px] leading-relaxed text-white/56">交换礼物，收下他的回礼和一封信。</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </button>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button onClick={() => handleExitChoice('summary')} className="rounded-2xl px-3 py-3 text-xs font-medium tracking-wide text-white/72 transition-all active:scale-[0.98]" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.09)' }}>直接整理记忆</button>
+                            <button onClick={() => handleExitChoice('raw')} className="rounded-2xl px-3 py-3 text-xs font-medium tracking-wide text-white/72 transition-all active:scale-[0.98]" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.09)' }}>同步原始记录</button>
+                            <button onClick={() => handleExitChoice('none')} className="rounded-2xl px-3 py-3 text-xs font-medium tracking-wide text-white/54 transition-all active:scale-[0.98]" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>先离开一下</button>
+                            <button onClick={() => setShowExitModal(false)} className="rounded-2xl px-3 py-3 text-xs font-medium tracking-wide text-white/70 transition-all active:scale-[0.98]" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>留在这里</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ════════ VN Dialog Box — borderless ════════ */}
             {!showInput && (
                 <div className={`theater-vn-dialog ${hideDialog ? 'dialog-hidden' : ''}`} onClick={handleDialogClick}>
-                    {/* Name tag — simple floating text */}
-                    {currentPage && currentPage.type !== 'narration' && (
-                        <div className={`theater-vn-name-tag ${currentPage.type === 'user' ? 'user' : ''}`}>
-                            {currentPage.type === 'user' ? (userProfile.name || '你') : char.name}
+                    {/* Speaker badge */}
+                    {shouldShowSpeakerBadge && (
+                        <div className={`theater-vn-speaker-badge ${isUserPage ? 'user' : 'assistant'}`}>
+                            <div className="theater-vn-speaker-avatar">
+                                {speakerAvatar ? (
+                                    <img src={speakerAvatar} alt={speakerName} />
+                                ) : (
+                                    <span>{speakerInitial}</span>
+                                )}
+                            </div>
+                            <span>{isUserPage ? speakerName : char.name}</span>
                         </div>
                     )}
 
                     {/* Text area */}
                     {isLoading ? (
-                        <div className="theater-vn-loading">
+                        <div className="theater-vn-loading" role="status" aria-label={isDirectorLoading ? '场景准备中' : '回应生成中'}>
                             <div className="theater-vn-loading-dots">
                                 <span /><span /><span />
                             </div>
-                            <span className="theater-vn-loading-label">
-                                {isDirectorLoading ? '导演编排中…' : `${char.name}…`}
-                            </span>
                         </div>
                     ) : currentPage ? (
                         <div className={`theater-vn-text ${currentPage.type}`}>
-                            {currentPage.type === 'dialogue' && <span className="theater-vn-quote-mark open">{'\u201C'}</span>}
+                            {isSpeechPage && <span className="theater-vn-quote-mark open">{'\u201C'}</span>}
                             {displayed}
                             {!done && <span className="theater-vn-cursor" />}
-                            {currentPage.type === 'dialogue' && done && <span className="theater-vn-quote-mark close">{'\u201D'}</span>}
+                            {isSpeechPage && done && <span className="theater-vn-quote-mark close">{'\u201D'}</span>}
                         </div>
                     ) : (
                         <div className="theater-vn-text" style={{ color: 'rgba(255,255,255,0.3)' }}>
@@ -956,19 +1029,23 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                                         ×
                                     </button>
                                 </div>
-                                <textarea
-                                    value={beat.text}
-                                    onChange={e => {
-                                        updateInputBeat(beat.id, { text: e.target.value });
-                                        const el = e.target;
-                                        el.style.height = '42px';
-                                        el.style.height = Math.min(el.scrollHeight, 92) + 'px';
-                                    }}
-                                    onKeyDown={handleBeatKeyDown}
-                                    placeholder={isLoading ? '等待回应…' : beat.kind === 'speech' ? '写一句要说的话…' : '写一个动作或停顿…'}
-                                    disabled={isLoading}
-                                    autoFocus={index === 0}
-                                />
+                                <div className="theater-vn-beat-input-shell">
+                                    {beat.kind === 'speech' && <span className="theater-vn-beat-quote open">“</span>}
+                                    <textarea
+                                        value={beat.text}
+                                        onChange={e => {
+                                            updateInputBeat(beat.id, { text: e.target.value });
+                                            const el = e.target;
+                                            el.style.height = '42px';
+                                            el.style.height = Math.min(el.scrollHeight, 92) + 'px';
+                                        }}
+                                        onKeyDown={handleBeatKeyDown}
+                                        placeholder={isLoading ? '' : beat.kind === 'speech' ? '写一句要说的话…' : '写一个动作或停顿…'}
+                                        disabled={isLoading}
+                                        autoFocus={index === 0}
+                                    />
+                                    {beat.kind === 'speech' && <span className="theater-vn-beat-quote close">”</span>}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -1066,7 +1143,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)' }}>
                     <button onClick={handleSkipToSync}
                         className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
+                        跳到整理 ›
                     </button>
                     <div className="w-[85%] max-w-sm" style={{ animation: 'letterCardIn 0.6s ease-out both' }}>
                         <div className="text-center mb-6">
@@ -1101,7 +1178,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     }}>
                     <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
                         className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
+                        跳到整理 ›
                     </button>
                     <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
                         style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1121,7 +1198,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                     }}>
                     <button onClick={(e) => { e.stopPropagation(); handleSkipToSync(); }}
                         className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">
-                        跳过 ›
+                        跳到整理 ›
                     </button>
                     <div className="w-[92%] max-w-lg mb-8 rounded-2xl p-5 pointer-events-none"
                         style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.85), rgba(0,0,0,0.7))', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1137,7 +1214,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
             )}
             {endingPhase === 'letter' && (
                 <div className="absolute inset-0 z-[320] bg-black flex items-center justify-center overflow-y-auto" style={{ padding: '24px 16px' }}>
-                    <button onClick={handleSkipToSync} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳过 ›</button>
+                    <button onClick={handleSkipToSync} className="absolute top-6 right-6 text-white/30 text-xs tracking-wider hover:text-white/50 transition-colors z-10">跳到整理 ›</button>
                     <div className="w-full max-w-md" style={{ animation: 'letterCardIn 0.8s ease-out 0.3s both' }}>
                         <div ref={letterRef} className="rounded-2xl p-8 relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #faf6f0, #f5efe6)', boxShadow: '0 8px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)' }}>
                             <img src="/images/paper-texture.jpg" alt="" className="absolute inset-0 w-full h-full object-cover opacity-[0.06] mix-blend-multiply pointer-events-none" />
@@ -1150,7 +1227,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                         </div>
                         <div className="flex gap-3 mt-6 justify-center" style={{ animation: `endingBtnIn 0.5s ease-out ${1 + (letterContent.split('\n').filter(l => l.trim()).length) * 0.3}s both` }}>
                             <button onClick={handleExportLetter} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.1)' }}>保存原图</button>
-                            <button onClick={() => { setEndingPhase('none'); onExit(); }} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>收好这封信</button>
+                            <button onClick={() => { setEndingPhase('none'); onExit('summary'); }} className="px-5 py-2.5 rounded-xl text-xs font-medium tracking-wider transition-all active:scale-[0.97]" style={{ background: 'rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.15)' }}>收好这封信</button>
                         </div>
                     </div>
                 </div>

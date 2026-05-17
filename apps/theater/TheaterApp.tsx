@@ -11,9 +11,9 @@ import { ContextBuilder } from '../../utils/context';
 import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
 import { getEmbeddingConfig, getSecondaryApiConfig } from '../../utils/runtimeConfig';
-import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
+import { buildDatePreamble, buildTheaterScene, buildDateTail, buildDateTimeBlock } from '../../utils/datePrompts';
 import { hasCompleteApiConfig } from '../../utils/apiValidation';
-import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
+import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
 import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../../utils/dateEndingPrompts';
@@ -52,7 +52,7 @@ import {
     deleteCustomLocation as dbDeleteCustomLocation,
     getVisitCounts, incrementVisitCount,
     getTimelines, saveTimeline, deleteTimeline as deleteTimelineStore,
-    setActiveTimelineId,
+    getActiveTimelineId, setActiveTimelineId,
     canCreateTimeline, generateTimelineLabel, getTimelineById,
     resolveForkChain, deleteTheaterBgImage,
 } from '../../utils/db/theaterStore';
@@ -65,6 +65,7 @@ import './theater.css';
 
 type Mode = 'select' | 'timelines' | 'map' | 'session';
 export type TheaterExitSyncMode = 'summary' | 'raw' | 'none';
+type TheaterEndingAct = 'user-gift' | 'gift-reaction' | 'farewell' | 'meta-letter';
 
 type SummaryDraft = {
     content: string;
@@ -91,6 +92,38 @@ const isTheaterSummaryMessage = (m: Message) =>
     m.metadata?.source === 'theater' && m.metadata?.isSummary === true;
 
 // hasCompleteApiConfig — imported from utils/apiValidation.ts
+
+const THEATER_ENDING_ACT_LABELS: Record<TheaterEndingAct, string> = {
+    'user-gift': '用户送出的礼物',
+    'gift-reaction': '角色回礼',
+    farewell: '尾声对白',
+    'meta-letter': '信件',
+};
+
+const cleanTheaterSummaryContent = (content: string) =>
+    (content || '').replace(/\[[^\]]+\]\s*/g, '').trim();
+
+const cleanTimelinePreview = (content?: string) =>
+    stripTheaterBeatMarkers(content || '')
+        .replace(/\[[^\]]+\]\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+const formatTheaterMessagesForSummary = (messages: Message[], charName: string, userName: string): string => {
+    return messages
+        .map((msg) => {
+            const speaker = msg.role === 'user' ? userName : msg.role === 'assistant' ? charName : '系统';
+            const content = cleanTheaterSummaryContent(msg.content || '');
+            if (!content) return '';
+            if (msg.metadata?.isEndingCeremony) {
+                const label = THEATER_ENDING_ACT_LABELS[msg.metadata.endingAct as TheaterEndingAct] || '散场记录';
+                return `【${label}】${speaker}: ${content}`;
+            }
+            return `${speaker}: ${content}`;
+        })
+        .filter(line => line.trim().length > 0)
+        .join('\n');
+};
 
 /**
  * Get messages visible in the current timeline.
@@ -209,9 +242,6 @@ const TheaterApp: React.FC = () => {
 
     // ── Inner Whispers State ──
     const [activeWhispers, setActiveWhispers] = useState<InnerWhisper[]>([]);
-
-    // ── Exit Review ──
-    const [showExitReview, setShowExitReview] = useState(false);
 
     // ── Fork UI State ──
     const [showForkModal, setShowForkModal] = useState(false);
@@ -731,6 +761,23 @@ const TheaterApp: React.FC = () => {
         return allMsgs;
     };
 
+    const getCurrentTimelineSessionMessages = useCallback((allMsgs: Message[]): Message[] => {
+        if (!char) return [];
+        return getCurrentTheaterSessionMessages(
+            getTimelineRawMessagesForSummaryLookup(allMsgs, char.id, currentTimelineId),
+        );
+    }, [char, currentTimelineId]);
+
+    const getCurrentTimelineSavedSummaries = useCallback((allMsgs: Message[]): Message[] => {
+        if (!char) return [];
+        return getSavedTheaterSummariesForTimeline(allMsgs, char.id, currentTimelineId);
+    }, [char, currentTimelineId]);
+
+    const getCurrentTimelineLabel = useCallback((): string | undefined => {
+        if (!currentTimelineId) return undefined;
+        return charTimelines.find(t => t.timelineId === currentTimelineId)?.label;
+    }, [charTimelines, currentTimelineId]);
+
     // ── Send Message (with director engine integration) ──
     const handleSendMessage = useCallback(async (text: string, directorHint?: string, userBeats?: TheaterUserBeat[]) => {
         if (!char || !currentLocation || !session || !apiConfig?.baseUrl) return;
@@ -859,7 +906,9 @@ const TheaterApp: React.FC = () => {
         try {
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
-            systemPrompt += buildTheaterSummaryMemoryPrompt(allMsgs);
+            systemPrompt += buildTheaterSummaryMemoryPrompt(
+                getTimelineRawMessagesForSummaryLookup(allMsgs, char.id, currentTimelineId),
+            );
 
             // Inject director event if triggered
             if (directorEvent) {
@@ -1036,7 +1085,7 @@ const TheaterApp: React.FC = () => {
         setIsSummaryGenerating(true);
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
-            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+            const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
             if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的剧场内容', 'info'); return null; }
             const targetMessages = summaryType === 'auto'
                 ? selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId)
@@ -1093,7 +1142,7 @@ const TheaterApp: React.FC = () => {
         setIsSummaryGenerating(true);
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
-            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+            const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
             if (sessionMessages.length === 0) { addToast('还没有可总结的剧场内容', 'info'); return null; }
 
             const sessionStartMsgId = sessionMessages[0].id;
@@ -1129,7 +1178,7 @@ const TheaterApp: React.FC = () => {
             }
 
             if (unsummarizedMessages.length > 0) {
-                const rawBlock = formatMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
+                const rawBlock = formatTheaterMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
                 exitPromptContent += `【未总结的新记录】\n${rawBlock}\n\n`;
             } else if (savedSummaries.length > 0) {
                 exitPromptContent += '（所有内容均已在上方总结中覆盖）\n\n';
@@ -1137,17 +1186,19 @@ const TheaterApp: React.FC = () => {
 
             if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
 
-            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次520约会剧场写最终总结。
-请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的总结。
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次 520 约会剧场写最终隐藏记忆。
+请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的记忆。
 
 当前时间: ${new Date().toLocaleString()}
 
 ${exitPromptContent}
 【输出要求】
 - 使用 Markdown。
-- 写成 ${char.name} 之后能自然记住的事实与情绪脉络。
-- 保留关键事件、关系变化、未说出口的情绪、值得之后线上承接的小细节。
+- 写成 ${char.name} 之后能自然记得、在线上聊天时自然接住的经历。
+- 保留地点、关键事件、${userProfile.name}送出的礼物、${char.name}的回赠、尾声对白、信件，以及关系里细微变化的地方。
 - 不要生成新的剧情，不要改写已经发生的事实。
+- 不要美化成没有发生过的事。
+- 不要写报告口吻，不要出现“总结如下”。
 - 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
 
             const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -1371,7 +1422,6 @@ ${exitPromptContent}
         // Timeline data is persisted — do NOT delete. Just reset UI state.
         setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
-        setShowExitReview(false);
         setMode('select');
         setSession(null);
         setChar(null);
@@ -1446,7 +1496,7 @@ ${exitPromptContent}
     const cleanSessionBridges = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length === 0) return;
         const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
         const sessionStartMsgId = sessionMessages[0].id;
@@ -1469,7 +1519,7 @@ ${exitPromptContent}
     const createBridgeFromSummary = async (): Promise<boolean> => {
         if (!char) return false;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length === 0) return false;
         const sessionStartMsgId = sessionMessages[0].id;
         const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
@@ -1505,19 +1555,88 @@ ${exitPromptContent}
 
     // ====== Theater Ending Three-Act Ceremony API Calls ======
 
-    const getEndingSessionContext = async (): Promise<string> => {
-        if (!char || !currentTimelineId) return '';
+    const getEndingContextBundle = async (): Promise<{ sessionMessages: Message[]; savedSummaries: Message[]; sessionContext: string }> => {
+        if (!char) return { sessionMessages: [], savedSummaries: [], sessionContext: '' };
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMsgs = getTimelineVisibleMessages(allMsgs, char.id, currentTimelineId)
-            .filter(m => !m.metadata?.hiddenFromUser && !m.metadata?.isSummary);
-        return formatSessionContextForEnding(sessionMsgs, char.name, userProfile.name);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+        const savedSummaries = getCurrentTimelineSavedSummaries(allMsgs);
+        const sessionContext = formatSessionContextForEnding(sessionMessages, char.name, userProfile.name, {
+            locationName: currentLocation?.name,
+            timeSlotLabel: session ? TIME_SLOT_LABELS[session.timeSlot]?.zh : undefined,
+            timelineLabel: getCurrentTimelineLabel(),
+            savedSummaries,
+            eventHistory: session?.eventHistory || [],
+            currentEvent,
+        });
+        return { sessionMessages, savedSummaries, sessionContext };
+    };
+
+    const retrieveEndingVectorMemory = async (contextMessages: Message[]): Promise<string | null> => {
+        if (!char || !char.vectorMemoryEnabled) return null;
+        const embeddingConfig = getEmbeddingConfig();
+        if (!embeddingConfig.apiKey) return null;
+        try {
+            return await VectorMemoryRetriever.retrieve(
+                char.id,
+                char.name,
+                userProfile.name,
+                contextMessages.filter(m => !m.metadata?.hiddenFromUser),
+                embeddingConfig.apiKey,
+                apiConfig,
+            );
+        } catch (e) {
+            console.warn('[TheaterEnding] Vector memory retrieval failed:', e);
+            return null;
+        }
+    };
+
+    const buildEndingSystemPrompt = async (contextMessages: Message[]): Promise<string> => {
+        if (!char) return '';
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, true);
+        systemPrompt += buildDateTimeBlock();
+        const vectorMemory = await retrieveEndingVectorMemory(contextMessages);
+        if (vectorMemory?.trim()) {
+            systemPrompt += `\n\n### 【相关长期记忆 · 向量检索】\n${vectorMemory.trim()}\n`;
+        }
+        return systemPrompt;
+    };
+
+    const saveEndingCeremonyMessage = async (
+        endingAct: TheaterEndingAct,
+        role: Message['role'],
+        content: string,
+        extraMetadata: Record<string, any> = {},
+    ): Promise<number | null> => {
+        if (!char) return null;
+        const trimmed = content.trim();
+        if (!trimmed) return null;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+        const sessionStartMsgId = sessionMessages.length > 0 ? sessionMessages[0].id : undefined;
+        return DB.saveMessage({
+            charId: char.id,
+            role,
+            type: 'text',
+            content: trimmed,
+            metadata: {
+                source: 'theater',
+                branchId: currentTimelineId,
+                locationId: currentLocation?.id,
+                hiddenFromUser: true,
+                isEndingCeremony: true,
+                endingAct,
+                sessionStartMsgId,
+                ...extraMetadata,
+            },
+        });
     };
 
     const handleGenerateGiftReaction = async (userGift: string): Promise<string> => {
         if (!char || !session) throw new Error('No char');
-        const sessionContext = await getEndingSessionContext();
-        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
-        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+        await saveEndingCeremonyMessage('user-gift', 'user', userGift, { userGift });
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
 
         const prompt = buildGiftExchangePrompt(char.name, userProfile.name, userGift, sessionContext);
 
@@ -1536,14 +1655,15 @@ ${exitPromptContent}
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const data = await safeResponseJson(response);
         const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
-        return extracted.content;
+        const content = extracted.content.trim();
+        await saveEndingCeremonyMessage('gift-reaction', 'assistant', content);
+        return content;
     };
 
     const handleGenerateFarewell = async (): Promise<string> => {
         if (!char || !session) throw new Error('No char');
-        const sessionContext = await getEndingSessionContext();
-        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
-        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
 
         const prompt = buildFarewellPrompt(char.name, userProfile.name, sessionContext);
 
@@ -1562,14 +1682,15 @@ ${exitPromptContent}
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const data = await safeResponseJson(response);
         const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
-        return extracted.content;
+        const content = extracted.content.trim();
+        await saveEndingCeremonyMessage('farewell', 'assistant', content);
+        return content;
     };
 
     const handleGenerateMetaLetter = async (): Promise<string> => {
         if (!char || !session) throw new Error('No char');
-        const sessionContext = await getEndingSessionContext();
-        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
-        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, false);
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
 
         const prompt = buildMetaLetterPrompt(char.name, userProfile.name, sessionContext);
 
@@ -1593,34 +1714,17 @@ ${exitPromptContent}
 
     /** Save the meta letter to DB so it can be viewed in history */
     const handleSaveMetaLetter = async (letterContent: string): Promise<void> => {
-        if (!char) return;
-        const allMsgs = await DB.getMessagesByCharId(char.id);
-        const tlId = currentTimelineId;
-        const sessionMessages = tlId ? getTimelineVisibleMessages(allMsgs, char.id, tlId) : [];
-        const sessionStartMsgId = sessionMessages.length > 0 ? sessionMessages[0].id : undefined;
-
-        await DB.saveMessage({
-            charId: char.id,
-            role: 'assistant',
-            type: 'text',
-            content: letterContent,
-            metadata: {
-                source: 'theater',
-                branchId: tlId,
-                isMetaLetter: true,
-                sessionStartMsgId,
-            },
-        });
+        await saveEndingCeremonyMessage('meta-letter', 'assistant', letterContent, { isMetaLetter: true });
     };
 
     const saveRawBridgeAndExit = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length > 0) {
             await DB.saveMessage({
                 charId: char.id, role: 'system', type: 'text',
-                content: formatDateMessagesForBridge(sessionMessages, char.name, userProfile.name),
+                content: formatTheaterMessagesForSummary(sessionMessages, char.name, userProfile.name),
                 metadata: { source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'raw', coveredMsgIds: sessionMessages.map(m => m.id), sessionStartMsgId: sessionMessages[0].id },
             });
             addToast('原始记录已同步到主聊天', 'success');
@@ -1648,9 +1752,9 @@ ${exitPromptContent}
         setActiveSummaryDraft({ ...draft, bridgeOnSave: true });
     };
 
-    const handleExit = useCallback(() => {
-        setShowExitReview(true);
-    }, []);
+    const handleExit = useCallback((syncMode: TheaterExitSyncMode = 'none') => {
+        void onExitSession(syncMode);
+    }, [onExitSession]);
 
     // ── Render ──
 
@@ -1764,84 +1868,97 @@ ${exitPromptContent}
     }
 
     if (mode === 'timelines' && char) {
+        const activeStoredTimelineId = getActiveTimelineId(char.id);
+        const highlightedTimelineId = charTimelines.some(t => t.timelineId === activeStoredTimelineId)
+            ? activeStoredTimelineId
+            : charTimelines[0]?.timelineId;
+
         return (
             <div className="theater-app">
-                <div className="theater-entry-root">
-                    {/* Floating decorations */}
-                    <div className="theater-entry-deco">
-                        <div className="theater-entry-orb" />
-                        <div className="theater-entry-orb" />
-                        <div className="theater-entry-orb" />
-                        <span className="theater-entry-float-heart">💗</span>
-                        <span className="theater-entry-float-heart">🌸</span>
-                        <span className="theater-entry-float-heart">✨</span>
-                        <span className="theater-entry-float-heart">💕</span>
+                <div className="theater-worldlines-root">
+                    <div className="theater-worldlines-bg" aria-hidden="true">
+                        <span className="theater-worldlines-wave wave-a" />
+                        <span className="theater-worldlines-wave wave-b" />
+                        <span className="theater-worldlines-signal signal-a" />
+                        <span className="theater-worldlines-signal signal-b" />
                     </div>
 
-                    <div className="theater-entry-topbar">
-                        <button className="theater-entry-back" onClick={() => { setMode('select'); setChar(null); }}>
+                    <div className="theater-worldlines-topbar">
+                        <button className="theater-entry-back theater-worldlines-back" onClick={() => { setMode('select'); setChar(null); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                             </svg>
                         </button>
-                        <span className="theater-entry-topbar-label">WORLDLINES</span>
+                        <span className="theater-worldlines-event-label">520 EVENT ARCHIVE</span>
                     </div>
-                    <div className="theater-entry-hero">
-                        <div className="theater-entry-char-ring" style={{ margin: '0 auto' }}>
+                    <div className="theater-worldlines-hero">
+                        <div className="theater-worldlines-avatar-wrap">
+                            <span className="theater-worldlines-avatar-signal" />
                             <img src={char.avatar} alt={char.name} className="theater-entry-char-img" loading="eager" decoding="async" />
                         </div>
-                        <div className="theater-entry-hero-subtitle" style={{ marginTop: 12 }}>{char.name}</div>
-                        <div className="theater-entry-hero-line" />
+                        <div className="theater-worldlines-char-name">{char.name}</div>
+                        <div className="theater-worldlines-title">WORLDLINES</div>
+                        <div className="theater-worldlines-title-sub">LOVE RADIO · PARALLEL TICKETS</div>
                     </div>
-                    <div className="theater-entry-ornament">
-                        <span className="theater-entry-ornament-text">PARALLEL WORLDS</span>
-                    </div>
-                    <div style={{ flex: 1, padding: '12px 24px 100px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
-                        <button className="theater-entry-new-btn" onClick={handleStartNewTimeline}>
-                            <div className="theater-entry-new-icon">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="var(--te-hotpink)" width={18} height={18}>
+
+                    <div className="theater-worldlines-list">
+                        <button className="theater-worldlines-new-ticket" onClick={handleStartNewTimeline}>
+                            <span className="theater-worldlines-ticket-code">DATE PASS</span>
+                            <span className="theater-worldlines-ticket-stub">SIGNAL 520</span>
+                            <div className="theater-worldlines-new-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" width={20} height={20}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                                 </svg>
                             </div>
-                            <div style={{ textAlign: 'left' }}>
-                                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--te-text)' }}>开启新世界线</div>
-                                <div style={{ fontSize: 9, color: 'var(--te-text-sub)', marginTop: 2, fontWeight: 400, letterSpacing: 2 }}>NEW WORLDLINE</div>
+                            <div className="theater-worldlines-new-copy">
+                                <div className="theater-worldlines-new-title">开启新世界线</div>
+                                <div className="theater-worldlines-new-sub">NEW WORLDLINE</div>
                             </div>
                         </button>
-                        {charTimelines.length > 0 && <div className="theater-entry-divider" />}
-                        {charTimelines.map(tl => {
+
+                        {charTimelines.length > 0 && <div className="theater-worldlines-divider">ON AIR</div>}
+
+                        {charTimelines.map((tl, index) => {
                             const timeLabel = TIME_SLOT_LABELS[tl.session.timeSlot];
                             const isForked = !!tl.parentTimelineId;
+                            const isActive = tl.timelineId === highlightedTimelineId;
+                            const preview = cleanTimelinePreview(tl.preview);
                             return (
-                                <div key={tl.timelineId} className="theater-tl-card">
-                                    <button onClick={() => handleSelectTimeline(tl)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                <div key={tl.timelineId} className={`theater-tl-card ${isActive ? 'theater-tl-card--active' : ''}`}>
+                                    <span className="theater-tl-serial">PASS {String(index + 1).padStart(2, '0')}</span>
+                                    <button onClick={() => handleSelectTimeline(tl)} className="theater-tl-main">
                                         <div className={`theater-tl-icon ${isForked ? 'forked' : 'origin'}`}>
                                             {isForked ? (
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-text-sub)" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
                                             ) : (
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-hotpink)" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                                             )}
                                         </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div className="theater-tl-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.label}</div>
+                                        <div className="theater-tl-body">
+                                            <div className="theater-tl-label">{tl.label}</div>
                                             <div className="theater-tl-meta">
                                                 <span>{tl.locationName || '未开始'}</span>
                                                 {timeLabel && <><div className="theater-tl-meta-dot" /><span>{timeLabel.icon} {timeLabel.zh}</span></>}
                                                 <div className="theater-tl-meta-dot" /><span>{tl.messageCount} 条</span>
                                             </div>
-                                            {tl.preview && <div className="theater-tl-preview" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.preview}</div>}
+                                            {preview && <div className="theater-tl-preview">{preview}</div>}
                                         </div>
                                     </button>
-                                    <button className="theater-tl-delete" onClick={(e) => { e.stopPropagation(); handleDeleteTimeline(tl.timelineId); }}>
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-text-sub)" width={14} height={14}>
+                                    <button className="theater-tl-delete" aria-label="删除世界线" onClick={(e) => { e.stopPropagation(); handleDeleteTimeline(tl.timelineId); }}>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={14} height={14}>
                                             <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                                         </svg>
                                     </button>
                                 </div>
                             );
                         })}
+
                         {charTimelines.length === 0 && (
-                            <div style={{ textAlign: 'center', color: 'var(--te-text-sub)', paddingTop: 32, fontSize: 12, fontWeight: 300 }}>暂无世界线</div>
+                            <div className="theater-worldlines-empty">
+                                <div className="theater-worldlines-empty-stamp">NO SIGNAL</div>
+                                <div className="theater-worldlines-empty-title">还没有世界线</div>
+                                <div className="theater-worldlines-empty-copy">抽出一张新的入场券，开始今天的 520 片段。</div>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -1923,32 +2040,6 @@ ${exitPromptContent}
                     onGenerateMetaLetter={handleGenerateMetaLetter}
                     onSaveMetaLetter={handleSaveMetaLetter}
                 />
-
-                {/* Exit Sync Modal */}
-                <Modal isOpen={showExitReview} title="离开剧场" onClose={() => setShowExitReview(false)} footer={
-                    <div className="flex w-full flex-col gap-2">
-                        <button onClick={() => { setShowExitReview(false); onExitSession('summary'); }} className="w-full py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100">生成总结同步</button>
-                        <button onClick={() => { setShowExitReview(false); onExitSession('raw'); }} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">同步原始记录</button>
-                        <div className="flex gap-2">
-                            <button onClick={() => setShowExitReview(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
-                            <button onClick={() => { setShowExitReview(false); onExitSession('none'); }} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">暂不同步</button>
-                        </div>
-                    </div>
-                }>
-                    <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">离开时可以把这次剧场约会同步给主聊天。同步内容用户不会在聊天列表里看到，但角色之后会自然记得。</div>
-                    {session?.eventHistory && session.eventHistory.length > 0 && (
-                        <div className="theater-timeline mt-3">
-                            {session.eventHistory.map((evt, i) => (
-                                <div key={i} className="theater-timeline-item">
-                                    <div>
-                                        <div className="theater-timeline-location">{evt.sceneType.toUpperCase()}</div>
-                                        <div className="theater-timeline-event">{evt.event}</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </Modal>
 
                 {/* Saved Summaries Modal */}
                 <Modal isOpen={showSavedSummaries} title="已保存总结" onClose={() => setShowSavedSummaries(false)} footer={

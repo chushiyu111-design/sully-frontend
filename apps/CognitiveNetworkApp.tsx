@@ -7,7 +7,7 @@ import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
-import { findCharacterByAnyId,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
+import { findCharacterByAnyId,getCharacterIdentityIds,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
 import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
 import { AppID,type CharacterProfile } from '../types';
 import MemoryBrowser from '../components/cognitive/MemoryBrowser';
@@ -65,6 +65,35 @@ interface OrphanPreviewState {
     error?: string;
 }
 
+interface GraphRelationPreview {
+    id: string;
+    charId: string;
+    sourceId: string;
+    targetId: string;
+    sourceTitle: string;
+    targetTitle: string;
+    relationType: string;
+    summary: string;
+    strength?: number;
+    createdAt?: number;
+}
+
+interface GraphMemoryPreview {
+    id: string;
+    charId: string;
+    title: string;
+    content: string;
+    emotionalJourney?: string;
+    sourceMemoryIds: string[];
+    createdAt?: number;
+    importance?: number;
+}
+
+interface GraphInsightState {
+    relations: GraphRelationPreview[];
+    l1Memories: GraphMemoryPreview[];
+}
+
 interface DistillResult {
     clustersFound: number;
     processedClusters?: number;
@@ -86,6 +115,79 @@ interface DistillResult {
 }
 
 const ORPHAN_PREVIEW_LIMIT = 3;
+const GRAPH_PREVIEW_LIMIT = 6;
+
+function readStringField(source: any, keys: string[], fallback = ''): string {
+    for (const key of keys) {
+        const value = source?.[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+        if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    }
+    return fallback;
+}
+
+function readNumberField(source: any, keys: string[]): number | undefined {
+    for (const key of keys) {
+        const value = Number(source?.[key]);
+        if (Number.isFinite(value)) return value;
+    }
+    return undefined;
+}
+
+function readStringArrayField(source: any, keys: string[]): string[] {
+    for (const key of keys) {
+        const value = source?.[key];
+        if (Array.isArray(value)) {
+            return value.map(item => String(item || '').trim()).filter(Boolean);
+        }
+        if (typeof value === 'string' && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                if (Array.isArray(parsed)) {
+                    return parsed.map(item => String(item || '').trim()).filter(Boolean);
+                }
+            } catch {
+                return value.split(',').map(item => item.trim()).filter(Boolean);
+            }
+        }
+    }
+    return [];
+}
+
+function formatGraphPreviewId(value: string): string {
+    if (!value) return '未知片段';
+    return value.length > 12 ? `${value.slice(0, 12)}...` : value;
+}
+
+function normalizeGraphRelation(item: any, index: number): GraphRelationPreview {
+    const sourceId = readStringField(item, ['sourceMemoryId', 'source_memory_id', 'sourceId', 'source_id', 'fromId', 'from_id', 'memoryIdA', 'memory_id_a']);
+    const targetId = readStringField(item, ['targetMemoryId', 'target_memory_id', 'targetId', 'target_id', 'toId', 'to_id', 'memoryIdB', 'memory_id_b']);
+    return {
+        id: readStringField(item, ['id', 'relationId', 'relation_id'], `relation-${index}`),
+        charId: readStringField(item, ['charId', 'char_id', 'characterId', 'character_id', 'charInstanceId', 'char_instance_id', 'templateCharId', 'template_char_id']),
+        sourceId,
+        targetId,
+        sourceTitle: readStringField(item, ['sourceTitle', 'source_title', 'fromTitle', 'from_title'], formatGraphPreviewId(sourceId)),
+        targetTitle: readStringField(item, ['targetTitle', 'target_title', 'toTitle', 'to_title'], formatGraphPreviewId(targetId)),
+        relationType: readStringField(item, ['relationType', 'relation_type', 'type', 'kind', 'label'], '心意关联'),
+        summary: readStringField(item, ['summary', 'reason', 'description', 'evidence', 'note'], '这两段回忆之间已经建立了关联。'),
+        strength: readNumberField(item, ['strength', 'weight', 'score', 'confidence']),
+        createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
+    };
+}
+
+function normalizeGraphMemory(item: any, index: number): GraphMemoryPreview {
+    return {
+        id: readStringField(item, ['id', 'memoryId', 'memory_id'], `l1-${index}`),
+        charId: readStringField(item, ['charId', 'char_id', 'characterId', 'character_id', 'charInstanceId', 'char_instance_id', 'templateCharId', 'template_char_id']),
+        title: readStringField(item, ['title', 'name'], '未命名认知'),
+        content: readStringField(item, ['content', 'summary', 'text'], '这枚认知还没有留下正文。'),
+        emotionalJourney: readStringField(item, ['emotionalJourney', 'emotional_journey', 'emotion'], ''),
+        sourceMemoryIds: readStringArrayField(item, ['sourceMemoryIds', 'source_memory_ids', 'memoryIds', 'memory_ids']),
+        createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
+        importance: readNumberField(item, ['importance', 'score']),
+    };
+}
 
 function formatOrphanPreviewDate(timestamp?: number): string {
     if (!timestamp) return '最近时间待确认';
@@ -176,6 +278,9 @@ const CognitiveNetworkApp: React.FC = () => {
     const [claimDrawerCharId, setClaimDrawerCharId] = useState<string | null>(null);
     const [claimTargetCharId, setClaimTargetCharId] = useState<string | null>(null);
     const [orphanPreviews, setOrphanPreviews] = useState<Record<string, OrphanPreviewState>>({});
+    const [graphInsights, setGraphInsights] = useState<GraphInsightState | null>(null);
+    const [graphInsightsLoading, setGraphInsightsLoading] = useState(false);
+    const [graphInsightsFailed, setGraphInsightsFailed] = useState(false);
     const semanticAbortRef = React.useRef<AbortController | null>(null);
     const orphanPreviewRequestsRef = React.useRef<Set<string>>(new Set());
 
@@ -275,6 +380,29 @@ const CognitiveNetworkApp: React.FC = () => {
 
     const activeClaimPreview = claimDrawerCharId ? orphanPreviews[claimDrawerCharId] : undefined;
 
+    const selectedGraphIdentityIds = useMemo(() => {
+        if (!selectedCharId) return null;
+        const selected = findCharacterByAnyId(characters, selectedCharId);
+        const ids = selected ? getCharacterIdentityIds(selected) : [selectedCharId.trim()].filter(Boolean);
+        return new Set(ids);
+    }, [characters, selectedCharId]);
+
+    const visibleGraphRelations = useMemo(() => {
+        const relations = graphInsights?.relations || [];
+        if (!selectedGraphIdentityIds) return relations.slice(0, GRAPH_PREVIEW_LIMIT);
+        return relations
+            .filter(relation => !relation.charId || selectedGraphIdentityIds.has(relation.charId))
+            .slice(0, GRAPH_PREVIEW_LIMIT);
+    }, [graphInsights, selectedGraphIdentityIds]);
+
+    const visibleGraphMemories = useMemo(() => {
+        const memories = graphInsights?.l1Memories || [];
+        if (!selectedGraphIdentityIds) return memories.slice(0, GRAPH_PREVIEW_LIMIT);
+        return memories
+            .filter(memory => !memory.charId || selectedGraphIdentityIds.has(memory.charId))
+            .slice(0, GRAPH_PREVIEW_LIMIT);
+    }, [graphInsights, selectedGraphIdentityIds]);
+
     // 初次连接后只拉取一次统计，避免重复请求
     const statsLoaded = React.useRef(false);
     useEffect(() => {
@@ -305,6 +433,42 @@ const CognitiveNetworkApp: React.FC = () => {
             setAllStats(prev => prev ?? { characters: [], graph: { nodes: 0, edges: 0 } });
         } finally { setLoading(false); }
     }, [authHeaders]);
+
+    const fetchGraphInsights = useCallback(async () => {
+        const url = getBackendUrl();
+        if (!url) return;
+        setGraphInsightsLoading(true);
+        setGraphInsightsFailed(false);
+        try {
+            const resp = await fetch(`${url}/api/graph/export`, {
+                headers: authHeaders(),
+                signal: safeTimeoutSignal(45000),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const relations = Array.isArray(data.relations)
+                ? data.relations.map(normalizeGraphRelation)
+                : [];
+            const l1Memories = Array.isArray(data.l1Memories)
+                ? data.l1Memories.map(normalizeGraphMemory)
+                : [];
+            setGraphInsights({ relations, l1Memories });
+        } catch (e) {
+            console.warn('加载认知图谱失败', e);
+            setGraphInsightsFailed(true);
+            setGraphInsights(prev => prev ?? { relations: [], l1Memories: [] });
+        } finally {
+            setGraphInsightsLoading(false);
+        }
+    }, [authHeaders]);
+
+    const graphInsightsLoaded = React.useRef(false);
+    useEffect(() => {
+        if (isConnected && !graphInsightsLoaded.current) {
+            graphInsightsLoaded.current = true;
+            fetchGraphInsights();
+        }
+    }, [fetchGraphInsights, isConnected]);
 
     const fetchOrphanPreview = useCallback(async (cloudCharId: string, options?: { retry?: boolean }) => {
         const url = getBackendUrl();
@@ -366,10 +530,11 @@ const CognitiveNetworkApp: React.FC = () => {
             if (!dryRun && result.success) {
                 addToast('时间丝线已经重新整理好了', 'success');
                 fetchStats();
+                fetchGraphInsights();
             }
         } catch (e: any) { addToast(`编织失败: ${e.message}`, 'error'); }
         finally { setBackfilling(false); setShowConfirm(null); }
-    }, [authHeaders, addToast, fetchStats]);
+    }, [authHeaders, addToast, fetchGraphInsights, fetchStats]);
 
     const runSemanticQueue = useCallback(async (
         url: string,
@@ -539,9 +704,10 @@ const CognitiveNetworkApp: React.FC = () => {
             }
 
             fetchStats();
+            fetchGraphInsights();
         } catch (e: any) { addToast(`寻找失败: ${e.message}`, 'error'); }
         finally { setSemanticRunning(false); setShowConfirm(prev => prev === 'semantic' ? null : prev); }
-    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchGraphInsights, fetchStats, runSemanticQueue]);
 
     const doSemanticRebuild = useCallback(async () => {
         const url = getBackendUrl();
@@ -568,6 +734,7 @@ const CognitiveNetworkApp: React.FC = () => {
 
             addToast(`已清除 ${result.deleted} 条旧联系，${result.toProcess} 段回忆已排队重新寻找`, result.toProcess > 0 ? 'success' : 'info');
             fetchStats();
+            fetchGraphInsights();
 
             if (result.toProcess === 0) return;
 
@@ -585,6 +752,7 @@ const CognitiveNetworkApp: React.FC = () => {
             }
 
             fetchStats();
+            fetchGraphInsights();
         } catch (e: any) {
             addToast(`重新织梦失败: ${e.message}`, 'error');
         } finally {
@@ -592,7 +760,7 @@ const CognitiveNetworkApp: React.FC = () => {
             setSemanticRebuilding(false);
             setShowConfirm(prev => prev === 'semanticRebuild' ? null : prev);
         }
-    }, [authHeaders, addToast, selectedBackendCharId, fetchStats, runSemanticQueue]);
+    }, [authHeaders, addToast, selectedBackendCharId, fetchGraphInsights, fetchStats, runSemanticQueue]);
 
     // Distillation 需要完整 embedding 配置，因此使用 fullHeaders
     const doDistill = useCallback(async () => {
@@ -620,12 +788,13 @@ const CognitiveNetworkApp: React.FC = () => {
                 if (result.l1Deduped > 0) parts.push(`去重 ${result.l1Deduped}`);
                 addToast(`回忆结晶完成：${parts.join('，')}`, 'success');
                 fetchStats();
+                fetchGraphInsights();
             } else {
                 addToast('暂时还没有适合凝结成印象的新回忆', 'info');
             }
         } catch (e: any) { addToast(`凝结失败: ${e.message}`, 'error'); }
         finally { setDistilling(false); setShowConfirm(prev => prev === 'distill' ? null : prev); }
-    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchGraphInsights, fetchStats, userProfile.name]);
 
     const doDistillRebuild = useCallback(async () => {
         const url = getBackendUrl();
@@ -659,13 +828,14 @@ const CognitiveNetworkApp: React.FC = () => {
             }
 
             fetchStats();
+            fetchGraphInsights();
         } catch (e: any) {
             addToast(`重新凝结失败: ${e.message}`, 'error');
         } finally {
             setDistillRebuilding(false);
             setShowConfirm(prev => prev === 'distillRebuild' ? null : prev);
         }
-    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchStats, userProfile.name]);
+    }, [fullHeaders, addToast, selectedBackendCharId, charNameMap, fetchGraphInsights, fetchStats, userProfile.name]);
 
     // ─── Sync helpers (used by sync view) ───
     const handleAbortSemantic = useCallback(() => {
@@ -1176,6 +1346,121 @@ const CognitiveNetworkApp: React.FC = () => {
                                         </div>
                                     </div>
                                 ))}
+                            </section>
+
+                            <section className="relative overflow-hidden rounded-[14px] border border-[#d4af37]/18 bg-[#151319] p-4 shadow-[0_16px_34px_rgba(0,0,0,0.34),0_1px_0_rgba(255,255,255,0.07)_inset]">
+                                <div className="absolute inset-px rounded-[13px] border border-white/[0.035] pointer-events-none" />
+                                <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-[#fff1bd]/34 to-transparent" />
+                                <div className="relative space-y-4">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="inline-flex items-center gap-1.5 text-[10px] text-[#e5d08f]/88 tracking-[0.2em] font-semibold">
+                                                <span className="h-1.5 w-1.5 rounded-full bg-[#e5d08f] shadow-[0_0_8px_rgba(229,208,143,0.52)]" />
+                                                心意图谱
+                                            </div>
+                                            <p className="mt-2 text-[12px] text-[#FFFBF7]/66 leading-relaxed" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+                                                {selectedCharId ? `${charNameMap(selectedCharId)} 的心意连接与凝结认知，会在这里先浮出来。` : '所有角色的心意连接与凝结认知，会在这里先浮出来。'}
+                                            </p>
+                                        </div>
+                                        <div className="shrink-0 rounded-[10px] border border-[#e5d08f]/16 bg-[#0d0c11]/28 px-2.5 py-2 text-right shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]">
+                                            <div className="text-[9px] text-white/28 tracking-[0.16em]">VISIBLE</div>
+                                            <div className="mt-1 text-[18px] leading-none font-bold text-[#fff1bd]" style={{ fontFamily: "Georgia, serif" }}>
+                                                {graphInsightsLoading ? '...' : visibleGraphRelations.length + visibleGraphMemories.length}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {(!isConnected || graphInsightsFailed) && (
+                                        <div className="rounded-[10px] border border-[#e5d08f]/14 bg-[#0d0c11]/24 px-3 py-2 text-[11px] leading-relaxed text-white/46">
+                                            {!isConnected ? '认知后端还没有连接，所以暂时读不到心意图谱。' : '心意图谱暂时没有读回来，可以稍后再刷新一次。'}
+                                        </div>
+                                    )}
+
+                                    <div className="grid gap-3">
+                                        <div className="rounded-[12px] border border-white/[0.055] bg-white/[0.035] p-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <p className="text-[10px] font-semibold tracking-[0.18em] text-[#e5d08f]/80">心意连接</p>
+                                                <span className="text-[9px] text-white/30">{visibleGraphRelations.length} PREVIEW</span>
+                                            </div>
+                                            <div className="mt-2 space-y-2">
+                                                {graphInsightsLoading ? (
+                                                    [0, 1].map(item => (
+                                                        <div key={item} className="h-[54px] animate-pulse rounded-[9px] border border-white/[0.045] bg-white/[0.035]" />
+                                                    ))
+                                                ) : visibleGraphRelations.length ? (
+                                                    visibleGraphRelations.map(relation => (
+                                                        <div key={relation.id} className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <p className="min-w-0 truncate text-[10px] font-semibold text-[#FFFBF7]/76">
+                                                                    {relation.sourceTitle} <span className="text-[#e5d08f]/54">→</span> {relation.targetTitle}
+                                                                </p>
+                                                                {typeof relation.strength === 'number' && (
+                                                                    <span className="shrink-0 text-[9px] text-[#fff1bd]/62">
+                                                                        {relation.strength <= 1 ? `${Math.round(relation.strength * 100)}%` : relation.strength.toFixed(1)}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <div className="mt-1 flex items-start gap-2">
+                                                                <span className="shrink-0 rounded-full border border-[#e5d08f]/16 px-1.5 py-0.5 text-[8px] text-[#e5d08f]/70">
+                                                                    {relation.relationType}
+                                                                </span>
+                                                                <p className="min-w-0 line-clamp-2 text-[10px] leading-relaxed text-white/42">{relation.summary}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-[10px] leading-relaxed text-white/38">
+                                                        暂时还没有可展示的心意连接。完成“心意提取”后，这里会出现两段回忆之间的关系线。
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-[12px] border border-white/[0.055] bg-white/[0.035] p-3">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <p className="text-[10px] font-semibold tracking-[0.18em] text-[#e5d08f]/80">凝结认知</p>
+                                                <span className="text-[9px] text-white/30">{visibleGraphMemories.length} PREVIEW</span>
+                                            </div>
+                                            <div className="mt-2 space-y-2">
+                                                {graphInsightsLoading ? (
+                                                    [0, 1].map(item => (
+                                                        <div key={item} className="h-[62px] animate-pulse rounded-[9px] border border-white/[0.045] bg-white/[0.035]" />
+                                                    ))
+                                                ) : visibleGraphMemories.length ? (
+                                                    visibleGraphMemories.map(memory => (
+                                                        <div key={memory.id} className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <p className="min-w-0 truncate text-[10px] font-semibold text-[#FFFBF7]/76">{memory.title}</p>
+                                                                <span className="shrink-0 text-[9px] text-[#fff1bd]/54">
+                                                                    {memory.sourceMemoryIds.length ? `${memory.sourceMemoryIds.length} 段` : 'L1'}
+                                                                </span>
+                                                            </div>
+                                                            <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/42">{memory.content}</p>
+                                                            {memory.emotionalJourney && (
+                                                                <p className="mt-1 line-clamp-1 text-[9px] leading-relaxed text-[#e5d08f]/46">{memory.emotionalJourney}</p>
+                                                            )}
+                                                        </div>
+                                                    ))
+                                                ) : (
+                                                    <p className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-[10px] leading-relaxed text-white/38">
+                                                        暂时还没有可展示的凝结认知。完成“回忆结晶”后，这里会出现由多段回忆沉淀出的印象。
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {isConnected && (
+                                        <button
+                                            type="button"
+                                            onClick={() => { haptic.light(); fetchGraphInsights(); }}
+                                            disabled={graphInsightsLoading}
+                                            className="w-full rounded-full border border-[#e5d08f]/18 bg-[#FFFBF7]/[0.92] px-3 py-2 text-[10px] font-bold text-[#17151B] transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-white/[0.08] disabled:text-white/34"
+                                        >
+                                            {graphInsightsLoading ? '正在读取...' : '刷新心意图谱'}
+                                        </button>
+                                    )}
+                                </div>
                             </section>
 
                             <section className="relative overflow-hidden rounded-[14px] border border-[#d4af37]/18 bg-[#151319] p-4 shadow-[0_16px_34px_rgba(0,0,0,0.36),0_1px_0_rgba(255,255,255,0.07)_inset]">

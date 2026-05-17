@@ -93,6 +93,7 @@ const Chat: React.FC = () => {
     const lifeStreamVisibleRef = useRef(lifeStreamVisibleInChat);
     const consumedTargetRef = useRef('');
     const pendingTargetScrollRef = useRef(false);
+    const reloadRequestSeqRef = useRef(0);
     const messagesRef = useRef<Message[]>(messages);
     const todayLifeEnsureSeqRef = useRef(0);
     const todayLifeSlowTimerRef = useRef<number | null>(null);
@@ -544,22 +545,23 @@ const Chat: React.FC = () => {
         if (!activeCharacterId) return;
 
         const charIdAtStart = activeCharacterId;
+        const requestSeq = ++reloadRequestSeqRef.current;
         try {
             const { messages: recentMsgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, requestedVisibleCount);
 
             // Guard against stale async results: if the user switched characters
-            // while the DB query was in flight, discard this result.
-            if (activeCharIdRef.current !== charIdAtStart) return;
+            // while the DB query was in flight, or a newer reload started, discard this result.
+            if (activeCharIdRef.current !== charIdAtStart || reloadRequestSeqRef.current !== requestSeq) return;
 
             setTotalMsgCount(totalCount);
             setMessages(recentMsgs);
         } catch (error) {
-            if (activeCharIdRef.current !== charIdAtStart) return;
+            if (activeCharIdRef.current !== charIdAtStart || reloadRequestSeqRef.current !== requestSeq) return;
             console.error('[Chat] Failed to load recent messages:', error);
             setMessages([]);
             setTotalMsgCount(0);
         } finally {
-            if (activeCharIdRef.current === charIdAtStart) {
+            if (activeCharIdRef.current === charIdAtStart && reloadRequestSeqRef.current === requestSeq) {
                 setIsHistoryLoading(false);
             }
         }
@@ -604,6 +606,7 @@ const Chat: React.FC = () => {
 
                 if (targetIndex < 0) {
                     addToast('没有找到这条记忆对应的聊天记录', 'error');
+                    setIsHistoryLoading(false);
                     return;
                 }
 
@@ -621,6 +624,7 @@ const Chat: React.FC = () => {
                 if (!cancelled) {
                     console.error('[Chat] Failed to locate target message:', error);
                     addToast('定位聊天记录失败', 'error');
+                    setIsHistoryLoading(false);
                 }
             }
         };
@@ -643,6 +647,17 @@ const Chat: React.FC = () => {
 
     useEffect(() => {
         if (activeCharacterId) {
+            const rawTargetMessageId = appParams?.targetMessageId;
+            const targetMessageId = typeof rawTargetMessageId === 'number'
+                ? rawTargetMessageId
+                : Number(rawTargetMessageId);
+            const targetCharId = typeof appParams?.targetCharId === 'string'
+                ? appParams.targetCharId.trim()
+                : '';
+            const hasTargetForActiveChar = Number.isFinite(targetMessageId)
+                && targetMessageId > 0
+                && (!targetCharId || targetCharId === activeCharacterId);
+
             // Update ref BEFORE any async work so stale reloadMessages calls
             // from a previous character can detect the switch and bail out.
             activeCharIdRef.current = activeCharacterId;
@@ -650,7 +665,9 @@ const Chat: React.FC = () => {
             setMessages([]);
             setTotalMsgCount(0);
 
-            reloadMessages(LOAD_BATCH_SIZE);
+            if (!hasTargetForActiveChar) {
+                reloadMessages(LOAD_BATCH_SIZE);
+            }
             loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
@@ -663,8 +680,10 @@ const Chat: React.FC = () => {
             try {
                 setTranslationEnabled(JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'));
             } catch { setTranslationEnabled(false); }
-            setVisibleCount(30);
-            visibleCountRef.current = 30;
+            if (!hasTargetForActiveChar) {
+                setVisibleCount(30);
+                visibleCountRef.current = 30;
+            }
             lastMsgIdRef.current = null;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
@@ -693,13 +712,25 @@ const Chat: React.FC = () => {
                 setInjectPlaybackContext(JSON.parse(localStorage.getItem(`chat_inject_playback_context_${activeCharacterId}`) || 'false'));
             } catch { setInjectPlaybackContext(false); }
         }
-    }, [activeCharacterId, reloadMessages]);
+    }, [activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, reloadMessages]);
 
     useEffect(() => {
         if (activeCharacterId) {
+            const rawTargetMessageId = appParams?.targetMessageId;
+            const targetMessageId = typeof rawTargetMessageId === 'number'
+                ? rawTargetMessageId
+                : Number(rawTargetMessageId);
+            const targetCharId = typeof appParams?.targetCharId === 'string'
+                ? appParams.targetCharId.trim()
+                : '';
+            const hasTargetForActiveChar = Number.isFinite(targetMessageId)
+                && targetMessageId > 0
+                && (!targetCharId || targetCharId === activeCharacterId);
+            if (hasTargetForActiveChar && pendingTargetScrollRef.current) return;
+
             reloadMessages(visibleCountRef.current);
         }
-    }, [lifeStreamVisibleInChat, activeCharacterId, reloadMessages]);
+    }, [lifeStreamVisibleInChat, activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, reloadMessages]);
 
     // Load all messages when history-manager modal opens
     useEffect(() => {

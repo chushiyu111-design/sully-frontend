@@ -10,6 +10,7 @@ import {
   STORE_SCHEDULED,STORE_LETTERS,STORE_VOICE_AUDIO,
   DB_NAME_CONST
 } from './core';
+import { normalizeImportedMessage } from '../messageCompatibility';
 
 export const deleteDB = async (): Promise<void> => {
     return new Promise((resolve, reject) => {
@@ -157,6 +158,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     const db = await openDB();
     const importedMemoryRecordAudio = await deserializeMemoryRecordAudio(data.memoryRecordAudio);
     const importedVoiceAudio = await deserializeVoiceAudio(data.voiceAudio);
+    const hasVectorMemoryPayload = Array.isArray(data.vectorMemories) && data.vectorMemories.length > 0;
 
     const availableStores = [
         STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
@@ -216,6 +218,12 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
                 return c;
             });
         }
+        if (!hasVectorMemoryPayload) {
+            data.characters = data.characters.map(c => ({
+                ...c,
+                vectorMemoryLastExtractAt: 0,
+            }));
+        }
         clearAndAdd(STORE_CHARACTERS, data.characters);
     } else if (data.mediaAssets && availableStores.includes(STORE_CHARACTERS)) {
         const charStore = tx.objectStore(STORE_CHARACTERS);
@@ -254,7 +262,10 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
         if (availableStores.includes(STORE_MESSAGES) && data.messages.length > 0) {
             const store = tx.objectStore(STORE_MESSAGES);
             if (data.characters) store.clear();
-            data.messages.forEach(m => store.put(m));
+            data.messages
+                .map(m => normalizeImportedMessage(m))
+                .filter((m): m is Record<string, any> => Boolean(m))
+                .forEach(m => store.put(m));
         }
     }
 

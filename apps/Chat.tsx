@@ -49,7 +49,7 @@ function toAgentApiConfig(value: unknown): AgentApiConfig | undefined {
 }
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, appParams, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -84,11 +84,14 @@ const Chat: React.FC = () => {
     const [newCategoryName, setNewCategoryName] = useState('');
 
     const scrollRef = useRef<HTMLDivElement>(null);
+    const messageRefs = useRef<Record<number, HTMLDivElement | null>>({});
     const lastMsgIdRef = useRef<number | null>(null);
     const scrollThrottleRef = useRef(0);
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
     const lifeStreamVisibleRef = useRef(lifeStreamVisibleInChat);
+    const consumedTargetRef = useRef('');
+    const pendingTargetScrollRef = useRef(false);
     const messagesRef = useRef<Message[]>(messages);
     const todayLifeEnsureSeqRef = useRef(0);
     const todayLifeSlowTimerRef = useRef<number | null>(null);
@@ -121,6 +124,7 @@ const Chat: React.FC = () => {
     // --- Multi-Select State ---
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
+    const [highlightedMessageId, setHighlightedMessageId] = useState<number | null>(null);
 
     // --- Soul Reflection State ---
     const [showSoulReflectionPanel, setShowSoulReflectionPanel] = useState(false);
@@ -561,7 +565,100 @@ const Chat: React.FC = () => {
     }, [activeCharacterId]);
 
     useEffect(() => {
+        const rawTargetMessageId = appParams?.targetMessageId;
+        const targetMessageId = typeof rawTargetMessageId === 'number'
+            ? rawTargetMessageId
+            : Number(rawTargetMessageId);
+        const targetCharId = typeof appParams?.targetCharId === 'string'
+            ? appParams.targetCharId.trim()
+            : '';
+
+        if ((!targetCharId && !Number.isFinite(targetMessageId)) || (!targetCharId && targetMessageId <= 0)) return;
+
+        const targetRequestId = typeof appParams?.targetRequestId === 'string'
+            ? appParams.targetRequestId
+            : '';
+        const targetKey = `${targetCharId || activeCharacterId || ''}:${Number.isFinite(targetMessageId) ? targetMessageId : ''}:${targetRequestId}`;
+        if (consumedTargetRef.current === targetKey) return;
+
+        if (targetCharId && !characters.some(candidate => candidate.id === targetCharId)) {
+            if (!isDataLoaded) return;
+            consumedTargetRef.current = targetKey;
+            addToast('没有找到这条记忆对应的角色', 'error');
+            return;
+        }
+
+        if (targetCharId && activeCharacterId !== targetCharId) {
+            setActiveCharacterId(targetCharId);
+            return;
+        }
+
+        if (!activeCharacterId || !Number.isFinite(targetMessageId) || targetMessageId <= 0) return;
+
+        let cancelled = false;
+        consumedTargetRef.current = targetKey;
+
+        const locateMessage = async () => {
+            try {
+                const allMessages = await DB.getMessagesByCharId(activeCharacterId);
+                const targetIndex = allMessages.findIndex(message => message.id === targetMessageId);
+                if (cancelled) return;
+
+                if (targetIndex < 0) {
+                    addToast('没有找到这条记忆对应的聊天记录', 'error');
+                    setIsHistoryLoading(false);
+                    return;
+                }
+
+                const requiredVisibleCount = Math.max(
+                    LOAD_BATCH_SIZE,
+                    allMessages.length - targetIndex + 3,
+                );
+                pendingTargetScrollRef.current = true;
+                visibleCountRef.current = requiredVisibleCount;
+                setVisibleCount(requiredVisibleCount);
+                await reloadMessages(requiredVisibleCount);
+                if (cancelled) return;
+                setHighlightedMessageId(targetMessageId);
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('[Chat] Failed to locate target message:', error);
+                    addToast('定位聊天记录失败', 'error');
+                    setIsHistoryLoading(false);
+                }
+            }
+        };
+
+        void locateMessage();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        activeCharacterId,
+        addToast,
+        appParams?.targetCharId,
+        appParams?.targetMessageId,
+        appParams?.targetRequestId,
+        characters,
+        isDataLoaded,
+        reloadMessages,
+        setActiveCharacterId,
+    ]);
+
+    useEffect(() => {
         if (activeCharacterId) {
+            const rawTargetMessageId = appParams?.targetMessageId;
+            const targetMessageId = typeof rawTargetMessageId === 'number'
+                ? rawTargetMessageId
+                : Number(rawTargetMessageId);
+            const targetCharId = typeof appParams?.targetCharId === 'string'
+                ? appParams.targetCharId.trim()
+                : '';
+            const hasTargetForActiveChar = Number.isFinite(targetMessageId)
+                && targetMessageId > 0
+                && (!targetCharId || targetCharId === activeCharacterId);
+
             // Update ref BEFORE any async work so stale reloadMessages calls
             // from a previous character can detect the switch and bail out.
             activeCharIdRef.current = activeCharacterId;
@@ -569,7 +666,9 @@ const Chat: React.FC = () => {
             setMessages([]);
             setTotalMsgCount(0);
 
-            reloadMessages(LOAD_BATCH_SIZE);
+            if (!hasTargetForActiveChar) {
+                reloadMessages(LOAD_BATCH_SIZE);
+            }
             loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
@@ -582,8 +681,12 @@ const Chat: React.FC = () => {
             try {
                 setTranslationEnabled(JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'));
             } catch { setTranslationEnabled(false); }
-            setVisibleCount(30);
-            visibleCountRef.current = 30;
+            if (!hasTargetForActiveChar) {
+                setVisibleCount(30);
+                visibleCountRef.current = 30;
+                pendingTargetScrollRef.current = false;
+                setHighlightedMessageId(null);
+            }
             lastMsgIdRef.current = null;
             scrollThrottleRef.current = 0;
             setLastTokenUsage(null);
@@ -612,13 +715,25 @@ const Chat: React.FC = () => {
                 setInjectPlaybackContext(JSON.parse(localStorage.getItem(`chat_inject_playback_context_${activeCharacterId}`) || 'false'));
             } catch { setInjectPlaybackContext(false); }
         }
-    }, [activeCharacterId, reloadMessages]);
+    }, [activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, appParams?.targetRequestId, reloadMessages]);
 
     useEffect(() => {
         if (activeCharacterId) {
+            const rawTargetMessageId = appParams?.targetMessageId;
+            const targetMessageId = typeof rawTargetMessageId === 'number'
+                ? rawTargetMessageId
+                : Number(rawTargetMessageId);
+            const targetCharId = typeof appParams?.targetCharId === 'string'
+                ? appParams.targetCharId.trim()
+                : '';
+            const hasTargetForActiveChar = Number.isFinite(targetMessageId)
+                && targetMessageId > 0
+                && (!targetCharId || targetCharId === activeCharacterId);
+            if (hasTargetForActiveChar && pendingTargetScrollRef.current) return;
+
             reloadMessages(visibleCountRef.current);
         }
-    }, [lifeStreamVisibleInChat, activeCharacterId, reloadMessages]);
+    }, [lifeStreamVisibleInChat, activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, appParams?.targetRequestId, reloadMessages]);
 
     // Load all messages when history-manager modal opens
     useEffect(() => {
@@ -683,13 +798,17 @@ const Chat: React.FC = () => {
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        if (pendingTargetScrollRef.current || highlightedMessageId) {
+            lastMsgIdRef.current = currentLastId;
+            return;
+        }
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place
         if (currentLastId !== lastMsgIdRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             lastMsgIdRef.current = currentLastId;
         }
-    }, [messages, activeCharacterId, selectionMode]);
+    }, [messages, activeCharacterId, selectionMode, highlightedMessageId]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode) {
@@ -1510,6 +1629,27 @@ const Chat: React.FC = () => {
         .slice(-visibleCount),
         [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
 
+    useEffect(() => {
+        if (!highlightedMessageId) return;
+
+        const frame = window.requestAnimationFrame(() => {
+            const target = messageRefs.current[highlightedMessageId];
+            if (target && typeof target.scrollIntoView === 'function') {
+                target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+            pendingTargetScrollRef.current = false;
+        });
+
+        const clearTimer = window.setTimeout(() => {
+            setHighlightedMessageId(current => current === highlightedMessageId ? null : current);
+        }, 2600);
+
+        return () => {
+            window.cancelAnimationFrame(frame);
+            window.clearTimeout(clearTimer);
+        };
+    }, [displayMessages, highlightedMessageId]);
+
     const canReroll = !isTyping && displayMessages.length > 0 && displayMessages[displayMessages.length - 1].role === 'assistant';
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
@@ -1873,37 +2013,47 @@ const Chat: React.FC = () => {
                     // Inner voice: only show on the last assistant message
                     const isLastAssistant = m.role === 'assistant' && !displayMessages.slice(i + 1).some(nm => nm.role === 'assistant');
                     return (
-                        <MessageItem
+                        <div
                             key={m.id || i}
-                            msg={m}
-                            isFirstInGroup={prevRole !== m.role}
-                            isLastInGroup={nextRole !== m.role}
-                            activeTheme={activeTheme}
-                            charAvatar={char.avatar}
-                            charName={activeCharName}
-                            userAvatar={userProfile.avatar}
-                            onLongPress={handleMessageLongPress}
-                            selectionMode={selectionMode}
-                            isSelected={selectedMsgIds.has(m.id)}
-                            onToggleSelect={toggleMessageSelection}
-                            translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
-                            isShowingTarget={showingTargetIds.has(m.id)}
-                            onTranslateToggle={handleTranslateToggle}
-                            onTransferAction={handleTransferAction}
-                            showTimestamp={showTs}
-                            timestampValue={m.timestamp}
-                            onPlayVoice={playVoice}
-                            onStopVoice={stopVoice}
-                            onRetryVoice={handleRetryVoice}
-                            playingMsgId={playingMsgId}
-                            loadingMsgIds={loadingMsgIds}
-                            isVoiceTextExpanded={expandedVoiceTextIds.has(m.id)}
-                            onToggleVoiceText={toggleVoiceText}
-                            innerVoice={isLastAssistant ? (char.moodState as any)?.innerVoice : undefined}
-                            statusCardData={isLastAssistant && (char.statusBarMode === 'creative' || char.statusBarMode === 'custom' || char.statusBarMode === 'freeform') ? char.lastStatusCard : undefined}
-                            onRetryInnerVoice={isLastAssistant ? retryMindSnapshot : undefined}
-                            showThinking={false} // Hidden from user UI, developer can still check DB/logs
-                        />
+                            ref={(node) => { messageRefs.current[m.id] = node; }}
+                            data-chat-message-id={m.id}
+                            className={`rounded-2xl transition-[background-color,box-shadow] duration-500 ${
+                                highlightedMessageId === m.id
+                                    ? 'bg-amber-100/30 shadow-[0_0_0_2px_rgba(251,191,36,0.72),0_12px_28px_rgba(251,191,36,0.18)]'
+                                    : ''
+                            }`}
+                        >
+                            <MessageItem
+                                msg={m}
+                                isFirstInGroup={prevRole !== m.role}
+                                isLastInGroup={nextRole !== m.role}
+                                activeTheme={activeTheme}
+                                charAvatar={char.avatar}
+                                charName={activeCharName}
+                                userAvatar={userProfile.avatar}
+                                onLongPress={handleMessageLongPress}
+                                selectionMode={selectionMode}
+                                isSelected={selectedMsgIds.has(m.id)}
+                                onToggleSelect={toggleMessageSelection}
+                                translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
+                                isShowingTarget={showingTargetIds.has(m.id)}
+                                onTranslateToggle={handleTranslateToggle}
+                                onTransferAction={handleTransferAction}
+                                showTimestamp={showTs}
+                                timestampValue={m.timestamp}
+                                onPlayVoice={playVoice}
+                                onStopVoice={stopVoice}
+                                onRetryVoice={handleRetryVoice}
+                                playingMsgId={playingMsgId}
+                                loadingMsgIds={loadingMsgIds}
+                                isVoiceTextExpanded={expandedVoiceTextIds.has(m.id)}
+                                onToggleVoiceText={toggleVoiceText}
+                                innerVoice={isLastAssistant ? (char.moodState as any)?.innerVoice : undefined}
+                                statusCardData={isLastAssistant && (char.statusBarMode === 'creative' || char.statusBarMode === 'custom' || char.statusBarMode === 'freeform') ? char.lastStatusCard : undefined}
+                                onRetryInnerVoice={isLastAssistant ? retryMindSnapshot : undefined}
+                                showThinking={false} // Hidden from user UI, developer can still check DB/logs
+                            />
+                        </div>
                     );
                 })}
 

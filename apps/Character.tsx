@@ -15,6 +15,7 @@ import CharacterCitySection from '../components/character/CharacterCitySection';
 import type { CharacterCitySectionHandle } from '../components/character/CharacterCitySection';
 import CharacterLocationSummaryCard from '../components/character/CharacterLocationSummaryCard';
 import CharacterWeixinBindingCard from '../components/character/CharacterWeixinBindingCard';
+import CharacterLifeProfileCard from '../components/character/CharacterLifeProfileCard';
 import { safeResponseJson } from '../utils/safeApi';
 import { useCharacterScreenDeps } from '../hooks/useCharacterScreenDeps';
 import type { CharacterUpdateOptions } from '../context/CharacterContext';
@@ -1315,6 +1316,12 @@ ${isInitialGeneration ? `
                                     onPreviewWorldbook={handlePreviewWorldbook}
                                     onMoveWorldbook={moveWorldbook}
                                     onUnmountWorldbook={unmountWorldbook}
+                                />
+
+                                <CharacterLifeProfileCard
+                                    character={formData}
+                                    userName={userProfile.name}
+                                    addToast={addToast}
                                 />
 
                                 <CharacterWeixinBindingCard

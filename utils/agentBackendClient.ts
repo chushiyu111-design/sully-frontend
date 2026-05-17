@@ -10,7 +10,7 @@ import {
 import { safeTimeoutSignal } from './safeTimeout';
 import type { AgentConfig } from './autonomousAgent';
 
-type AgentApiConfig = {
+export type AgentApiConfig = {
     baseUrl: string;
     apiKey: string;
     model: string;
@@ -59,6 +59,65 @@ export type LifeStreamSyncState = {
     visibleInChat: boolean;
 };
 
+export type AgentLifeProfileStatus = 'missing' | 'ready' | 'failed';
+export type AgentLifeProfileSection =
+    | 'identity'
+    | 'rhythm'
+    | 'places'
+    | 'activities'
+    | 'relationship'
+    | 'rules'
+    | 'notes';
+
+export type AgentLifeProfileSectionMeta = {
+    source: 'generated' | 'manual';
+    updatedAt: number;
+    errorMessage?: string;
+    debugCode?: string;
+    debugMessage?: string;
+};
+
+export type AgentLifePatternSpecificPlace = {
+    name: string;
+    category: string;
+    evidence: string;
+    confidence: number;
+    usePolicy?: string;
+};
+
+export type AgentLifePatternProfile = {
+    lifeIdentity: Record<string, unknown>;
+    weeklyRhythm: Record<string, unknown>;
+    timeRhythm: Record<string, unknown>;
+    placeModel: Record<string, unknown> & {
+        specificPlaces?: AgentLifePatternSpecificPlace[];
+        genericPlaces?: string[];
+    };
+    activityPalette: Record<string, unknown> & {
+        stable?: string[];
+        occasional?: string[];
+        romanceUsable?: string[];
+        privateTexture?: string[];
+        lowFrequencyTexture?: string[];
+        avoidAsCore?: string[];
+    };
+    relationshipToUser: Record<string, unknown>;
+    variationPolicy: Record<string, unknown>;
+    uncertainties: Array<Record<string, unknown>>;
+    evidence: Array<Record<string, unknown>>;
+};
+
+export type AgentLifeProfileState = {
+    status: AgentLifeProfileStatus;
+    profile?: AgentLifePatternProfile;
+    updatedAt?: number;
+    sourceFingerprint?: string;
+    errorMessage?: string;
+    debugCode?: string;
+    debugMessage?: string;
+    sectionMeta?: Partial<Record<AgentLifeProfileSection, AgentLifeProfileSectionMeta>>;
+};
+
 export type AgentTickResult = {
     action: string;
     messageGenerated: boolean;
@@ -81,6 +140,7 @@ function withAgentProtocolQuery(
 
 function getTimeoutMs(path: string): number {
     if (path.startsWith('/api/agent/start')) return 45000;
+    if (path.startsWith('/api/agent/life-profile/generate')) return 180000;
     return 15000;
 }
 
@@ -273,6 +333,46 @@ export async function fetchAgentLifeStream(charId: string): Promise<LifeStreamSy
         fragments: data.fragments || [],
         visibleInChat: data.visibleInChat === true,
     };
+}
+
+export async function fetchAgentLifeProfile(charId: string): Promise<AgentLifeProfileState> {
+    return agentFetch<AgentLifeProfileState>(
+        '/api/agent/life-profile',
+        {},
+        { charId },
+    );
+}
+
+export async function generateAgentLifeProfile(
+    charId: string,
+    contextSnapshot: Record<string, unknown>,
+    apiConfig?: AgentApiConfig,
+): Promise<AgentLifeProfileState> {
+    return agentFetch<AgentLifeProfileState>('/api/agent/life-profile/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+            charId,
+            contextSnapshot,
+            ...(apiConfig ? { apiConfig } : {}),
+        }),
+    });
+}
+
+export async function updateAgentLifeProfileSection(
+    charId: string,
+    section: AgentLifeProfileSection,
+    value: Record<string, unknown>,
+    contextSnapshot?: Record<string, unknown>,
+): Promise<AgentLifeProfileState> {
+    return agentFetch<AgentLifeProfileState>('/api/agent/life-profile/section', {
+        method: 'PATCH',
+        body: JSON.stringify({
+            charId,
+            section,
+            value,
+            ...(contextSnapshot ? { contextSnapshot } : {}),
+        }),
+    });
 }
 
 export async function requestAgentTick(

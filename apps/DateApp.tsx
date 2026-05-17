@@ -1365,7 +1365,7 @@ ${exitPromptContent}
                     <h2 className="text-4xl font-light text-white tracking-[0.3em] uppercase">{char.name}</h2>
                 </div>
                 {peekLoading && (
-                    <div className="flex-1 flex flex-col items-center justify-center -mt-20 z-10"><div className="w-12 h-[1px] bg-neutral-800 mb-12"></div><div className="w-[1px] h-12 bg-gradient-to-b from-transparent via-white to-transparent animate-pulse mb-6"></div><p className="text-sm font-light text-neutral-500 italic tracking-widest">正在感知...</p></div>
+                    <div className="flex-1 flex flex-col items-center justify-center -mt-20 z-10" role="status" aria-label="场景准备中"><div className="w-12 h-[1px] bg-neutral-800 mb-12"></div><div className="w-[1px] h-12 bg-gradient-to-b from-transparent via-white to-transparent animate-pulse mb-6"></div></div>
                 )}
                 {!peekLoading && peekStatus && (
                     <div className="flex-1 min-h-0 flex flex-col px-8 pb-10 z-10 animate-fade-in">

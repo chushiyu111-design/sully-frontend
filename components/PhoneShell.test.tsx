@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, render } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PhoneShell from './PhoneShell';
 import { AppID } from '../types';
@@ -48,6 +48,13 @@ vi.mock('../apps/zhaixinglou/ZhaixinglouApp', async () => {
     const React = await import('react');
     return {
         default: () => React.createElement('div', null, 'Zhaixinglou App'),
+    };
+});
+
+vi.mock('../apps/EchoRecordApp', async () => {
+    const React = await import('react');
+    return {
+        default: () => React.createElement('div', null, 'EchoRecord App'),
     };
 });
 
@@ -196,5 +203,32 @@ describe('PhoneShell active app rendering', () => {
 
         expect(statusBarRenderCount).toBeGreaterThan(1);
         expect(launcherRenderCount).toBe(1);
+    });
+
+    it('renders the EchoRecord app when it is the active app', async () => {
+        vi.useRealTimers();
+        mockedUseOS.mockReturnValue({
+            activeApp: AppID.EchoRecord,
+            characters: [],
+            closeApp: vi.fn(),
+            handleBack: vi.fn(() => true),
+            isDataLoaded: true,
+            isLocked: false,
+            theme: {
+                wallpaper: 'linear-gradient(#000000, #111111)',
+                hideStatusBar: false,
+            },
+            toasts: [],
+            unreadMessages: {},
+            unlock: vi.fn(),
+        } as any);
+
+        render(
+            <VirtualTimeProvider>
+                <PhoneShell />
+            </VirtualTimeProvider>,
+        );
+
+        expect(await screen.findByText('EchoRecord App')).toBeTruthy();
     });
 });

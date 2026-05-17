@@ -104,6 +104,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.VoiceCall, name: '语音通话', icon: 'VoiceCall', color: 'slate' },
   { id: AppID.CognitiveNetwork, name: '认知网络', icon: 'CognitiveNetwork', color: 'violet' },
   { id: AppID.StatusWorkshop, name: '状态栏工坊', icon: 'StatusWorkshop', color: 'slate' },
+  { id: AppID.EchoRecord, name: '回声唱片', icon: 'Music', color: 'amber' },
   { id: AppID.Music, name: 'Emo Cloud', icon: 'Music', color: 'red' },
   { id: AppID.HalfSugar, name: '半糖主义', icon: 'HalfSugar', color: 'teal' },
 ];

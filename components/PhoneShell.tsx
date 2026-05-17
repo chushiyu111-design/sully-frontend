@@ -44,6 +44,7 @@ const HotSearchApp = React.lazy(() => import('../apps/HotSearchApp'));
 const ZhaixinglouApp = React.lazy(() => import('../apps/zhaixinglou/ZhaixinglouApp'));
 const CsyManualApp = React.lazy(() => import('../apps/CsyManualApp'));
 const CognitiveNetworkApp = React.lazy(() => import('../apps/CognitiveNetworkApp'));
+const EchoRecordApp = React.lazy(() => import('../apps/EchoRecordApp'));
 const StatusWorkshopApp = React.lazy(() => import('../apps/StatusWorkshopApp'));
 const MusicApp = React.lazy(() => import('../apps/music/MusicApp'));
 const HalfSugarApp = React.lazy(() => import('../apps/halfsugar/HalfSugarApp'));
@@ -302,6 +303,7 @@ function renderActiveApp(activeApp: AppID) {
     case AppID.Zhaixinglou: return <ZhaixinglouApp />;
     case AppID.CsyManual: return <CsyManualApp />;
     case AppID.CognitiveNetwork: return <CognitiveNetworkApp />;
+    case AppID.EchoRecord: return <EchoRecordApp />;
     case AppID.StatusWorkshop: return <StatusWorkshopApp />;
     case AppID.Music: return <MusicApp />;
     case AppID.HalfSugar: return <HalfSugarApp />;

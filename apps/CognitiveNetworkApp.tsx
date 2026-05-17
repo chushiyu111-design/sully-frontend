@@ -76,6 +76,8 @@ interface GraphRelationPreview {
     summary: string;
     strength?: number;
     createdAt?: number;
+    sourceMessageIds: number[];
+    targetMessageIds: number[];
 }
 
 interface GraphMemoryPreview {
@@ -85,6 +87,7 @@ interface GraphMemoryPreview {
     content: string;
     emotionalJourney?: string;
     sourceMemoryIds: string[];
+    sourceMessageIds: number[];
     createdAt?: number;
     importance?: number;
 }
@@ -93,6 +96,10 @@ interface GraphInsightState {
     relations: GraphRelationPreview[];
     l1Memories: GraphMemoryPreview[];
 }
+
+type GraphDrawerSelection =
+    | { kind: 'relation'; item: GraphRelationPreview }
+    | { kind: 'memory'; item: GraphMemoryPreview };
 
 interface DistillResult {
     clustersFound: number;
@@ -152,6 +159,50 @@ function readStringArrayField(source: any, keys: string[]): string[] {
         }
     }
     return [];
+}
+
+function readNumberArrayField(source: any, keys: string[]): number[] {
+    for (const key of keys) {
+        const value = source?.[key];
+        const rawItems = Array.isArray(value)
+            ? value
+            : typeof value === 'string' && value.trim()
+                ? (() => {
+                    try {
+                        const parsed = JSON.parse(value);
+                        return Array.isArray(parsed) ? parsed : value.split(',');
+                    } catch {
+                        return value.split(',');
+                    }
+                })()
+                : [];
+
+        const ids = rawItems
+            .map(item => Number(item))
+            .filter(item => Number.isFinite(item));
+        if (ids.length > 0) return Array.from(new Set(ids));
+    }
+    return [];
+}
+
+function vectorSourceMessageIds(memory?: VectorMemory): number[] {
+    if (!Array.isArray(memory?.sourceMessageIds)) return [];
+    return memory.sourceMessageIds
+        .map(item => Number(item))
+        .filter(item => Number.isFinite(item));
+}
+
+function mergeGraphMessageIds(...groups: Array<number[] | undefined>): number[] {
+    return Array.from(new Set(groups.flatMap(group => group || [])));
+}
+
+function firstGraphMessageId(...groups: Array<number[] | undefined>): number | undefined {
+    return mergeGraphMessageIds(...groups)[0];
+}
+
+function formatGraphStrength(value?: number): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+    return value <= 1 ? `${Math.round(value * 100)}%` : value.toFixed(1);
 }
 
 function formatGraphPreviewId(value: string): string {
@@ -214,6 +265,8 @@ function normalizeGraphRelation(item: any, index: number): GraphRelationPreview 
         summary: readStringField(item, ['summary', 'reason', 'description', 'evidence', 'note']),
         strength: readNumberField(item, ['strength', 'weight', 'score', 'confidence']),
         createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
+        sourceMessageIds: readNumberArrayField(item, ['sourceMessageIds', 'source_message_ids', 'fromMessageIds', 'from_message_ids']),
+        targetMessageIds: readNumberArrayField(item, ['targetMessageIds', 'target_message_ids', 'toMessageIds', 'to_message_ids']),
     };
 }
 
@@ -225,6 +278,7 @@ function normalizeGraphMemory(item: any, index: number): GraphMemoryPreview {
         content: readStringField(item, ['content', 'summary', 'text']),
         emotionalJourney: readStringField(item, ['emotionalJourney', 'emotional_journey', 'emotion'], ''),
         sourceMemoryIds: readStringArrayField(item, ['sourceMemoryIds', 'source_memory_ids', 'memoryIds', 'memory_ids']),
+        sourceMessageIds: readNumberArrayField(item, ['sourceMessageIds', 'source_message_ids']),
         createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
         importance: readNumberField(item, ['importance', 'score']),
     };
@@ -248,6 +302,8 @@ function enrichGraphInsights(
                 targetTitle: cleanGraphText(relation.targetTitle, relation.targetId)
                     || resolveGraphMemoryTitle(targetMemory, relation.targetId, `第 ${index + 1} 组回忆 B`),
                 summary: buildGraphRelationSummary(relation, sourceMemory, targetMemory),
+                sourceMessageIds: mergeGraphMessageIds(relation.sourceMessageIds, vectorSourceMessageIds(sourceMemory)),
+                targetMessageIds: mergeGraphMessageIds(relation.targetMessageIds, vectorSourceMessageIds(targetMemory)),
             };
         }),
         l1Memories: l1Memories.map((memory, index) => {
@@ -277,6 +333,11 @@ function enrichGraphInsights(
                         : '这枚认知已经生成，正文还在等待同步。'),
                 emotionalJourney: cleanGraphText(memory.emotionalJourney) || cleanGraphText(localMemory?.emotionalJourney),
                 sourceMemoryIds,
+                sourceMessageIds: mergeGraphMessageIds(
+                    memory.sourceMessageIds,
+                    vectorSourceMessageIds(localMemory),
+                    ...sourceMemories.map(item => vectorSourceMessageIds(item)),
+                ),
             };
         }),
     };
@@ -372,6 +433,7 @@ const CognitiveNetworkApp: React.FC = () => {
     const [claimTargetCharId, setClaimTargetCharId] = useState<string | null>(null);
     const [orphanPreviews, setOrphanPreviews] = useState<Record<string, OrphanPreviewState>>({});
     const [graphInsights, setGraphInsights] = useState<GraphInsightState | null>(null);
+    const [graphDrawer, setGraphDrawer] = useState<GraphDrawerSelection | null>(null);
     const [graphInsightsLoading, setGraphInsightsLoading] = useState(false);
     const [graphInsightsFailed, setGraphInsightsFailed] = useState(false);
     const semanticAbortRef = React.useRef<AbortController | null>(null);
@@ -1061,6 +1123,16 @@ const CognitiveNetworkApp: React.FC = () => {
         haptic.light();
     }, []);
 
+    const openGraphDrawer = useCallback((selection: GraphDrawerSelection) => {
+        setGraphDrawer(selection);
+        haptic.light();
+    }, []);
+
+    const closeGraphDrawer = useCallback(() => {
+        setGraphDrawer(null);
+        haptic.light();
+    }, []);
+
     const confirmClaimDrawer = useCallback(async () => {
         if (!activeClaimStat) return;
         const migrated = await claimCloudCharacter(activeClaimStat.charId, claimTargetChar);
@@ -1101,6 +1173,11 @@ const CognitiveNetworkApp: React.FC = () => {
             targetRequestId: `${charId}:${messageId}:${Date.now()}`,
         });
     }, [openApp, setActiveCharacterId]);
+
+    const handleOpenGraphSourceInChat = useCallback((charId: string, messageId: number) => {
+        setGraphDrawer(null);
+        handleOpenSourceInChat(charId, messageId);
+    }, [handleOpenSourceInChat]);
 
     /* ─── Render ─── */
 
@@ -1489,24 +1566,26 @@ const CognitiveNetworkApp: React.FC = () => {
                                                     ))
                                                 ) : visibleGraphRelations.length ? (
                                                     visibleGraphRelations.map(relation => (
-                                                        <div key={relation.id} className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2">
-                                                            <div className="flex items-center justify-between gap-2">
-                                                                <p className="min-w-0 truncate text-[10px] font-semibold text-[#FFFBF7]/76">
-                                                                    {relation.sourceTitle} <span className="text-[#e5d08f]/54">→</span> {relation.targetTitle}
-                                                                </p>
-                                                                {typeof relation.strength === 'number' && (
-                                                                    <span className="shrink-0 text-[9px] text-[#fff1bd]/62">
-                                                                        {relation.strength <= 1 ? `${Math.round(relation.strength * 100)}%` : relation.strength.toFixed(1)}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="mt-1 flex items-start gap-2">
-                                                                <span className="shrink-0 rounded-full border border-[#e5d08f]/16 px-1.5 py-0.5 text-[8px] text-[#e5d08f]/70">
+                                                        <button
+                                                            key={relation.id}
+                                                            type="button"
+                                                            onClick={() => openGraphDrawer({ kind: 'relation', item: relation })}
+                                                            aria-label={`查看${relation.sourceTitle}与${relation.targetTitle}的心意连接`}
+                                                            className="block w-full overflow-hidden rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-left transition-all active:scale-[0.99] hover:border-[#e5d08f]/18 hover:bg-white/[0.045]"
+                                                        >
+                                                            <div className="flex min-w-0 items-center justify-between gap-2">
+                                                                <span className="min-w-0 truncate rounded-full border border-[#e5d08f]/16 px-1.5 py-0.5 text-[8px] text-[#e5d08f]/70">
                                                                     {relation.relationType}
                                                                 </span>
-                                                                <p className="min-w-0 line-clamp-2 text-[10px] leading-relaxed text-white/42">{relation.summary}</p>
+                                                                <span className="shrink-0 text-[9px] text-[#fff1bd]/62">
+                                                                    {formatGraphStrength(relation.strength) || '›'}
+                                                                </span>
                                                             </div>
-                                                        </div>
+                                                            <p className="mt-2 line-clamp-2 max-w-full break-words text-[10px] font-semibold leading-relaxed text-[#FFFBF7]/76">
+                                                                {relation.sourceTitle} <span className="text-[#e5d08f]/54">→</span> {relation.targetTitle}
+                                                            </p>
+                                                            <p className="mt-1 line-clamp-1 max-w-full break-words text-[10px] leading-relaxed text-white/42">{relation.summary}</p>
+                                                        </button>
                                                     ))
                                                 ) : (
                                                     <p className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-[10px] leading-relaxed text-white/38">
@@ -1528,18 +1607,24 @@ const CognitiveNetworkApp: React.FC = () => {
                                                     ))
                                                 ) : visibleGraphMemories.length ? (
                                                     visibleGraphMemories.map(memory => (
-                                                        <div key={memory.id} className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2">
-                                                            <div className="flex items-center justify-between gap-2">
+                                                        <button
+                                                            key={memory.id}
+                                                            type="button"
+                                                            onClick={() => openGraphDrawer({ kind: 'memory', item: memory })}
+                                                            aria-label={`查看${memory.title}的凝结认知`}
+                                                            className="block w-full overflow-hidden rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-left transition-all active:scale-[0.99] hover:border-[#e5d08f]/18 hover:bg-white/[0.045]"
+                                                        >
+                                                            <div className="flex min-w-0 items-center justify-between gap-2">
                                                                 <p className="min-w-0 truncate text-[10px] font-semibold text-[#FFFBF7]/76">{memory.title}</p>
                                                                 <span className="shrink-0 text-[9px] text-[#fff1bd]/54">
                                                                     {memory.sourceMemoryIds.length ? `${memory.sourceMemoryIds.length} 段` : 'L1'}
                                                                 </span>
                                                             </div>
-                                                            <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-white/42">{memory.content}</p>
+                                                            <p className="mt-1 line-clamp-2 max-w-full break-words text-[10px] leading-relaxed text-white/42">{memory.content}</p>
                                                             {memory.emotionalJourney && (
-                                                                <p className="mt-1 line-clamp-1 text-[9px] leading-relaxed text-[#e5d08f]/46">{memory.emotionalJourney}</p>
+                                                                <p className="mt-1 line-clamp-1 max-w-full break-words text-[9px] leading-relaxed text-[#e5d08f]/46">{memory.emotionalJourney}</p>
                                                             )}
-                                                        </div>
+                                                        </button>
                                                     ))
                                                 ) : (
                                                     <p className="rounded-[9px] border border-white/[0.045] bg-black/12 px-2.5 py-2 text-[10px] leading-relaxed text-white/38">
@@ -1879,6 +1964,15 @@ const CognitiveNetworkApp: React.FC = () => {
                 )}
             </div>
 
+            {graphDrawer && (
+                <GraphInsightDrawer
+                    selection={graphDrawer}
+                    onClose={closeGraphDrawer}
+                    onOpenChat={handleOpenGraphSourceInChat}
+                    charNameMap={charNameMap}
+                />
+            )}
+
             {activeClaimStat && (
                 <div className="fixed inset-0 z-[60]">
                     <button
@@ -2011,6 +2105,127 @@ const CognitiveNetworkApp: React.FC = () => {
 };
 
 /* ─── Sub-components ─── */
+
+const GraphInsightDrawer: React.FC<{
+    selection: GraphDrawerSelection;
+    onClose: () => void;
+    onOpenChat: (charId: string, messageId: number) => void;
+    charNameMap: (charId: string) => string;
+}> = ({ selection, onClose, onOpenChat, charNameMap }) => {
+    const relation = selection.kind === 'relation' ? selection.item : null;
+    const memory = selection.kind === 'memory' ? selection.item : null;
+    const item = relation || memory!;
+    const sourceMessageId = relation
+        ? firstGraphMessageId(relation.sourceMessageIds, relation.targetMessageIds)
+        : firstGraphMessageId(memory?.sourceMessageIds);
+    const charLabel = item.charId ? charNameMap(item.charId) : '角色待确认';
+    const sourceCount = relation
+        ? mergeGraphMessageIds(relation.sourceMessageIds, relation.targetMessageIds).length
+        : memory?.sourceMessageIds.length || 0;
+
+    return (
+        <div className="fixed inset-0 z-[58]">
+            <button
+                type="button"
+                aria-label="关闭心意图谱详情"
+                onClick={onClose}
+                className="absolute inset-0 bg-black/58 backdrop-blur-[2px]"
+            />
+            <div className="absolute inset-x-0 bottom-0 z-[59] mx-auto max-h-[84vh] w-full max-w-[520px] overflow-y-auto rounded-t-[24px] border border-white/[0.08] bg-[#121015]/[0.98] px-4 pb-[max(1.15rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(0,0,0,0.62)]">
+                <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/18" />
+                <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                        <p className="text-[10px] font-semibold tracking-[0.24em] text-[#e5d08f]/68">
+                            {relation ? '心意连接' : '凝结认知'}
+                        </p>
+                        <h3 className="mt-1 break-words text-[21px] font-semibold leading-tight text-[#fffaf0]" style={{ fontFamily: "'Noto Serif SC', serif" }}>
+                            {relation ? `${relation.sourceTitle} → ${relation.targetTitle}` : memory?.title}
+                        </h3>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.05] px-3 py-1.5 text-[10px] font-semibold text-white/48 transition-colors hover:bg-white/[0.08]"
+                    >
+                        收起
+                    </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-[#e5d08f]/18 bg-[#e5d08f]/10 px-2.5 py-1 text-[9px] font-semibold text-[#fff1bd]/74">
+                        {charLabel}
+                    </span>
+                    {relation && (
+                        <span className="rounded-full border border-white/[0.08] bg-white/[0.045] px-2.5 py-1 text-[9px] font-semibold text-white/46">
+                            {relation.relationType}
+                        </span>
+                    )}
+                    {relation && formatGraphStrength(relation.strength) && (
+                        <span className="rounded-full border border-[#e5d08f]/14 bg-black/16 px-2.5 py-1 text-[9px] font-semibold text-[#fff1bd]/58">
+                            {formatGraphStrength(relation.strength)}
+                        </span>
+                    )}
+                    {memory && (
+                        <span className="rounded-full border border-white/[0.08] bg-white/[0.045] px-2.5 py-1 text-[9px] font-semibold text-white/46">
+                            {memory.sourceMemoryIds.length ? `${memory.sourceMemoryIds.length} 段回忆` : 'L1'}
+                        </span>
+                    )}
+                    {sourceCount > 0 && (
+                        <span className="rounded-full border border-[#d99aae]/18 bg-[#d99aae]/10 px-2.5 py-1 text-[9px] font-semibold text-[#ffdce8]/64">
+                            {sourceCount} 条聊天线索
+                        </span>
+                    )}
+                </div>
+
+                {relation ? (
+                    <div className="mt-4 space-y-3">
+                        <div className="grid gap-2">
+                            <div className="rounded-[13px] border border-white/[0.06] bg-white/[0.035] px-3 py-3">
+                                <p className="text-[9px] font-semibold tracking-[0.18em] text-white/32">起点</p>
+                                <p className="mt-1 break-words text-[12px] leading-relaxed text-white/72">{relation.sourceTitle}</p>
+                            </div>
+                            <div className="rounded-[13px] border border-white/[0.06] bg-white/[0.035] px-3 py-3">
+                                <p className="text-[9px] font-semibold tracking-[0.18em] text-white/32">回应</p>
+                                <p className="mt-1 break-words text-[12px] leading-relaxed text-white/72">{relation.targetTitle}</p>
+                            </div>
+                        </div>
+                        <section className="rounded-[14px] border border-[#e5d08f]/14 bg-[#e5d08f]/[0.055] px-3 py-3">
+                            <p className="text-[9px] font-semibold tracking-[0.2em] text-[#fff1bd]/50">识别到的呼应</p>
+                            <p className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-[1.85] text-[#fffaf0]/72" style={{ fontFamily: "'Noto Serif SC', serif" }}>{relation.summary}</p>
+                        </section>
+                    </div>
+                ) : (
+                    <div className="mt-4 space-y-3">
+                        <section className="rounded-[14px] border border-[#e5d08f]/14 bg-[#e5d08f]/[0.055] px-3 py-3">
+                            <p className="text-[9px] font-semibold tracking-[0.2em] text-[#fff1bd]/50">沉淀内容</p>
+                            <p className="mt-2 whitespace-pre-wrap break-words text-[12px] leading-[1.85] text-[#fffaf0]/72" style={{ fontFamily: "'Noto Serif SC', serif" }}>{memory?.content}</p>
+                        </section>
+                        {memory?.emotionalJourney && (
+                            <section className="rounded-[14px] border border-[#d99aae]/18 bg-[#d99aae]/10 px-3 py-3">
+                                <p className="text-[9px] font-semibold tracking-[0.2em] text-[#ffdce8]/54">情绪线索</p>
+                                <p className="mt-2 whitespace-pre-wrap break-words text-[12px] italic leading-[1.85] text-[#ffe8f0]/68">{memory.emotionalJourney}</p>
+                            </section>
+                        )}
+                    </div>
+                )}
+
+                {sourceMessageId && item.charId ? (
+                    <button
+                        type="button"
+                        onClick={() => onOpenChat(item.charId, sourceMessageId)}
+                        className="mt-4 w-full rounded-[14px] border border-[#e5d08f]/22 bg-[#FFFBF7] px-4 py-3.5 text-[12px] font-bold text-[#17151B] shadow-[0_12px_30px_rgba(255,251,247,0.12)] transition-all active:scale-[0.985]"
+                    >
+                        回到聊天
+                    </button>
+                ) : (
+                    <p className="mt-4 rounded-[12px] border border-white/[0.055] bg-white/[0.035] px-3 py-3 text-[10px] leading-relaxed text-white/36">
+                        这条图谱还没有可定位的聊天线索。
+                    </p>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const ConfirmBar: React.FC<{ type: string; onConfirm: () => void; onCancel: () => void }> = ({ type, onConfirm, onCancel }) => {
     let msg = '';

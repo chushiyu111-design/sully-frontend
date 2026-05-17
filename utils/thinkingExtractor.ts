@@ -89,9 +89,9 @@ export function stripCoTResidual(content: string): string {
     if (!content) return content;
 
     // Phase 1: Check for CoT signature — at least one "Step N —" pattern
-    const cotSignature = /^Step\s+\d+\s*[—–-]\s*/m;
+    const cotSignature = /^(?:[━─═]{2,}\s*)?Step\s+\d+\s*[—–\-:：]\s*/m;
     const hasCotSeparator = /^[━─═]{4,}/m;
-    const hasCotProtocolTag = /<\/?cot_protocol[^>]*>/i;
+    const hasCotProtocolTag = /<\/?cot_(?:protocol|ds)[^>]*>/i;
 
     const hasCoTLeak = cotSignature.test(content) || hasCotSeparator.test(content) || hasCotProtocolTag.test(content);
 
@@ -111,10 +111,11 @@ export function stripCoTResidual(content: string): string {
         if (inCoTBlock && !trimmed) continue;
 
         // CoT protocol XML tags
-        if (/<\/?cot_protocol[^>]*>/i.test(trimmed)) continue;
+        if (/<\/?cot_(?:protocol|ds)[^>]*>/i.test(trimmed)) continue;
+        if (/^(?:.*<think>|<\/think>.*|.*Step\s*0-5.*|不可跳步|闭合\s*<\/think>|正文里不要出现)/i.test(trimmed)) continue;
 
-        // Step headers: "Step 0 — 规则就位", "Step 1 — 理解 user", etc.
-        if (/^Step\s+\d+\s*[—–-]\s*.*/i.test(trimmed)) {
+        // Step headers: "Step 0 — 规则就位", "━━ Step 0: 回到我自己 ━━", etc.
+        if (/^(?:[━─═]{2,}\s*)?Step\s+\d+\s*[—–\-:：]\s*.*?(?:\s*[━─═]{2,})?$/i.test(trimmed)) {
             inCoTBlock = true;
             continue;
         }
@@ -130,6 +131,7 @@ export function stripCoTResidual(content: string): string {
 
         // Sub-step lines within a CoT block: "a. ...", "b. ...", "c. ..." etc.
         if (inCoTBlock && /^[a-z]\.\s+/.test(trimmed)) continue;
+        if (inCoTBlock && /^[\s　]+/.test(line)) continue;
 
         // Checkbox patterns within CoT: "□ ..."
         if (inCoTBlock && /^[□☐✓✗☑]\s+/.test(trimmed)) continue;
@@ -144,7 +146,7 @@ export function stripCoTResidual(content: string): string {
         // If we hit substantive content (not matching any CoT pattern), exit the block
         if (inCoTBlock && trimmed.length > 0) {
             // Check if it still looks like CoT reasoning (contains meta-language)
-            const isMeta = /^(快速回答|你是一个|你正在|你现在|我是|我正在|当前|目前|这轮|这次|本轮|以上|综上|深呼吸)/.test(trimmed)
+            const isMeta = /^(快速回答|你是一个|你正在|你现在|我是|我正在|当前|目前|这轮|这次|本轮|以上|综上|深呼吸|回到我自己|发出去|没有就不提|冲突就以当前锚点为准)/.test(trimmed)
                 || /^(你的|我的|用户的|对方的)(意图|诉求|情绪|状态|想法|核心|真实|潜台词)/.test(trimmed)
                 || /^(回看|检查|审视|确认|没有问题|有问题|需要修改)/.test(trimmed);
             if (isMeta) continue;

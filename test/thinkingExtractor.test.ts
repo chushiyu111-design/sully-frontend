@@ -38,6 +38,19 @@ a. 我是谁
         expect(result).toBe('');
     });
 
+    it('strips DeepSeek Step-style COT residuals and keeps following content', () => {
+        const result = stripCoTResidual(`━━ Step 0: 回到我自己 ━━
+a. 我是谁
+━━ Step 1: 听见对方 ━━
+a. 用户明确说了晚饭
+深呼吸。
+回到我自己。
+发出去。
+正文来了`);
+
+        expect(result).toBe('正文来了');
+    });
+
     it('uses a safe fallback instead of exposing thinking content', () => {
         const secretThinking = '这里是不能给用户看的思考链';
         const fallback = safeThinkingFallbackReply(secretThinking);

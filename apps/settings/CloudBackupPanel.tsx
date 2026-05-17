@@ -323,7 +323,7 @@ const CloudBackupPanel: React.FC = () => {
                 {/* Footer Tip */}
                 <div className="px-5 pb-4">
                     <p className="text-[10px] text-stone-400 leading-relaxed">
-                        每天自动备份一次，新备份会覆盖旧备份。云端备份会保留歌词和唱片记录，但不上传歌曲音频；完整歌曲请用本地备份保存。
+                        自动备份当前暂时关闭，请需要时手动备份。云端备份会保留歌词和唱片记录；歌曲音频这类大文件请同时留一份本地完整备份，避免上传限制影响恢复。
                     </p>
                 </div>
             </section>

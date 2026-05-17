@@ -1796,50 +1796,48 @@ const Chat: React.FC = () => {
             />
 
             {!selectionMode && !isTodayScheduleEntryHidden && (
-                <button
-                    type="button"
-                    onClick={handleOpenTodaySchedule}
-                    className="absolute right-3 top-[calc(var(--safe-top)+62px)] z-40 flex max-w-[52%] items-center gap-2 rounded-full border border-[#eadfd2]/80 bg-[#fffaf4]/88 px-3 py-2 shadow-[0_10px_28px_rgba(76,52,38,0.12)] backdrop-blur-md active:scale-95"
-                    aria-label="打开今日行程"
-                >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#f4ded3] text-[11px] text-[#a86c63]">⌁</span>
-                    <span className="truncate text-[13px] font-normal tracking-[0.04em] text-[#5f5047]">今日行程</span>
-                    <span className="shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[10px] text-[#a68f83]">{todayScheduleBadgeText}</span>
-                    <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            if (char) localStorage.setItem(`chat_today_schedule_entry_hidden_${char.id}`, 'true');
-                            setIsTodayScheduleEntryHidden(true);
-                        }}
-                        onKeyDown={(event) => {
-                            if (event.key !== 'Enter' && event.key !== ' ') return;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            if (char) localStorage.setItem(`chat_today_schedule_entry_hidden_${char.id}`, 'true');
-                            setIsTodayScheduleEntryHidden(true);
-                        }}
-                        className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#c2afa4]"
-                        aria-label="隐藏今日行程入口"
-                    >
-                        ×
-                    </span>
-                </button>
+                <div className="pointer-events-none absolute right-3 top-[calc(6rem+0.75rem)] z-20 flex justify-end">
+                    <div className="font-schedule-serif pointer-events-auto inline-flex max-w-[82vw] items-center gap-1 overflow-hidden rounded-full border border-[#eadfd2]/80 bg-[#fffaf2]/80 shadow-[0_10px_28px_rgba(80,62,44,0.08)] backdrop-blur-md">
+                        <button
+                            type="button"
+                            onClick={handleOpenTodaySchedule}
+                            className="flex min-w-0 items-center gap-2 px-3 py-1.5 text-left transition-transform active:scale-[0.98]"
+                        >
+                            <span className="font-sans shrink-0 text-[10px] font-semibold tracking-[0.22em] text-[#c98b84]">TODAY</span>
+                            <span className="truncate text-[13px] font-normal tracking-[0.04em] text-[#5f5047]">今日行程</span>
+                            <span className="font-sans shrink-0 rounded-full bg-[#342722] px-2.5 py-1 text-[10px] font-medium text-white shadow-sm">
+                                {todayScheduleBadgeText}
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                localStorage.setItem(`chat_today_schedule_entry_hidden_${char.id}`, 'true');
+                                setIsTodayScheduleEntryHidden(true);
+                            }}
+                            className="font-sans mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/70 text-[#b8a99d] shadow-sm active:scale-95"
+                            aria-label="隐藏今日行程入口"
+                        >
+                            ×
+                        </button>
+                    </div>
+                </div>
             )}
 
             {!selectionMode && isTodayScheduleEntryHidden && (
-                <button
-                    type="button"
-                    onClick={() => {
-                        if (char) localStorage.removeItem(`chat_today_schedule_entry_hidden_${char.id}`);
-                        setIsTodayScheduleEntryHidden(false);
-                    }}
-                    className="absolute right-3 top-[calc(var(--safe-top)+62px)] z-40 flex h-9 w-9 items-center justify-center rounded-full border border-[#eadfd2]/80 bg-[#fffaf4]/88 text-[15px] text-[#a68f83] shadow-[0_10px_28px_rgba(76,52,38,0.12)] backdrop-blur-md active:scale-95"
-                    aria-label="显示今日行程"
-                >
-                    ⌁
-                </button>
+                <div className="pointer-events-none absolute right-3 top-[calc(6rem+0.75rem)] z-20 flex justify-end">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            localStorage.setItem(`chat_today_schedule_entry_hidden_${char.id}`, 'false');
+                            setIsTodayScheduleEntryHidden(false);
+                            handleOpenTodaySchedule();
+                        }}
+                        className="font-schedule-serif pointer-events-auto rounded-full border border-[#eadfd2]/80 bg-[#fffaf2]/80 px-3 py-1.5 text-[12px] tracking-[0.04em] text-[#5f5047] shadow-sm backdrop-blur-md active:scale-95"
+                    >
+                        今日行程
+                    </button>
+                </div>
             )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>

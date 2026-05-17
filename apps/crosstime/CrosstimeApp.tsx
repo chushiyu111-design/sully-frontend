@@ -31,6 +31,109 @@ type ModalStep = 'none' | 'pick_char' | 'pick_slice';
 
 const MAX_PARTICIPANTS = 5;
 
+const getParticipantSliceKey = (participant: CrosstimeParticipant): string =>
+    participant.timeSlice === 'current'
+        ? 'current'
+        : `trajectory:${participant.trajectoryNodeId || ''}`;
+
+const getTrajectorySliceLabel = (node: TrajectoryNode): string =>
+    node.era === 'after_meeting'
+        ? `世界线 · ${node.title}`
+        : `相遇前 · ${node.title}`;
+
+const getTrajectorySliceDetail = (node: TrajectoryNode): string =>
+    node.era === 'after_meeting'
+        ? '相遇后 · 认识你'
+        : `${node.age}岁 · 不认识你`;
+
+const WHISPER_MAX_TOKENS = 8192;
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const stripCodeFence = (value: string): string =>
+    value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+const stripWrappingQuotes = (value: string): string => {
+    let output = value.trim();
+    const pairs: Array<[string, string]> = [['"', '"'], ["'", "'"], ['“', '”'], ['「', '」']];
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const [left, right] of pairs) {
+            if (output.startsWith(left) && output.endsWith(right) && output.length >= left.length + right.length) {
+                output = output.slice(left.length, -right.length).trim();
+                changed = true;
+            }
+        }
+    }
+    return output;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const readWhisperText = (value: unknown): string | null => {
+    if (typeof value === 'string') return value;
+    if (!isRecord(value)) return null;
+    for (const key of ['content', 'text', 'message', 'reply']) {
+        const fieldValue = value[key];
+        if (typeof fieldValue === 'string') return fieldValue;
+    }
+    return null;
+};
+
+const cleanWhisperBubble = (value: string, prefixes: string[]): string => {
+    let output = stripWrappingQuotes(stripCodeFence(value));
+    for (const prefix of prefixes.filter(Boolean)) {
+        output = output.replace(new RegExp(`^\\s*${escapeRegExp(prefix)}\\s*[：:]\\s*`), '');
+    }
+    output = output.replace(/^\s*[-*•]\s*/, '');
+    return stripWrappingQuotes(output).trim();
+};
+
+const parseWhisperReplyBubbles = (raw: string, prefixes: string[]): string[] => {
+    const source = stripCodeFence(raw);
+    const candidates: string[] = [];
+    const arrayStart = source.indexOf('[');
+    const arrayEnd = source.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+        candidates.push(source.slice(arrayStart, arrayEnd + 1));
+    }
+    const objectStart = source.indexOf('{');
+    const objectEnd = source.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart) {
+        candidates.push(source.slice(objectStart, objectEnd + 1));
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const parsed: unknown = JSON.parse(candidate);
+            let items: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+            if (isRecord(parsed)) {
+                for (const key of ['messages', 'replies', 'output']) {
+                    if (Array.isArray(parsed[key])) {
+                        items = parsed[key] as unknown[];
+                        break;
+                    }
+                }
+            }
+            const bubbles = items
+                .map(item => readWhisperText(item))
+                .filter((item): item is string => Boolean(item?.trim()))
+                .map(item => cleanWhisperBubble(item, prefixes))
+                .filter(Boolean);
+            if (bubbles.length > 0) return bubbles;
+        } catch {
+            // Fall through to plain text splitting.
+        }
+    }
+
+    return stripWrappingQuotes(source)
+        .split(/\n+/)
+        .map(line => cleanWhisperBubble(line, prefixes))
+        .filter(Boolean);
+};
+
 const CrosstimeApp: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast, userProfile } = useOS();
 
@@ -47,6 +150,7 @@ const CrosstimeApp: React.FC = () => {
     const [room, setRoom] = useState<CrosstimeRoom | null>(null);
     const [messages, setMessages] = useState<CrosstimeMessage[]>([]);
     const [input, setInput] = useState('');
+    const [whisperInput, setWhisperInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [privateTarget, setPrivateTarget] = useState<CrosstimeParticipant | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,9 +176,59 @@ const CrosstimeApp: React.FC = () => {
         if (p.timeSlice !== 'trajectory' || !p.trajectoryNodeId) return undefined;
         return getTrajectoryNodes(p.charId).find(n => n.id === p.trajectoryNodeId);
     };
+    const getTimelineLabel = (p?: CrosstimeParticipant | null): string => {
+        if (!p) return '?';
+        if (p.timeSlice === 'current') return '现在';
+        const node = getNodeForParticipant(p);
+        if (node) return getTrajectorySliceLabel(node);
+        if (p.label.startsWith('相遇后 · ')) return p.label.replace('相遇后 · ', '世界线 · ');
+        if (/^\d+岁 · /.test(p.label)) return p.label.replace(/^\d+岁 · /, '相遇前 · ');
+        return p.label || (p.era === 'before_meeting' ? '相遇前' : '世界线');
+    };
+    const getTimelineDetail = (p?: CrosstimeParticipant | null): string => {
+        if (!p) return '';
+        if (p.timeSlice === 'current') return '完整记忆 · 认识你';
+        const node = getNodeForParticipant(p);
+        if (node) return getTrajectorySliceDetail(node);
+        return p.era === 'before_meeting' ? '不认识你' : '认识你';
+    };
+    const openWhisperTarget = (target: CrosstimeParticipant) => {
+        setPrivateTarget(target);
+        setWhisperInput('');
+    };
+    const closeWhisper = () => {
+        setPrivateTarget(null);
+        setWhisperInput('');
+    };
+    const selectedBaseCharId = participants[0]?.charId;
+    const selectedBaseChar = selectedBaseCharId
+        ? characters.find(c => c.id === selectedBaseCharId)
+        : null;
+    const isSliceAlreadySelected = (charId: string, slice: 'current' | TrajectoryNode): boolean => {
+        const sliceKey = slice === 'current' ? 'current' : `trajectory:${slice.id}`;
+        return participants.some(p => p.charId === charId && getParticipantSliceKey(p) === sliceKey);
+    };
+    const canAddMoreSlices = selectedBaseChar
+        ? !isSliceAlreadySelected(selectedBaseChar.id, 'current')
+            || getTrajectoryNodes(selectedBaseChar.id).some(node => !isSliceAlreadySelected(selectedBaseChar.id, node))
+        : true;
 
     // ── Setup: Add Participant ──
+    const openAddParticipant = () => {
+        if (selectedBaseChar) {
+            setPickedChar(selectedBaseChar);
+            setPickedCharNodes(getTrajectoryNodes(selectedBaseChar.id));
+            setModalStep('pick_slice');
+            return;
+        }
+        setModalStep('pick_char');
+    };
+
     const handlePickChar = (c: CharacterProfile) => {
+        if (selectedBaseCharId && c.id !== selectedBaseCharId) {
+            addToast('跨时空对话会围绕同一个角色展开', 'info');
+            return;
+        }
         setPickedChar(c);
         const nodes = getTrajectoryNodes(c.id);
         setPickedCharNodes(nodes);
@@ -83,6 +237,10 @@ const CrosstimeApp: React.FC = () => {
 
     const handlePickSlice = (slice: 'current' | TrajectoryNode) => {
         if (!pickedChar) return;
+        if (isSliceAlreadySelected(pickedChar.id, slice)) {
+            addToast('这条时间线已经在房间里了', 'info');
+            return;
+        }
         const p: CrosstimeParticipant = slice === 'current'
             ? {
                 id: safeUUID(),
@@ -96,7 +254,7 @@ const CrosstimeApp: React.FC = () => {
                 timeSlice: 'trajectory',
                 trajectoryNodeId: slice.id,
                 age: slice.age,
-                label: slice.era === 'after_meeting' ? '相遇后' : `${slice.age}岁`,
+                label: getTrajectorySliceLabel(slice),
                 era: slice.era,
             };
         setParticipants(prev => [...prev, p]);
@@ -110,15 +268,17 @@ const CrosstimeApp: React.FC = () => {
 
     // ── Start Room ──
     const handleStartRoom = () => {
-        if (participants.length < 2) { addToast('至少需要 2 个参与者', 'error'); return; }
+        if (participants.length < 2) { addToast('至少需要 2 条时间线', 'error'); return; }
         if (!apiConfig?.apiKey) { addToast('请先配置 API', 'error'); return; }
+        const uniqueCharIds = new Set(participants.map(p => p.charId));
+        if (uniqueCharIds.size > 1) {
+            addToast('请只保留同一个角色的不同时间线', 'error');
+            return;
+        }
 
         // Auto-generate room name
-        const names = [...new Set(participants.map(p => {
-            const c = characters.find(ch => ch.id === p.charId);
-            return c ? `${c.name}·${p.label}` : p.label;
-        }))];
-        const roomName = names.join(' × ');
+        const baseChar = characters.find(ch => ch.id === participants[0]?.charId);
+        const roomName = `${baseChar?.name || '角色'} · ${participants.map(p => getTimelineLabel(p)).join(' × ')}`;
 
         const newRoom: CrosstimeRoom = {
             id: safeUUID(),
@@ -142,13 +302,16 @@ const CrosstimeApp: React.FC = () => {
         setRoom(updated);
         saveCrosstimeRoom(updated);
         setPrivateTarget(null);
+        setWhisperInput('');
     };
 
     // ── Send Message ──
     const handleSend = async () => {
-        if (!room || !input.trim() || isTyping) return;
-        const text = input.trim();
-        setInput('');
+        const activeInput = privateTarget ? whisperInput : input;
+        if (!room || !activeInput.trim() || isTyping) return;
+        const text = activeInput.trim();
+        if (privateTarget) setWhisperInput('');
+        else setInput('');
 
         saveCrosstimeMessage({
             roomId: room.id,
@@ -166,7 +329,6 @@ const CrosstimeApp: React.FC = () => {
         if (privateTarget) {
             // 悄悄话 → 只触发目标角色单独回复
             const target = privateTarget;
-            setPrivateTarget(null);
             await triggerWhisperReply(room, target, text);
         } else {
             // 公开发言 → 触发导演
@@ -215,38 +377,39 @@ const CrosstimeApp: React.FC = () => {
                 body: JSON.stringify({
                     model: apiConfig.model,
                     messages: [
-                        { role: 'system', content: DREAMWEAVER_SYSTEM + '你就是这个角色本身。直接输出回应，不加引号。' },
+                        { role: 'system', content: DREAMWEAVER_SYSTEM + '\n你就是这个角色本身。按要求只输出悄悄话回复 JSON 数组，不解释规则，不加角色名前缀。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.85,
-                    max_tokens: 500,
+                    max_tokens: WHISPER_MAX_TOKENS,
                 }),
             });
 
             if (!response.ok) throw new Error('Whisper reply failed');
             const data = await safeResponseJson(response);
             let replyText = data.choices?.[0]?.message?.content || '';
+            if (data.choices?.[0]?.finish_reason === 'length') {
+                console.warn('[Crosstime] Whisper reply reached max token limit:', WHISPER_MAX_TOKENS);
+            }
 
             // Strip thinking tags if present
             const extracted = extractThinking(replyText);
             replyText = extracted.content.trim();
 
-            // Remove quotes if the model wraps the reply
-            if (replyText.startsWith('"') && replyText.endsWith('"')) {
-                replyText = replyText.slice(1, -1);
-            }
+            const replyBubbles = parseWhisperReplyBubbles(replyText, [displayName, char.name, target.label]);
 
-            if (replyText) {
+            for (const bubble of replyBubbles) {
                 saveCrosstimeMessage({
                     roomId: currentRoom.id,
                     participantId: target.id,
                     charId: target.charId,
                     role: 'assistant',
-                    content: replyText,
+                    content: bubble,
                     isPrivate: true,
                     privateTargetId: 'user',
                     timestamp: Date.now(),
                 });
+                await new Promise(resolve => setTimeout(resolve, 35));
             }
 
             setMessages(getCrosstimeMessages(currentRoom.id));
@@ -445,6 +608,7 @@ const CrosstimeApp: React.FC = () => {
         setMessages([]);
         setParticipants([]);
         setPrivateTarget(null);
+        setWhisperInput('');
     };
 
     // ── View History ──
@@ -479,6 +643,7 @@ const CrosstimeApp: React.FC = () => {
                 <div className="crosstime-chat-scroll">
                     {viewingMessages.map(m => {
                         if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return null;
+                        if (m.isPrivate) return null;
                         const p = viewingRoom.participants.find(pp => pp.id === m.participantId);
                         const char = p ? characters.find(c => c.id === p.charId) : null;
                         const isUser = m.role === 'user';
@@ -487,7 +652,7 @@ const CrosstimeApp: React.FC = () => {
                                 <img className={`crosstime-msg-avatar ${p?.timeSlice === 'trajectory' ? 'crosstime-msg-avatar--past' : ''}`}
                                      src={isUser ? userProfile.avatar : (char?.avatar || '')} alt="" />
                                 <div className="crosstime-msg-body">
-                                    <div className="crosstime-msg-name">{isUser ? userProfile.name : `${char?.name || '?'}·${p?.label || '?'}`}</div>
+                                    <div className="crosstime-msg-name">{isUser ? userProfile.name : getTimelineLabel(p)}</div>
                                     <div className="crosstime-msg-bubble">{m.content}</div>
                                 </div>
                             </div>
@@ -508,6 +673,13 @@ const CrosstimeApp: React.FC = () => {
     // ═══════════════════════════════
     if (view === 'room' && room) {
         const isInvisible = room.userMode === 'invisible';
+        const whisperTargetChar = privateTarget ? getCharForParticipant(privateTarget) : null;
+        const whisperMessages = privateTarget ? messages.filter(m =>
+            m.isPrivate && (
+                (m.role === 'user' && m.privateTargetId === privateTarget.id) ||
+                (m.role === 'assistant' && m.participantId === privateTarget.id && m.privateTargetId === 'user')
+            ),
+        ) : [];
         return (
             <div className="crosstime-app">
                 {/* Header */}
@@ -517,27 +689,32 @@ const CrosstimeApp: React.FC = () => {
                     </button>
                     <div className="crosstime-header-text">
                         <div className="crosstime-header-title">跨时空对话</div>
-                        <div className="crosstime-header-subtitle">Crosstime Chat</div>
+                        <div className="crosstime-header-subtitle crosstime-header-subtitle--script">Across the Worldlines</div>
                     </div>
                     <button className={`crosstime-header-mode-btn ${isInvisible ? 'crosstime-header-mode-btn--invisible' : ''}`} onClick={toggleMode}>
-                        {isInvisible ? '👁 隐身中' : '💬 在线'}
+                        {isInvisible ? '隐身中' : '现身中'}
                     </button>
                 </div>
 
-                {/* Participant bar */}
-                <div className="crosstime-participants">
-                    {room.participants.map(p => {
+                {/* Timeline bar */}
+                <div className="crosstime-timeline-rail">
+                    <div className="crosstime-timeline-track" />
+                    {room.participants.map((p, index) => {
                         const char = getCharForParticipant(p);
                         return (
-                            <div key={p.id}
-                                 className={`crosstime-participant-chip ${privateTarget?.id === p.id ? 'crosstime-participant-chip--active' : ''}`}
-                                 onClick={() => {
-                                     if (!isInvisible) setPrivateTarget(prev => prev?.id === p.id ? null : p);
-                                 }}>
-                                <img className={`crosstime-participant-avatar ${p.timeSlice === 'trajectory' ? 'crosstime-participant-avatar--past' : ''}`}
-                                     src={char?.avatar || ''} alt="" />
-                                <span className="crosstime-participant-label">{char?.name}<br/>{p.label}</span>
-                            </div>
+                            <button key={p.id}
+                                    type="button"
+                                    className={`crosstime-timeline-node ${privateTarget?.id === p.id ? 'crosstime-timeline-node--active' : ''}`}
+                                    onClick={() => !isInvisible && !isTyping && openWhisperTarget(p)}
+                                    disabled={isInvisible || isTyping}>
+                                <span className="crosstime-timeline-avatar-wrap">
+                                    <img className={`crosstime-timeline-avatar ${p.timeSlice === 'trajectory' ? 'crosstime-timeline-avatar--past' : ''}`}
+                                         src={char?.avatar || ''} alt="" />
+                                    <span className="crosstime-timeline-index">{index + 1}</span>
+                                </span>
+                                <span className="crosstime-timeline-label">{getTimelineLabel(p)}</span>
+                                <span className="crosstime-timeline-detail">{getTimelineDetail(p)}</span>
+                            </button>
                         );
                     })}
                 </div>
@@ -546,7 +723,7 @@ const CrosstimeApp: React.FC = () => {
                 {isInvisible && (
                     <div className="crosstime-invisible-banner">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                        你正在隐身旁观…
+                        你正在隐身，char 不能发现你的存在。
                     </div>
                 )}
 
@@ -555,6 +732,7 @@ const CrosstimeApp: React.FC = () => {
                     {messages.map(m => {
                         // Skip internal summary messages
                         if (m.participantId === CROSSTIME_SUMMARY_PARTICIPANT_ID) return null;
+                        if (m.isPrivate) return null;
                         const p = room.participants.find(pp => pp.id === m.participantId);
                         const char = p ? characters.find(c => c.id === p.charId) : null;
                         const isUser = m.role === 'user';
@@ -563,13 +741,13 @@ const CrosstimeApp: React.FC = () => {
                                 <img className={`crosstime-msg-avatar ${p?.timeSlice === 'trajectory' ? 'crosstime-msg-avatar--past' : ''}`}
                                      src={isUser ? userProfile.avatar : (char?.avatar || '')} alt="" />
                                 <div className="crosstime-msg-body">
-                                    <div className="crosstime-msg-name">{isUser ? userProfile.name : `${char?.name || '?'}·${p?.label || '?'}`}</div>
+                                    <div className="crosstime-msg-name">{isUser ? userProfile.name : getTimelineLabel(p)}</div>
                                     <div className="crosstime-msg-bubble">{m.content}</div>
                                 </div>
                             </div>
                         );
                     })}
-                    {isTyping && (
+                    {isTyping && !privateTarget && (
                         <div className="crosstime-typing">
                             <div className="crosstime-typing-dots"><span/><span/><span/></div>
                             对话生成中…
@@ -581,33 +759,97 @@ const CrosstimeApp: React.FC = () => {
                 {isInvisible ? (
                     <div className="crosstime-invisible-bar">
                         <button className="crosstime-invisible-btn" onClick={() => triggerDirector(room)} disabled={isTyping}>
-                            📡 推进对话
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M5 12h11" />
+                                <path d="m13 7 5 5-5 5" />
+                                <path d="M4 5.5c4.8-2 11.2-2 16 0" opacity="0.45" />
+                            </svg>
+                            推进对话
                         </button>
                         <button className="crosstime-invisible-btn crosstime-invisible-btn--appear" onClick={toggleMode}>
-                            👁 现身
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                                <circle cx="12" cy="12" r="2.5" />
+                            </svg>
+                            现身
                         </button>
                     </div>
                 ) : (
                     <div className="crosstime-bottom-bar">
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                            {privateTarget && (
-                                <div className="crosstime-private-hint">
-                                    悄悄对 {characters.find(c => c.id === privateTarget.charId)?.name}·{privateTarget.label} 说…
-                                    <span onClick={() => setPrivateTarget(null)} style={{ cursor: 'pointer', marginLeft: 6 }}>✕</span>
-                                </div>
-                            )}
                             <input className="crosstime-input"
-                                   placeholder={privateTarget ? '输入悄悄话…' : '说点什么…'}
+                                   placeholder="输入你想说的话"
                                    value={input} onChange={e => setInput(e.target.value)}
-                                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                                    disabled={isTyping} />
                         </div>
                         <button className="crosstime-send-btn" onClick={handleSend} disabled={isTyping || !input.trim()}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                         </button>
-                        <button className="crosstime-director-btn" onClick={() => triggerDirector(room)} disabled={isTyping} title="触发导演">
-                            ⚡
+                        <button className="crosstime-director-btn" onClick={() => triggerDirector(room)} disabled={isTyping} title="让角色继续对话">
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M5 12h11" />
+                                <path d="m13 7 5 5-5 5" />
+                            </svg>
                         </button>
+                    </div>
+                )}
+
+                {privateTarget && !isInvisible && (
+                    <div className="crosstime-whisper-overlay" onClick={closeWhisper}>
+                        <div className="crosstime-whisper-panel" onClick={e => e.stopPropagation()}>
+                            <div className="crosstime-whisper-header">
+                                <div>
+                                    <div className="crosstime-whisper-title">悄悄话</div>
+                                    <div className="crosstime-whisper-desc">这里只有你和这条时间线。</div>
+                                </div>
+                                <button className="crosstime-whisper-close" onClick={closeWhisper}>×</button>
+                            </div>
+
+                            <div className="crosstime-whisper-pair">
+                                <div className="crosstime-whisper-person">
+                                    <img src={userProfile.avatar} alt="" />
+                                    <span>{userProfile.name}</span>
+                                </div>
+                                <div className="crosstime-whisper-link" />
+                                <div className="crosstime-whisper-person">
+                                    <img className={privateTarget.timeSlice === 'trajectory' ? 'crosstime-timeline-avatar--past' : ''}
+                                         src={whisperTargetChar?.avatar || ''} alt="" />
+                                    <span>{getTimelineLabel(privateTarget)}</span>
+                                </div>
+                            </div>
+
+                            <div className="crosstime-whisper-log">
+                                {whisperMessages.length === 0 ? (
+                                    <div className="crosstime-whisper-empty">还没有悄悄话。</div>
+                                ) : whisperMessages.map(m => {
+                                    const isUserWhisper = m.role === 'user';
+                                    return (
+                                        <div key={m.id} className={`crosstime-whisper-msg ${isUserWhisper ? 'crosstime-whisper-msg--user' : ''}`}>
+                                            <div className="crosstime-whisper-msg-name">
+                                                {isUserWhisper ? userProfile.name : getTimelineLabel(privateTarget)}
+                                            </div>
+                                            <div className="crosstime-whisper-msg-bubble">{m.content}</div>
+                                        </div>
+                                    );
+                                })}
+                                {isTyping && (
+                                    <div className="crosstime-whisper-typing">正在回复悄悄话…</div>
+                                )}
+                            </div>
+
+                            <div className="crosstime-whisper-input-row">
+                                <input className="crosstime-whisper-input"
+                                       value={whisperInput}
+                                       onChange={e => setWhisperInput(e.target.value)}
+                                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                                       placeholder="写下只想让他听见的话"
+                                       disabled={isTyping} />
+                                <button className="crosstime-send-btn" onClick={handleSend} disabled={isTyping || !whisperInput.trim()}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>
@@ -625,14 +867,19 @@ const CrosstimeApp: React.FC = () => {
                 </button>
                 <div className="crosstime-header-text">
                     <div className="crosstime-header-title">跨时空对话</div>
-                    <div className="crosstime-header-subtitle">Crosstime Chat</div>
+                    <div className="crosstime-header-subtitle crosstime-header-subtitle--script">Across the Worldlines</div>
                 </div>
             </div>
 
             <div className="crosstime-setup-scroll">
-                <div className="crosstime-setup-intro">让不同时间的他们坐在一起，聊聊天。</div>
+                <div className="crosstime-setup-intro">选择多个不同时间线的他。</div>
 
-                <div className="crosstime-section-title">参与者</div>
+                <div className="crosstime-section-title">已选择的时间线</div>
+                {selectedBaseChar && (
+                    <div className="crosstime-locked-char-note">
+                        当前角色：{selectedBaseChar.name}。接下来只添加他的其他时间线。
+                    </div>
+                )}
                 <div className="crosstime-selected-list">
                     {participants.map(p => {
                         const char = getCharForParticipant(p);
@@ -641,8 +888,8 @@ const CrosstimeApp: React.FC = () => {
                                 <img src={char?.avatar || ''} alt=""
                                      style={p.timeSlice === 'trajectory' ? { filter: 'grayscale(0.3) sepia(0.15)' } : undefined} />
                                 <div className="crosstime-selected-item-info">
-                                    <div className="crosstime-selected-item-name">{char?.name || '?'}</div>
-                                    <div className="crosstime-selected-item-label">{p.label}{p.era === 'before_meeting' ? ' · 相遇前' : ''}</div>
+                                    <div className="crosstime-selected-item-name">{getTimelineLabel(p)}</div>
+                                    <div className="crosstime-selected-item-label">{char?.name || '?'} · {getTimelineDetail(p)}</div>
                                 </div>
                                 <button className="crosstime-selected-item-remove" onClick={() => removeParticipant(p.id)}>×</button>
                             </div>
@@ -651,8 +898,10 @@ const CrosstimeApp: React.FC = () => {
                 </div>
 
                 {participants.length < MAX_PARTICIPANTS && (
-                    <button className="crosstime-add-btn" onClick={() => setModalStep('pick_char')}>
-                        + 添加参与者
+                    <button className="crosstime-add-btn" onClick={openAddParticipant} disabled={!canAddMoreSlices}>
+                        {selectedBaseChar
+                            ? (canAddMoreSlices ? '+ 添加时间线' : '没有更多时间线')
+                            : '+ 添加时间线'}
                     </button>
                 )}
 
@@ -702,25 +951,41 @@ const CrosstimeApp: React.FC = () => {
             {modalStep === 'pick_slice' && pickedChar && (
                 <div className="crosstime-modal-overlay" onClick={() => setModalStep('none')}>
                     <div className="crosstime-modal" onClick={e => e.stopPropagation()}>
-                        <div className="crosstime-modal-title">选择{pickedChar.name}的时间版本</div>
+                        <div className="crosstime-modal-title">选择{pickedChar.name}的时间线</div>
                         <div className="crosstime-timeslice-list">
-                            <div className="crosstime-timeslice-option" onClick={() => handlePickSlice('current')}>
-                                <div className="crosstime-timeslice-label">现在的{pickedChar.name}</div>
-                                <div className="crosstime-timeslice-detail">完整记忆 · 认识你</div>
+                            <div
+                                className={`crosstime-timeslice-option ${isSliceAlreadySelected(pickedChar.id, 'current') ? 'crosstime-timeslice-option--disabled' : ''}`}
+                                onClick={() => !isSliceAlreadySelected(pickedChar.id, 'current') && handlePickSlice('current')}
+                            >
+                                <div className="crosstime-timeslice-label">现在</div>
+                                <div className="crosstime-timeslice-detail">
+                                    {pickedChar.name} · 完整记忆 · 认识你{isSliceAlreadySelected(pickedChar.id, 'current') ? ' · 已添加' : ''}
+                                </div>
                             </div>
-                            {pickedCharNodes.map(node => (
-                                <div key={node.id} className="crosstime-timeslice-option" onClick={() => handlePickSlice(node)}>
+                            {pickedCharNodes.map(node => {
+                                const isSelected = isSliceAlreadySelected(pickedChar.id, node);
+                                return (
+                                <div
+                                    key={node.id}
+                                    className={`crosstime-timeslice-option ${isSelected ? 'crosstime-timeslice-option--disabled' : ''}`}
+                                    onClick={() => !isSelected && handlePickSlice(node)}
+                                >
                                     <div className="crosstime-timeslice-label">
-                                        {node.era === 'after_meeting' ? '相遇后' : `${node.age}岁`} · {node.title}
+                                        {getTrajectorySliceLabel(node)}
                                     </div>
                                     <div className="crosstime-timeslice-detail">
-                                        {node.keywords.join('、')}{node.era === 'before_meeting' ? ' · 不认识你' : ''}
+                                        {getTrajectorySliceDetail(node)}{node.keywords.length ? ` · ${node.keywords.join('、')}` : ''}{isSelected ? ' · 已添加' : ''}
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                             {pickedCharNodes.length === 0 && (
                                 <div className="crosstime-empty">
-                                    <div className="crosstime-empty-desc">这个角色还没有轨迹节点，只能选择「现在」版本。</div>
+                                    <div className="crosstime-empty-desc">
+                                        {isSliceAlreadySelected(pickedChar.id, 'current')
+                                            ? '这个角色还没有轨迹节点。先去轨迹档案生成时间线，再回来让不同时间线的他对话。'
+                                            : '这个角色还没有轨迹节点，只能先选择「现在」版本。'}
+                                    </div>
                                 </div>
                             )}
                         </div>

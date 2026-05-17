@@ -9,7 +9,7 @@ import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig
 import { safeTimeoutSignal } from '../utils/safeTimeout';
 import { findCharacterByAnyId,getCharacterIdentityIds,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
 import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
-import { AppID,type CharacterProfile } from '../types';
+import { AppID,type CharacterProfile,type VectorMemory } from '../types';
 import MemoryBrowser from '../components/cognitive/MemoryBrowser';
 
 /* Recovered comment */
@@ -159,6 +159,47 @@ function formatGraphPreviewId(value: string): string {
     return value.length > 12 ? `${value.slice(0, 12)}...` : value;
 }
 
+function looksLikeRawMemoryId(value: string): boolean {
+    return /^(v?mem|memory|l1)[-_:]/i.test(value.trim());
+}
+
+function cleanGraphText(value?: string, rawId?: string): string {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return '';
+    if (rawId && (normalized === rawId || normalized === formatGraphPreviewId(rawId))) return '';
+    if (looksLikeRawMemoryId(normalized)) return '';
+    if (normalized === '这两段回忆之间已经建立了关联。') return '';
+    if (normalized === '这枚认知还没有留下正文。') return '';
+    return normalized;
+}
+
+function trimGraphSnippet(value?: string, limit = 32): string {
+    const text = cleanGraphText(value);
+    if (!text) return '';
+    return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function resolveGraphMemoryTitle(memory: VectorMemory | undefined, rawId: string, fallback: string): string {
+    return cleanGraphText(memory?.title, rawId) || fallback;
+}
+
+function buildGraphRelationSummary(
+    relation: GraphRelationPreview,
+    sourceMemory: VectorMemory | undefined,
+    targetMemory: VectorMemory | undefined,
+): string {
+    const explicit = cleanGraphText(relation.summary);
+    if (explicit) return explicit;
+
+    const sourceSnippet = trimGraphSnippet(sourceMemory?.emotionalJourney || sourceMemory?.content || sourceMemory?.title, 24);
+    const targetSnippet = trimGraphSnippet(targetMemory?.emotionalJourney || targetMemory?.content || targetMemory?.title, 24);
+    if (sourceSnippet && targetSnippet) {
+        return `“${sourceSnippet}”和“${targetSnippet}”被识别为彼此呼应。`;
+    }
+
+    return '这两段回忆已经被识别为一条心意连接，正文还在等待同步。';
+}
+
 function normalizeGraphRelation(item: any, index: number): GraphRelationPreview {
     const sourceId = readStringField(item, ['sourceMemoryId', 'source_memory_id', 'sourceId', 'source_id', 'fromId', 'from_id', 'memoryIdA', 'memory_id_a']);
     const targetId = readStringField(item, ['targetMemoryId', 'target_memory_id', 'targetId', 'target_id', 'toId', 'to_id', 'memoryIdB', 'memory_id_b']);
@@ -167,10 +208,10 @@ function normalizeGraphRelation(item: any, index: number): GraphRelationPreview 
         charId: readStringField(item, ['charId', 'char_id', 'characterId', 'character_id', 'charInstanceId', 'char_instance_id', 'templateCharId', 'template_char_id']),
         sourceId,
         targetId,
-        sourceTitle: readStringField(item, ['sourceTitle', 'source_title', 'fromTitle', 'from_title'], formatGraphPreviewId(sourceId)),
-        targetTitle: readStringField(item, ['targetTitle', 'target_title', 'toTitle', 'to_title'], formatGraphPreviewId(targetId)),
+        sourceTitle: readStringField(item, ['sourceTitle', 'source_title', 'fromTitle', 'from_title']),
+        targetTitle: readStringField(item, ['targetTitle', 'target_title', 'toTitle', 'to_title']),
         relationType: readStringField(item, ['relationType', 'relation_type', 'type', 'kind', 'label'], '心意关联'),
-        summary: readStringField(item, ['summary', 'reason', 'description', 'evidence', 'note'], '这两段回忆之间已经建立了关联。'),
+        summary: readStringField(item, ['summary', 'reason', 'description', 'evidence', 'note']),
         strength: readNumberField(item, ['strength', 'weight', 'score', 'confidence']),
         createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
     };
@@ -180,12 +221,64 @@ function normalizeGraphMemory(item: any, index: number): GraphMemoryPreview {
     return {
         id: readStringField(item, ['id', 'memoryId', 'memory_id'], `l1-${index}`),
         charId: readStringField(item, ['charId', 'char_id', 'characterId', 'character_id', 'charInstanceId', 'char_instance_id', 'templateCharId', 'template_char_id']),
-        title: readStringField(item, ['title', 'name'], '未命名认知'),
-        content: readStringField(item, ['content', 'summary', 'text'], '这枚认知还没有留下正文。'),
+        title: readStringField(item, ['title', 'name']),
+        content: readStringField(item, ['content', 'summary', 'text']),
         emotionalJourney: readStringField(item, ['emotionalJourney', 'emotional_journey', 'emotion'], ''),
         sourceMemoryIds: readStringArrayField(item, ['sourceMemoryIds', 'source_memory_ids', 'memoryIds', 'memory_ids']),
         createdAt: readNumberField(item, ['createdAt', 'created_at', 'updatedAt', 'updated_at']),
         importance: readNumberField(item, ['importance', 'score']),
+    };
+}
+
+function enrichGraphInsights(
+    relations: GraphRelationPreview[],
+    l1Memories: GraphMemoryPreview[],
+    memoryById: Map<string, VectorMemory>,
+): GraphInsightState {
+    return {
+        relations: relations.map((relation, index) => {
+            const sourceMemory = memoryById.get(relation.sourceId);
+            const targetMemory = memoryById.get(relation.targetId);
+            const inferredCharId = relation.charId || sourceMemory?.charId || targetMemory?.charId || '';
+            return {
+                ...relation,
+                charId: inferredCharId,
+                sourceTitle: cleanGraphText(relation.sourceTitle, relation.sourceId)
+                    || resolveGraphMemoryTitle(sourceMemory, relation.sourceId, `第 ${index + 1} 组回忆 A`),
+                targetTitle: cleanGraphText(relation.targetTitle, relation.targetId)
+                    || resolveGraphMemoryTitle(targetMemory, relation.targetId, `第 ${index + 1} 组回忆 B`),
+                summary: buildGraphRelationSummary(relation, sourceMemory, targetMemory),
+            };
+        }),
+        l1Memories: l1Memories.map((memory, index) => {
+            const localMemory = memoryById.get(memory.id);
+            const sourceMemoryIds = memory.sourceMemoryIds.length
+                ? memory.sourceMemoryIds
+                : (Array.isArray(localMemory?.sourceMemoryIds) ? localMemory.sourceMemoryIds : []);
+            const sourceMemories = sourceMemoryIds
+                .map(id => memoryById.get(id))
+                .filter((item): item is VectorMemory => Boolean(item));
+            const inferredCharId = memory.charId
+                || localMemory?.charId
+                || sourceMemories.find(item => item.charId)?.charId
+                || '';
+            const linkedCount = sourceMemoryIds.length;
+            return {
+                ...memory,
+                charId: inferredCharId,
+                title: cleanGraphText(memory.title, memory.id)
+                    || cleanGraphText(localMemory?.title, memory.id)
+                    || `凝结认知 ${index + 1}`,
+                content: cleanGraphText(memory.content)
+                    || cleanGraphText(localMemory?.content)
+                    || cleanGraphText(localMemory?.emotionalJourney)
+                    || (linkedCount > 0
+                        ? `由 ${linkedCount} 段回忆凝结而来，正文还在等待同步。`
+                        : '这枚认知已经生成，正文还在等待同步。'),
+                emotionalJourney: cleanGraphText(memory.emotionalJourney) || cleanGraphText(localMemory?.emotionalJourney),
+                sourceMemoryIds,
+            };
+        }),
     };
 }
 
@@ -391,7 +484,7 @@ const CognitiveNetworkApp: React.FC = () => {
         const relations = graphInsights?.relations || [];
         if (!selectedGraphIdentityIds) return relations.slice(0, GRAPH_PREVIEW_LIMIT);
         return relations
-            .filter(relation => !relation.charId || selectedGraphIdentityIds.has(relation.charId))
+            .filter(relation => relation.charId && selectedGraphIdentityIds.has(relation.charId))
             .slice(0, GRAPH_PREVIEW_LIMIT);
     }, [graphInsights, selectedGraphIdentityIds]);
 
@@ -399,7 +492,7 @@ const CognitiveNetworkApp: React.FC = () => {
         const memories = graphInsights?.l1Memories || [];
         if (!selectedGraphIdentityIds) return memories.slice(0, GRAPH_PREVIEW_LIMIT);
         return memories
-            .filter(memory => !memory.charId || selectedGraphIdentityIds.has(memory.charId))
+            .filter(memory => memory.charId && selectedGraphIdentityIds.has(memory.charId))
             .slice(0, GRAPH_PREVIEW_LIMIT);
     }, [graphInsights, selectedGraphIdentityIds]);
 
@@ -452,7 +545,13 @@ const CognitiveNetworkApp: React.FC = () => {
             const l1Memories = Array.isArray(data.l1Memories)
                 ? data.l1Memories.map(normalizeGraphMemory)
                 : [];
-            setGraphInsights({ relations, l1Memories });
+            const memoryIds = Array.from(new Set([
+                ...relations.flatMap(relation => [relation.sourceId, relation.targetId]),
+                ...l1Memories.flatMap(memory => [memory.id, ...memory.sourceMemoryIds]),
+            ].filter(Boolean)));
+            const localMemories = await DB.getVectorMemoriesByIds(memoryIds).catch(() => [] as VectorMemory[]);
+            const memoryById = new Map(localMemories.map(memory => [memory.id, memory]));
+            setGraphInsights(enrichGraphInsights(relations, l1Memories, memoryById));
         } catch (e) {
             console.warn('加载认知图谱失败', e);
             setGraphInsightsFailed(true);
@@ -999,6 +1098,7 @@ const CognitiveNetworkApp: React.FC = () => {
         openApp(AppID.Chat, {
             targetCharId: charId,
             targetMessageId: messageId,
+            targetRequestId: `${charId}:${messageId}:${Date.now()}`,
         });
     }, [openApp, setActiveCharacterId]);
 
@@ -1363,7 +1463,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                             </p>
                                         </div>
                                         <div className="shrink-0 rounded-[10px] border border-[#e5d08f]/16 bg-[#0d0c11]/28 px-2.5 py-2 text-right shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]">
-                                            <div className="text-[9px] text-white/28 tracking-[0.16em]">VISIBLE</div>
+                                            <div className="text-[9px] text-white/28 tracking-[0.16em]">已显现</div>
                                             <div className="mt-1 text-[18px] leading-none font-bold text-[#fff1bd]" style={{ fontFamily: "Georgia, serif" }}>
                                                 {graphInsightsLoading ? '...' : visibleGraphRelations.length + visibleGraphMemories.length}
                                             </div>
@@ -1380,7 +1480,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                         <div className="rounded-[12px] border border-white/[0.055] bg-white/[0.035] p-3">
                                             <div className="flex items-center justify-between gap-3">
                                                 <p className="text-[10px] font-semibold tracking-[0.18em] text-[#e5d08f]/80">心意连接</p>
-                                                <span className="text-[9px] text-white/30">{visibleGraphRelations.length} PREVIEW</span>
+                                                <span className="text-[9px] text-white/30">{visibleGraphRelations.length} 条</span>
                                             </div>
                                             <div className="mt-2 space-y-2">
                                                 {graphInsightsLoading ? (
@@ -1419,7 +1519,7 @@ const CognitiveNetworkApp: React.FC = () => {
                                         <div className="rounded-[12px] border border-white/[0.055] bg-white/[0.035] p-3">
                                             <div className="flex items-center justify-between gap-3">
                                                 <p className="text-[10px] font-semibold tracking-[0.18em] text-[#e5d08f]/80">凝结认知</p>
-                                                <span className="text-[9px] text-white/30">{visibleGraphMemories.length} PREVIEW</span>
+                                                <span className="text-[9px] text-white/30">{visibleGraphMemories.length} 条</span>
                                             </div>
                                             <div className="mt-2 space-y-2">
                                                 {graphInsightsLoading ? (

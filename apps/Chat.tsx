@@ -578,7 +578,10 @@ const Chat: React.FC = () => {
 
         if ((!targetCharId && !Number.isFinite(targetMessageId)) || (!targetCharId && targetMessageId <= 0)) return;
 
-        const targetKey = `${targetCharId || activeCharacterId || ''}:${Number.isFinite(targetMessageId) ? targetMessageId : ''}`;
+        const targetRequestId = typeof appParams?.targetRequestId === 'string'
+            ? appParams.targetRequestId
+            : '';
+        const targetKey = `${targetCharId || activeCharacterId || ''}:${Number.isFinite(targetMessageId) ? targetMessageId : ''}:${targetRequestId}`;
         if (consumedTargetRef.current === targetKey) return;
 
         if (targetCharId && !characters.some(candidate => candidate.id === targetCharId)) {
@@ -639,6 +642,7 @@ const Chat: React.FC = () => {
         addToast,
         appParams?.targetCharId,
         appParams?.targetMessageId,
+        appParams?.targetRequestId,
         characters,
         isDataLoaded,
         reloadMessages,
@@ -712,7 +716,7 @@ const Chat: React.FC = () => {
                 setInjectPlaybackContext(JSON.parse(localStorage.getItem(`chat_inject_playback_context_${activeCharacterId}`) || 'false'));
             } catch { setInjectPlaybackContext(false); }
         }
-    }, [activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, reloadMessages]);
+    }, [activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, appParams?.targetRequestId, reloadMessages]);
 
     useEffect(() => {
         if (activeCharacterId) {
@@ -730,7 +734,7 @@ const Chat: React.FC = () => {
 
             reloadMessages(visibleCountRef.current);
         }
-    }, [lifeStreamVisibleInChat, activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, reloadMessages]);
+    }, [lifeStreamVisibleInChat, activeCharacterId, appParams?.targetCharId, appParams?.targetMessageId, appParams?.targetRequestId, reloadMessages]);
 
     // Load all messages when history-manager modal opens
     useEffect(() => {
@@ -794,8 +798,11 @@ const Chat: React.FC = () => {
 
     useLayoutEffect(() => {
         if (!scrollRef.current || selectionMode) return;
-        if (pendingTargetScrollRef.current || highlightedMessageId) return;
         const currentLastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        if (pendingTargetScrollRef.current || highlightedMessageId) {
+            lastMsgIdRef.current = currentLastId;
+            return;
+        }
         // Only auto-scroll when a new message is appended (ID changes),
         // not when loading older history or updating existing messages in-place
         if (currentLastId !== lastMsgIdRef.current) {

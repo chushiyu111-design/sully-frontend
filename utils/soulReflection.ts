@@ -35,7 +35,11 @@ function buildReflectionPrompt(input: SoulReflectionInput): string {
         return `${sender}: ${m.content.substring(0, 100)}`;
     }).join('\n');
 
-    const persona = (char.systemPrompt || char.description || '').substring(0, 1500);
+    const persona = [
+        char.systemPrompt ? `【角色人设】\n${char.systemPrompt}` : '',
+        char.description ? `【用户备注/爱称】\n${char.description}` : '',
+        char.worldview ? `【世界观/关系设定】\n${char.worldview}` : '',
+    ].filter(Boolean).join('\n\n') || '（无）';
 
     return `你现在是${char.name}灵魂最深处的回音。不是外人，不是治疗师——是他自己。
 

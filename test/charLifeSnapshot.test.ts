@@ -62,13 +62,15 @@ describe('charLifeSnapshot helpers', () => {
         expect(sanitizePlaceSeed('静安寺 889 广场')).toBeUndefined();
     });
 
-    it('keeps day snapshot nodes within 3-6 entries and only uses soft place seeds', () => {
+    it('keeps complete generated day snapshot nodes without synthesizing extra nodes', () => {
         const snapshot = sanitizeDaySnapshot(
             {
                 dayTone: '今天会慢一点。',
                 baseRhythm: '上午散，傍晚再收回来。',
                 planNodes: [
                     {
+                        startTime: '10:00',
+                        endTime: '10:40',
                         timeHint: '上午',
                         place: '星巴克臻选门店',
                         mode: 'loose',
@@ -94,9 +96,13 @@ describe('charLifeSnapshot helpers', () => {
             getLocalDateInfo('Asia/Shanghai', Date.UTC(2026, 3, 6, 2, 0, 0)),
         );
 
-        expect(snapshot.planNodes.length).toBeGreaterThanOrEqual(3);
-        expect(snapshot.planNodes.length).toBeLessThanOrEqual(6);
-        expect(snapshot.planNodes.every(node => ['住处', '工作地点', '散步路线'].includes(node.place))).toBe(true);
+        expect(snapshot.planNodes).toHaveLength(1);
+        expect(snapshot.planNodes[0]).toMatchObject({
+            startTime: '10:00',
+            endTime: '10:40',
+            place: '常去咖啡店',
+            plan: '进去躲一会儿雨',
+        });
     });
 
     it('getCurrentPlanNode returns the closest node for the current hour', () => {
@@ -337,7 +343,7 @@ describe('charLifeSnapshot helpers', () => {
 
         expect(prompt.userPrompt).toContain('loose 节点轻微偏掉');
         expect(prompt.userPrompt).toContain('不要把输出写成天气播报');
-        expect(prompt.userPrompt).toContain('今日原定生活快照');
+        expect(prompt.userPrompt).toContain('今日原定行程表');
     });
 
     it('produces stable fingerprints and detects context changes', () => {
@@ -367,7 +373,7 @@ describe('charLifeSnapshot helpers', () => {
         expect(sanitizePlaceSeed('星巴克臻选门店')).toBe('常去咖啡店');
     });
 
-    it('respects nodeCountHint for day snapshot node count', () => {
+    it('does not synthesize day snapshot nodes from empty input', () => {
         const lowNodeProfile: CityProfile = {
             homeCity: '上海',
             timezone: 'Asia/Shanghai',
@@ -394,8 +400,7 @@ describe('charLifeSnapshot helpers', () => {
         };
 
         const snapshot = sanitizeDaySnapshot({}, lowNodeProfile, dateInfo);
-        expect(snapshot.planNodes.length).toBeGreaterThanOrEqual(1);
-        expect(snapshot.planNodes.length).toBeLessThanOrEqual(3);
+        expect(snapshot.planNodes).toHaveLength(0);
     });
 
     it('produces haze drift hint for foggy weather', () => {

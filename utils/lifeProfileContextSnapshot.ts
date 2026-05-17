@@ -72,9 +72,9 @@ export async function buildLifeProfileContextSnapshot(
     return {
         charId: char.id,
         charName: char.name,
-        charSystemPrompt: (char.systemPrompt || '').slice(0, 3000),
-        charPersonality: (char.description || '').slice(0, 600),
-        worldview: (char.worldview || '').slice(0, 1800) || undefined,
+        charSystemPrompt: char.systemPrompt || '',
+        charPersonality: char.description || '',
+        worldview: char.worldview || undefined,
         mountedWorldbooksDigest: buildMountedWorldbooksDigest(char.mountedWorldbooks),
         coreMemoryDigest: buildCoreMemoryDigest(char, topMemory, { maxLength: 2200 }),
         cityOverride: char.cityOverride?.trim() || undefined,

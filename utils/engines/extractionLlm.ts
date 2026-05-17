@@ -11,6 +11,8 @@ export interface ExtractResult {
     reason?: string;
 }
 
+const VECTOR_MEMORY_EXTRACT_MAX_TOKENS = 65536;
+
 /** Dual-layer prompt returned by buildExtractionPrompt */
 export interface ExtractionPrompt {
     /** System message: memory archive jailbreak + framing */
@@ -217,7 +219,7 @@ export async function callLLM(
         }
     };
 
-    const first = await doCall(userMsg, 4000);
+    const first = await doCall(userMsg, VECTOR_MEMORY_EXTRACT_MAX_TOKENS);
     console.log(`🧠 [VectorExtract] First attempt: ${first.content.length} chars, truncated=${first.truncated}`);
     let results = parseContent(first.content, 'first');
 
@@ -231,7 +233,7 @@ export async function callLLM(
                 /content 必须精简，不超过 \d+ 字！emotionalJourney 不超过 \d+ 字！/,
                 'content 不超过 80 字！emotionalJourney 不超过 20 字！',
             );
-        const retry = await doCall(retryUser, 6000);
+        const retry = await doCall(retryUser, VECTOR_MEMORY_EXTRACT_MAX_TOKENS);
         console.log(`🧠 [VectorExtract] Retry: ${retry.content.length} chars, truncated=${retry.truncated}`);
         results = parseContent(retry.content, 'retry');
 

@@ -36,6 +36,20 @@
   font-display: swap;
 }
 
+/* --- Serif Font: 方正FW筑紫A老明朝 简 (Today Schedule) --- */
+@font-face {
+  font-family: 'ScheduleOldMincho';
+  src: url('/fonts/fz-fw-zhuzi-a-laomingchao-jian-d.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-schedule-serif {
+  font-family: 'ScheduleOldMincho', 'Songti SC', 'Noto Serif SC', SimSun, serif;
+  font-synthesis: none;
+}
+
 /* ==========================================
    Custom Theme (migrated from CDN inline config)
    Tailwind v4 CSS-first configuration

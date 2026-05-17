@@ -14,6 +14,7 @@ import { extractJsonTyped } from './safeApi';
 // ─── Configuration ──────────────────────────────────────────
 
 const EXTRACT_TIMEOUT_MS = 20000; // 20s — cloud models like Gemini can take 10-15s cold start
+const EVENT_EXTRACT_MAX_TOKENS = 65536;
 
 // Module-level concurrency lock
 let extracting = false;
@@ -139,7 +140,7 @@ async function extract(
                     model: apiConfig.model,
                     messages: [{ role: 'user', content: prompt }],
                     temperature: 0.1,
-                    max_tokens: 150,
+                    max_tokens: EVENT_EXTRACT_MAX_TOKENS,
                 }),
                 signal: controller.signal,
             });

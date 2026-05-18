@@ -909,12 +909,14 @@
     position: relative;
     z-index: 1;
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 4px 20px 96px;
+    padding: 4px 20px calc(112px + var(--safe-bottom, 0px));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
 }
 
 .theater-worldlines-new-ticket,
@@ -951,11 +953,11 @@
 
 .theater-worldlines-new-ticket {
     width: 100%;
-    min-height: 104px;
+    min-height: 92px;
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 18px 104px 18px 72px;
+    gap: 12px;
+    padding: 15px 86px 15px 68px;
     overflow: hidden;
     cursor: pointer;
     border: 1px solid rgba(191, 234, 240, 0.78);
@@ -1034,15 +1036,15 @@
 .theater-worldlines-new-ticket .theater-worldlines-ticket-stub {
     position: absolute;
     inset: 0 0 0 auto;
-    width: 94px;
+    width: 78px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: rgba(233, 71, 120, 0.62);
-    font-size: 8px;
+    font-size: 7px;
     font-weight: 900;
-    letter-spacing: 2px;
-    padding: 0 12px;
+    letter-spacing: 1.4px;
+    padding: 0 8px;
     border-left: 1px dashed rgba(233, 71, 120, 0.24);
     background:
         radial-gradient(circle at -1px 50%, rgba(233, 71, 120, 0.18) 0 1.3px, transparent 1.9px) left 7px / 8px 13px repeat-y,
@@ -1069,8 +1071,8 @@
 }
 
 .theater-worldlines-new-icon {
-    width: 46px;
-    height: 46px;
+    width: 42px;
+    height: 42px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1087,8 +1089,10 @@
 }
 
 .theater-worldlines-new-copy {
+    flex: 1 1 auto;
     min-width: 0;
-    padding-right: 92px;
+    max-width: 100%;
+    padding-right: 0;
     text-align: left;
 }
 
@@ -1097,6 +1101,10 @@
     font-size: 15px;
     font-weight: 800;
     letter-spacing: 0.4px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .theater-worldlines-new-sub {
@@ -1104,7 +1112,10 @@
     color: rgba(55, 40, 63, 0.42);
     font-size: 8px;
     font-weight: 800;
-    letter-spacing: 3.2px;
+    letter-spacing: 2.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .theater-worldlines-divider {
@@ -1131,7 +1142,7 @@
     display: flex;
     align-items: stretch;
     gap: 0;
-    min-height: 104px;
+    min-height: 96px;
     padding: 0;
     overflow: hidden;
     background:
@@ -1251,7 +1262,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    padding: 18px 10px 18px 72px;
+    padding: 15px 8px 15px 70px;
     color: inherit;
     -webkit-tap-highlight-color: transparent;
 }
@@ -1362,7 +1373,7 @@
     position: relative;
     z-index: 2;
     align-self: stretch;
-    width: 62px;
+    width: 56px;
     min-height: 100%;
     height: auto;
     margin: 0;

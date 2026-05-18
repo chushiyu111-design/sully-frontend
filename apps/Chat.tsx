@@ -1826,6 +1826,9 @@ const Chat: React.FC = () => {
             : todayScheduleItems.length > 0
                 ? '原行程'
                 : '待同步';
+    const forceShowThinking = import.meta.env.MODE === 'staging'
+        || (typeof window !== 'undefined' && window.location.hostname === 'beta.sully-frontend.pages.dev');
+    const showThinkingInChat = forceShowThinking || char.showThinking !== false;
 
     return (
         <div
@@ -1948,7 +1951,8 @@ const Chat: React.FC = () => {
                         addToast('自定义方案已保存', 'success');
                     }
                 }}
-                showThinking={import.meta.env.MODE === 'staging' || char.showThinking !== false}
+                showThinking={showThinkingInChat}
+                showThinkingLocked={forceShowThinking}
                 onToggleShowThinking={() => updateCharacter(char.id, { showThinking: char.showThinking === false ? true : false })}
             />
 
@@ -2092,7 +2096,7 @@ const Chat: React.FC = () => {
                                 innerVoice={isLastAssistant ? (char.moodState as any)?.innerVoice : undefined}
                                 statusCardData={isLastAssistant && (char.statusBarMode === 'creative' || char.statusBarMode === 'custom' || char.statusBarMode === 'freeform') ? char.lastStatusCard : undefined}
                                 onRetryInnerVoice={isLastAssistant ? retryMindSnapshot : undefined}
-                                showThinking={import.meta.env.MODE === 'staging' || char.showThinking !== false}
+                                showThinking={showThinkingInChat}
                             />
                         </div>
                     );

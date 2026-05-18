@@ -106,6 +106,7 @@ interface ChatModalsProps {
     onSaveCustomTemplate?: (template: CustomTemplateSelection) => void;
     // Thinking Chain
     showThinking?: boolean;
+    showThinkingLocked?: boolean;
     onToggleShowThinking?: () => void;
 }
 
@@ -136,7 +137,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     injectPlaybackContext, onToggleInjectPlaybackContext,
     statusBarMode, onStatusBarModeChange,
     customStatusTemplates, onSaveCustomTemplate,
-    showThinking, onToggleShowThinking,
+    showThinking, showThinkingLocked, onToggleShowThinking,
 }) => {
     const { openApp } = useOS();
     const bgInputRef = useRef<HTMLInputElement>(null);
@@ -245,14 +246,20 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
                     {/* Thinking Chain Toggle */}
                     <div className="pt-2 border-t border-slate-100">
-                        <div className="flex justify-between items-center cursor-pointer" onClick={onToggleShowThinking}>
+                        <div
+                            className={`flex justify-between items-center ${showThinkingLocked ? 'cursor-default' : 'cursor-pointer'}`}
+                            onClick={showThinkingLocked ? undefined : onToggleShowThinking}
+                        >
                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">思考链可见</label>
                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${showThinking ? 'bg-primary' : 'bg-slate-200'}`}>
                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${showThinking ? 'translate-x-4' : ''}`}></div>
                             </div>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                            开启后，支持思考的模型（DeepSeek-R1, Qwen3 等）的推理过程将显示在气泡中的可折叠区域内。
+                            {showThinkingLocked
+                                ? 'Beta 测试环境已强制开启，支持思考的模型会在气泡中显示可折叠推理过程。'
+                                : '开启后，支持思考的模型（DeepSeek-R1, Qwen3 等）的推理过程将显示在气泡中的可折叠区域内。'
+                            }
                         </p>
                     </div>
 

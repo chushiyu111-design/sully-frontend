@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     clearReadyWorldlineCharId,
-    get520CountdownText,
+    getDateWorldlineIntroLines,
     getReadyWorldlineCharId,
     isDateWorldlineCompleted,
     markDateWorldlineCompleted,
@@ -12,6 +12,8 @@ type OrbStage = 'intro' | 'ready' | 'launch';
 
 interface DateWorldlineOrbProps {
     charId: string;
+    charName: string;
+    userName: string;
     isBusy?: boolean;
     onStartDiscussion: () => void | Promise<void>;
     onLaunch: () => void;
@@ -23,18 +25,35 @@ const LAUNCH_LINE_DELAY_MS = 360;
 
 const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
     charId,
+    charName,
+    userName,
     isBusy = false,
     onStartDiscussion,
     onLaunch,
 }) => {
+    const [currentDate, setCurrentDate] = useState(() => new Date());
     const [visible, setVisible] = useState(false);
     const [bubbleOpen, setBubbleOpen] = useState(false);
     const [stage, setStage] = useState<OrbStage>('intro');
     const [visibleLineCount, setVisibleLineCount] = useState(0);
-    const countdownText = useMemo(() => get520CountdownText(), []);
+
+    useEffect(() => {
+        const nextMidnight = new Date(
+            currentDate.getFullYear(),
+            currentDate.getMonth(),
+            currentDate.getDate() + 1,
+        );
+        const timer = window.setTimeout(
+            () => setCurrentDate(new Date()),
+            Math.max(1000, nextMidnight.getTime() - currentDate.getTime() + 1000),
+        );
+
+        return () => window.clearTimeout(timer);
+    }, [currentDate]);
 
     useEffect(() => {
         let timer: number | undefined;
+        let openTimer: number | undefined;
         const readyCharId = getReadyWorldlineCharId();
 
         if (readyCharId === charId) {
@@ -44,14 +63,14 @@ const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
             return;
         }
 
-        if (!isDateWorldlineCompleted()) {
+        if (!isDateWorldlineCompleted(undefined, currentDate)) {
             setVisible(false);
             setStage('intro');
             setBubbleOpen(false);
             setVisibleLineCount(0);
             timer = window.setTimeout(() => {
                 setVisible(true);
-                window.setTimeout(() => setBubbleOpen(true), 720);
+                openTimer = window.setTimeout(() => setBubbleOpen(true), 720);
             }, INTRO_DELAY_MS);
         } else {
             setVisible(false);
@@ -61,21 +80,21 @@ const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
 
         return () => {
             if (timer) window.clearTimeout(timer);
+            if (openTimer) window.clearTimeout(openTimer);
         };
-    }, [charId]);
+    }, [charId, currentDate]);
+
+    const introLines = useMemo(() => getDateWorldlineIntroLines({
+        now: currentDate,
+        charName,
+        userName,
+    }), [charName, currentDate, userName]);
 
     const lines = useMemo(() => (
         stage === 'launch'
             ? ['吱醒了。', '商量好了吗？', '那就出发吧。']
-            : [
-                '吱吱吱探头。',
-                `${countdownText}。`,
-                '小情侣怎么能只隔着屏幕聊天呀。',
-                '吱偷偷开了一条新的约会世界线哦。',
-                '不能每天住在这个糯米鸡里面，年轻人，要多出去走走！',
-                '你们快商量商量要去哪约会吧，讨论好了戳我！zzzzz',
-            ]
-    ), [countdownText, stage]);
+            : introLines
+    ), [introLines, stage]);
 
     useEffect(() => {
         if (!bubbleOpen) {
@@ -110,7 +129,7 @@ const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
             return;
         }
 
-        markDateWorldlineCompleted();
+        markDateWorldlineCompleted(undefined, currentDate);
         setReadyWorldlineCharId(charId);
         setStage('ready');
         setBubbleOpen(false);
@@ -206,8 +225,8 @@ const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
                     <div className="space-y-2" aria-live="polite">
                         {visibleLines.map((line, index) => (
                             <p
-                                key={`${stage}-${line}`}
-                                className="date-worldline-line w-fit max-w-full rounded-[16px] bg-white/86 px-3 py-2 shadow-[0_6px_18px_rgba(126,88,104,0.08)]"
+                                key={`${stage}-${index}-${line}`}
+                                className="date-worldline-line w-fit max-w-full whitespace-pre-line rounded-[16px] bg-white/86 px-3 py-2 shadow-[0_6px_18px_rgba(126,88,104,0.08)]"
                                 style={{ animationDelay: `${Math.min(index * 28, 120)}ms` }}
                             >
                                 {line}
@@ -231,7 +250,7 @@ const DateWorldlineOrb: React.FC<DateWorldlineOrbProps> = ({
 
             <button
                 type="button"
-                aria-label="吱吱吱的约会小光球"
+                aria-label="吱吱吱的约会入口"
                 onClick={handleOrbClick}
                 className={`date-worldline-orb-button ${orbModeClass} pointer-events-auto relative h-[54px] w-[54px] rounded-full border border-white/90 bg-[radial-gradient(circle_at_32%_28%,#ffffff_0%,#fff9c9_18%,#ffd1e0_44%,#9de2ff_76%,#bba4ff_100%)]`}
             >

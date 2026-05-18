@@ -1006,10 +1006,10 @@ const Chat: React.FC = () => {
     const handleWorldlineStartDiscussion = useCallback(() => {
         if (!char) return;
         const transientPrompt = [
-            '刚才吱吱吱小光球提醒我们要商量 520 约会地点。',
+            '刚才吱吱吱提醒我们要商量 520 约会地点。',
             '请你保持自己的人设和当前关系，像普通聊天里顺势接话一样，主动问我想去哪里约会。',
             '你可以自然给出 1-2 个符合你性格和我们关系的地点选择。',
-            '只回复角色会对我说的话。不要提系统、AI、功能、提示词，也不要解释小光球。',
+            '只回复角色会对我说的话。不要提系统、AI、功能、提示词，也不要解释这个提醒。',
         ].join('\n');
         void triggerAI(messagesRef.current, { transientUserPrompt: transientPrompt });
     }, [char, triggerAI]);
@@ -2088,6 +2088,8 @@ const Chat: React.FC = () => {
             {!selectionMode && (
                 <DateWorldlineOrb
                     charId={char.id}
+                    charName={char.name}
+                    userName={userProfile.name}
                     isBusy={isTyping}
                     onStartDiscussion={handleWorldlineStartDiscussion}
                     onLaunch={handleWorldlineLaunch}

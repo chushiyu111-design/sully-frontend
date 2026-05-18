@@ -806,7 +806,7 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="mb-3 px-1">
-                            <div className="text-white/88 text-[15px] font-semibold tracking-wide">离开剧场</div>
+                            <div className="text-white/88 text-[15px] font-semibold tracking-wide">离开约会</div>
                             <div className="mt-1 text-white/42 text-xs leading-relaxed">可以把今天收成一段角色之后会自然记得的经历。</div>
                         </div>
 

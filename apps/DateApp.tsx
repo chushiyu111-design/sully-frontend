@@ -1028,7 +1028,7 @@ ${exitPromptContent}
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''}${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。规则：
+                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸互动格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''}${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。规则：
 • 只有${char.name}的「台词/说的话」用${dateTranslateSourceLang}写，并用 <翻译><原文>[emotion] ${dateTranslateSourceLang}台词</原文><译文>${dateTranslateTargetLang}译文</译文></翻译> 包裹。
 • 叙述、动作描写、心理活动、环境描写 → 保持中文不变，不用 <翻译> 标签。
 • 译文不需要 [emotion] 标签。
@@ -1106,7 +1106,7 @@ ${exitPromptContent}
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。只有${char.name}的台词用${dateTranslateSourceLang}写并用 <翻译><原文>...<译文>...</翻译> 包裹；叙述/动作/心理描写保持中文不变。]` : ''})` }
+                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸互动格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。只有${char.name}的台词用${dateTranslateSourceLang}写并用 <翻译><原文>...<译文>...</翻译> 包裹；叙述/动作/心理描写保持中文不变。]` : ''})` }
                 ],
                 temperature: Math.min((char.dateTemperature ?? 0.85) + 0.05, 2.0),
                 max_tokens: 8192,

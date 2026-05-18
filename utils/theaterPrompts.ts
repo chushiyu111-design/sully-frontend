@@ -131,7 +131,7 @@ export function buildTheaterSceneInjection(
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
     return `
-### 【约会剧场 · 导演指令】
+### 【约会 · 导演指令】
 你正在和对方在 **${location.name}** 度过 ${timeLabel.icon}${timeLabel.zh} 的时光。
 
 **当前场景氛围**：
@@ -422,7 +422,7 @@ export function buildTransitionSceneInjection(
     const timeLabel = TIME_SLOT_LABELS[timeSlot];
 
     return `
-### 【约会剧场 · 转场指令】
+### 【约会 · 转场指令】
 你们正在从 **${fromLocation.name}** 出发，前往 **${toLocation.name}**。
 当前时段：${timeLabel.icon}${timeLabel.zh}
 

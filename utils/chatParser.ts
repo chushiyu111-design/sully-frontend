@@ -254,7 +254,7 @@ export function parseBilingual(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Translation XML Utilities — 见面/剧场翻译标签工具
+//  Translation XML Utilities — 见面/约会翻译标签工具
 //  Philosophy: 先救再杀 — rescue content first, strip tags second.
 // ═══════════════════════════════════════════════════════════════════════
 

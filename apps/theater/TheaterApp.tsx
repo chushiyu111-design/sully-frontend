@@ -1,5 +1,5 @@
 /**
- * TheaterApp — 520 约会剧场 主入口
+ * TheaterApp — 520 约会 主入口
  * 模式流转: select → map → session
  * 导演引擎 (副API) + 角色扮演 (主API) 双API架构
  */
@@ -215,7 +215,7 @@ const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
         const label = s.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
         return `### 已总结片段 ${i + 1}（${label}）\n${s.content}`;
     }).join('\n\n');
-    return `\n\n### 【本次剧场的已总结上下文】\n以下是本次剧场中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
+    return `\n\n### 【本次约会的已总结上下文】\n以下是本次约会中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
 };
 
 const TheaterApp: React.FC = () => {
@@ -609,8 +609,8 @@ const TheaterApp: React.FC = () => {
                 }));
 
                 const transitionHint = transitionEvent
-                    ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸剧场格式。)`
-                    : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸剧场格式。)`;
+                    ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸互动格式。)`
+                    : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸互动格式。)`;
 
                 const resp = await fetch(
                     `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
@@ -937,8 +937,8 @@ const TheaterApp: React.FC = () => {
             }));
 
             let eventNote = directorEvent
-                ? `\n\n(System: 导演事件已触发 [${directorEvent.sceneType}]。你必须在回复中自然地对这个事件做出反应。严格遵守沉浸剧场格式。)`
-                : `\n\n(System: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头。)`;
+                ? `\n\n(System: 导演事件已触发 [${directorEvent.sceneType}]。你必须在回复中自然地对这个事件做出反应。严格遵守沉浸互动格式。)`
+                : `\n\n(System: 严格遵守沉浸互动格式。每一行都要以 [emotion] 开头。)`;
             if (directorHint) {
                 eventNote += `\n<director_note>${directorHint}</director_note>`;
             }
@@ -1086,7 +1086,7 @@ const TheaterApp: React.FC = () => {
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
             const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
-            if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的剧场内容', 'info'); return null; }
+            if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的约会内容', 'info'); return null; }
             const targetMessages = summaryType === 'auto'
                 ? selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId)
                 : sessionMessages;
@@ -1101,7 +1101,7 @@ const TheaterApp: React.FC = () => {
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把520约会记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.45,
@@ -1143,7 +1143,7 @@ const TheaterApp: React.FC = () => {
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
             const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
-            if (sessionMessages.length === 0) { addToast('还没有可总结的剧场内容', 'info'); return null; }
+            if (sessionMessages.length === 0) { addToast('还没有可总结的约会内容', 'info'); return null; }
 
             const sessionStartMsgId = sessionMessages[0].id;
             const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
@@ -1186,7 +1186,7 @@ const TheaterApp: React.FC = () => {
 
             if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
 
-            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次 520 约会剧场写最终隐藏记忆。
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次 520 约会写最终隐藏记忆。
 请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的记忆。
 
 当前时间: ${new Date().toLocaleString()}
@@ -1207,7 +1207,7 @@ ${exitPromptContent}
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场的所有记录整理成一份完整的最终总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把520约会的所有记录整理成一份完整的最终总结。只输出总结正文。' },
                     { role: 'user', content: fullPrompt },
                     ],
                     temperature: 0.45,
@@ -2086,7 +2086,7 @@ ${exitPromptContent}
 
                 {/* Summary Preview Modal */}
                 {activeSummaryDraft && (
-                    <Modal isOpen={!!activeSummaryDraft} title="剧场总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
+                    <Modal isOpen={!!activeSummaryDraft} title="约会总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
                         <>
                             <button onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">复制</button>
                             <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
@@ -2137,7 +2137,7 @@ ${exitPromptContent}
                     </>
                 }>
                     <div className="space-y-3">
-                        <p className="text-xs leading-relaxed text-slate-400">只影响剧场总结生成，不会改动立绘、场景等其他设置。</p>
+                        <p className="text-xs leading-relaxed text-slate-400">只影响约会总结生成，不会改动立绘、场景等其他设置。</p>
                         <textarea value={summaryPromptDraft} onChange={e => setSummaryPromptDraft(e.target.value)} rows={9} className="w-full resize-y rounded-2xl border border-slate-100 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-700 outline-none focus:border-emerald-300/60 focus:ring-2 focus:ring-emerald-100" />
                     </div>
                 </Modal>

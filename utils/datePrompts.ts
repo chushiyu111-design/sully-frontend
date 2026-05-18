@@ -13,7 +13,7 @@ import { RealtimeContextManager } from './realtimeContext';
 // ====== Date/Theater Time Context ======
 
 /**
- * 构建约会/剧场用的精确时间注入区块。
+ * 构建见面/约会用的精确时间注入区块。
  * 纯同步、零 API 调用（只读本地时钟），不影响性能。
  */
 export const buildDateTimeBlock = (): string => {
@@ -652,7 +652,7 @@ export const buildTheaterScene = (
     const outputTuning = buildDateOutputTuning(wordCount, writingStyle);
 
     return `
-### 「沉浸剧场」 — 面对面互动协议
+### 「沉浸约会」 — 面对面互动协议
 你正在与${userName}面对面。此刻你们就在彼此面前。
 
 ${perspectivePrompt}

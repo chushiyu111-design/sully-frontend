@@ -1,5 +1,5 @@
 /**
- * TheaterSettings — 剧场设置面板
+ * TheaterSettings — 约会设置面板
  * 上传角色立绘 & 用户头像（复用 DateApp 的 sprites 数据）
  * 直接拖拽/双指缩放调整立绘位置（优雅交互）
  */

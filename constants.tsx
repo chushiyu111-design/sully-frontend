@@ -119,7 +119,6 @@ export const APP_CONFIGS: AppConfig[] = [
 
 const HIDDEN_LAUNCHER_APPS = new Set<AppID>([
   AppID.Crosstime,
-  AppID.Theater,
   AppID.Trajectory,
   AppID.LoveShow,
 ]);

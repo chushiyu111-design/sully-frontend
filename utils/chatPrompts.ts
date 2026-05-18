@@ -46,11 +46,11 @@ ${buildBlocks(dateBridges)}
 
     if (theaterBridges.length > 0) {
         result += `
-### 【约会剧场记忆】
-以下内容是你（${char.name}）和${userProfile.name}之前在约会剧场中经历过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
+### 【约会记忆】
+以下内容是你（${char.name}）和${userProfile.name}之前在约会中经历过的事情。现在你们已经回到线上聊天，你正在手机 App 里和${userProfile.name}发消息。
 请把这些当作你们一起经历过的沉浸式约会场景：那些地点、对话、事件和情绪都是你真实的记忆。
 这些内容不是当前正在发生的现场动作，也不是当前聊天窗口里的新消息；现在的交流媒介已经切回线上文字聊天。
-不要说"我看到了总结/记录"，不要复述系统说明，不要继续使用剧场模式的 [emotion] 格式。
+不要说"我看到了总结/记录"，不要复述系统说明，不要继续使用约会模式的 [emotion] 格式。
 
 ${buildBlocks(theaterBridges)}
 `;

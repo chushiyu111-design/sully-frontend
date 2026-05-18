@@ -1,5 +1,5 @@
 /**
- * TheaterFloatingBall — 520约会剧场独立悬浮球
+ * TheaterFloatingBall — 520约会独立悬浮球
  * 粉色系主题，不与见面的 SummaryFloatingBall 耦合。
  * 实装：场景切换、设置入口、氛围 BGM
  * 占位：记忆印记、心情读取、取景框

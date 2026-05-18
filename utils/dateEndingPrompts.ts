@@ -56,7 +56,7 @@ export function formatSessionContextForEnding(
     const endingRecords = messages
         .filter(m => m.metadata?.isEndingCeremony || m.metadata?.isMetaLetter);
 
-    const lines: string[] = ['<ending_context>', '【520 约会剧场】', '这是一次 520 主题的面对面约会收尾。重点不是制造占有感，而是让对方被认真看见、被平等回应。'];
+    const lines: string[] = ['<ending_context>', '【520 约会】', '这是一次 520 主题的面对面约会收尾。重点不是制造占有感，而是让对方被认真看见、被平等回应。'];
 
     const worldlineMeta: string[] = [];
     if (options.timelineLabel) worldlineMeta.push(`- 世界线: ${options.timelineLabel}`);
@@ -143,7 +143,7 @@ ${sessionContext}
    - 像是当下忽然决定的，而不是提前排练好的桥段。
 
 ### 输出格式
-使用标准沉浸剧场格式。每行以 [emotion] 开头。台词用双引号。
+使用标准沉浸互动格式。每行以 [emotion] 开头。台词用双引号。
 不要写旁白或系统说明。直接以角色的反应开始。
 目标 80-150 字。`;
 }
@@ -181,7 +181,7 @@ ${sessionContext}
 结尾留一点没说完的余地。
 
 ### 输出格式
-使用标准沉浸剧场格式。每行以 [emotion] 开头。台词用双引号。
+使用标准沉浸互动格式。每行以 [emotion] 开头。台词用双引号。
 不要写旁白或系统说明。直接以尾声场景开始。
 目标 80-120 字。克制，留白，情绪落在具体细节里。`;
 }

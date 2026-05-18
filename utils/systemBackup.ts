@@ -12,7 +12,7 @@ import { safeTimeoutSignal } from './safeTimeout';
 interface JSZipLike {
     folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
     file: (...args: any[]) => any;
-    generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
+    generateAsync: (options: { type: 'blob'; compression?: string; compressionOptions?: { level: number } }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
 }
 
 export type SystemBackupMode = 'text_only' | 'media_only' | 'full';
@@ -46,6 +46,9 @@ const MUSIC_PROFILE_BG_KEY = 'custom_bg';
 const MUSIC_CUSTOM_SKIN_DB_NAME = 'music_custom_skins';
 const MUSIC_CUSTOM_SKIN_STORE = 'skins';
 const SULLYOS_UPSTREAM_COMPAT_ASSET_ID = 'sullyos_upstream_compat_payload';
+const SYSTEM_BACKUP_THEME_ASSET_IDS = new Set(['wallpaper', 'launcherWidgetImage', 'custom_font_data']);
+const SYSTEM_BACKUP_THEME_ASSET_PREFIXES = ['widget_', 'deco_'];
+const SYSTEM_BACKUP_APPEARANCE_ASSET_PREFIXES = ['icon_', 'appearance_preset_'];
 
 const SULLYOS_UPSTREAM_COMPAT_KEYS = [
     'songs',
@@ -72,10 +75,10 @@ const SULLYOS_UPSTREAM_MEDIA_COMPAT_KEYS = new Set([
 
 // ─── Pure Data Processing Helpers ───────────────────────────────────────
 
-/** Strip all base64 image data URIs recursively */
+/** Strip all data URIs recursively */
 function stripBase64(obj: any): any {
     if (typeof obj === 'string') {
-        if (obj.startsWith('data:image')) return '';
+        if (obj.startsWith('data:')) return '';
         return obj;
     }
     if (Array.isArray(obj)) {
@@ -93,38 +96,99 @@ function stripBase64(obj: any): any {
     return obj;
 }
 
-/** Extract base64 images into ZIP assets folder, replacing them with path references */
+function isBase64DataUrl(value: string): boolean {
+    return /^data:[^,]+;base64,/i.test(value);
+}
+
+function dataUrlToAssetExtension(dataUrl: string): string {
+    const mime = getDataUrlMimeType(dataUrl)?.toLowerCase() || '';
+    if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+    if (mime === 'image/png') return 'png';
+    if (mime === 'image/gif') return 'gif';
+    if (mime === 'image/webp') return 'webp';
+    if (mime === 'image/svg+xml') return 'svg';
+    if (mime === 'audio/mpeg' || mime === 'audio/mp3') return 'mp3';
+    if (mime === 'audio/webm') return 'webm';
+    if (mime === 'audio/wav' || mime === 'audio/wave') return 'wav';
+    if (mime === 'audio/ogg') return 'ogg';
+    if (mime === 'font/ttf' || mime === 'application/x-font-ttf') return 'ttf';
+    if (mime === 'font/otf' || mime === 'application/x-font-otf') return 'otf';
+    if (mime === 'font/woff' || mime === 'application/font-woff') return 'woff';
+    if (mime === 'font/woff2' || mime === 'application/font-woff2') return 'woff2';
+    return 'bin';
+}
+
+function assetExtensionToMime(ext: string): string {
+    switch (ext.toLowerCase()) {
+        case 'jpg':
+        case 'jpeg':
+            return 'image/jpeg';
+        case 'png':
+            return 'image/png';
+        case 'gif':
+            return 'image/gif';
+        case 'webp':
+            return 'image/webp';
+        case 'svg':
+            return 'image/svg+xml';
+        case 'mp3':
+            return 'audio/mpeg';
+        case 'webm':
+            return 'audio/webm';
+        case 'wav':
+            return 'audio/wav';
+        case 'ogg':
+            return 'audio/ogg';
+        case 'ttf':
+            return 'font/ttf';
+        case 'otf':
+            return 'font/otf';
+        case 'woff':
+            return 'font/woff';
+        case 'woff2':
+            return 'font/woff2';
+        default:
+            return 'application/octet-stream';
+    }
+}
+
+/** Extract base64 data URIs into ZIP assets folder, replacing them with path references */
 function processObjectForZip(
     obj: any,
     assetsFolder: { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null,
-    assetCounter: { count: number }
+    assetCounter: { count: number },
+    assetRegistry: Map<string, string>
 ): any {
+    if (typeof obj === 'string' && isBase64DataUrl(obj)) {
+        try {
+            const commaIndex = obj.indexOf(',');
+            const base64Data = obj.slice(commaIndex + 1);
+            const existing = assetRegistry.get(base64Data);
+            if (existing) return existing;
+
+            const ext = dataUrlToAssetExtension(obj);
+            const filename = `asset_${Date.now()}_${assetCounter.count++}.${ext}`;
+            assetsFolder?.file(filename, base64Data, { base64: true });
+            const reference = `assets/${filename}`;
+            assetRegistry.set(base64Data, reference);
+            return reference;
+        } catch (e) {
+            console.warn("Failed to process asset", e);
+            return obj;
+        }
+    }
+
     if (obj === null || typeof obj !== 'object') return obj;
 
     if (Array.isArray(obj)) {
-        return obj.map(item => processObjectForZip(item, assetsFolder, assetCounter));
+        return obj.map(item => processObjectForZip(item, assetsFolder, assetCounter, assetRegistry));
     }
 
     const newObj: any = {};
     for (const key in obj) {
         if (Object.prototype.hasOwnProperty.call(obj, key)) {
             let value = obj[key];
-            if (typeof value === 'string' && value.startsWith('data:image/')) {
-                try {
-                    const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                    if (extMatch) {
-                        const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
-                        const filename = `asset_${Date.now()}_${assetCounter.count++}.${ext}`;
-                        const base64Data = value.split(',')[1];
-                        assetsFolder?.file(filename, base64Data, { base64: true });
-                        value = `assets/${filename}`;
-                    }
-                } catch (e) {
-                    console.warn("Failed to process asset", e);
-                }
-            } else {
-                value = processObjectForZip(value, assetsFolder, assetCounter);
-            }
+            value = processObjectForZip(value, assetsFolder, assetCounter, assetRegistry);
             newObj[key] = value;
         }
     }
@@ -196,6 +260,79 @@ async function serializeVoiceAudioForBackup(items: any[]): Promise<SerializedVoi
 }
 
 const MEMORY_RECORD_AUDIO_STATUSES = new Set(['monologue_ready', 'music_ready', 'mastering', 'ready']);
+const MEMORY_RECORD_MASTER_AUDIO_MODES = new Set(['char_to_user', 'dream_mix']);
+const MEMORY_RECORD_MUSIC_FALLBACK_MARKERS = [
+    '最终压制使用兜底拼接',
+    '已改用音乐分轨播放',
+];
+
+function addBackupAudioId(ids: Set<string>, id?: string): void {
+    const trimmed = id?.trim();
+    if (trimmed) ids.add(trimmed);
+}
+
+function usesMusicFallback(record: MemoryRecord): boolean {
+    return MEMORY_RECORD_MASTER_AUDIO_MODES.has(record.mode)
+        && Boolean(record.musicAudioId)
+        && Boolean(record.error && MEMORY_RECORD_MUSIC_FALLBACK_MARKERS.some(marker => record.error?.includes(marker)));
+}
+
+function getNeededMemoryRecordAudioIds(record: MemoryRecord): Set<string> {
+    const ids = new Set<string>();
+    if (!record || typeof record !== 'object') return ids;
+
+    if (usesMusicFallback(record)) {
+        addBackupAudioId(ids, record.musicAudioId);
+        return ids;
+    }
+
+    if (record.status === 'ready' && record.masterAudioId) {
+        addBackupAudioId(ids, record.masterAudioId);
+        return ids;
+    }
+
+    addBackupAudioId(ids, record.monologueAudioId);
+    addBackupAudioId(ids, record.musicAudioId);
+    addBackupAudioId(ids, record.masterAudioId);
+
+    return ids;
+}
+
+function collectNeededMemoryRecordAudioIds(records: any[]): Set<string> {
+    const ids = new Set<string>();
+    if (!Array.isArray(records)) return ids;
+
+    for (const record of records) {
+        for (const id of getNeededMemoryRecordAudioIds(record as MemoryRecord)) {
+            ids.add(id);
+        }
+    }
+
+    return ids;
+}
+
+function filterMemoryRecordAudioForBackup(items: any[], records: any[]): any[] {
+    if (!Array.isArray(items) || items.length === 0) return [];
+
+    const neededAudioIds = collectNeededMemoryRecordAudioIds(records);
+    if (neededAudioIds.size === 0) return [];
+
+    return items.filter(item => typeof item?.id === 'string' && neededAudioIds.has(item.id));
+}
+
+function removePrunedMemoryRecordAudioReferences(records: any[], keptAudioIds: Set<string>): any[] {
+    if (!Array.isArray(records)) return records;
+
+    return records.map((item: MemoryRecord) => {
+        if (!item || typeof item !== 'object') return item;
+
+        const next: MemoryRecord = { ...item };
+        if (next.monologueAudioId && !keptAudioIds.has(next.monologueAudioId)) next.monologueAudioId = undefined;
+        if (next.musicAudioId && !keptAudioIds.has(next.musicAudioId)) next.musicAudioId = undefined;
+        if (next.masterAudioId && !keptAudioIds.has(next.masterAudioId)) next.masterAudioId = undefined;
+        return next;
+    });
+}
 
 function stripMemoryRecordAudioReferences(items: any[]): any[] {
     if (!Array.isArray(items)) return items;
@@ -343,6 +480,21 @@ async function collectAssetBackedUpstreamFields(mode: SystemBackupMode): Promise
         customIcons: Object.keys(customIcons).length > 0 ? customIcons : undefined,
         appearancePresets: appearancePresets.length > 0 ? appearancePresets : undefined,
     };
+}
+
+function isThemeAssetId(id: string): boolean {
+    return SYSTEM_BACKUP_THEME_ASSET_IDS.has(id)
+        || SYSTEM_BACKUP_THEME_ASSET_PREFIXES.some(prefix => id.startsWith(prefix));
+}
+
+function isAppearanceAssetId(id: string): boolean {
+    return SYSTEM_BACKUP_APPEARANCE_ASSET_PREFIXES.some(prefix => id.startsWith(prefix));
+}
+
+function shouldSkipRawAssetInBackup(asset: any): boolean {
+    const id = asset?.id;
+    return typeof id === 'string'
+        && (id === SULLYOS_UPSTREAM_COMPAT_ASSET_ID || isThemeAssetId(id) || isAppearanceAssetId(id));
 }
 
 function stripUndefinedFields<T extends Record<string, any>>(value: T): T {
@@ -724,10 +876,7 @@ async function restoreAssetsFromZip(obj: any, zip: JSZipLike | null): Promise<an
                     if (fileInZip) {
                         const base64 = await (fileInZip as any).async("base64");
                         const ext = filename.split('.').pop() || 'png';
-                        let mime = 'image/png';
-                        if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
-                        if (ext === 'gif') mime = 'image/gif';
-                        if (ext === 'webp') mime = 'image/webp';
+                        const mime = assetExtensionToMime(ext);
 
                         value = `data:${mime};base64,${base64}`;
                     }
@@ -910,6 +1059,43 @@ function shouldIncludeMemoryRecordAudio(mode: SystemBackupMode, options: SystemB
     return mode !== 'text_only' && options.includeMemoryRecordAudio !== false;
 }
 
+async function restoreThemeAssetsFromBackup(theme?: OSTheme): Promise<void> {
+    const existingAssets = await DB.getAllAssets();
+    if (Array.isArray(existingAssets)) {
+        for (const asset of existingAssets) {
+            if (asset?.id && isThemeAssetId(asset.id)) {
+                await DB.deleteAsset(asset.id);
+            }
+        }
+    }
+
+    if (!theme) return;
+
+    if (typeof theme.wallpaper === 'string' && theme.wallpaper.startsWith('data:')) {
+        await DB.saveAsset('wallpaper', theme.wallpaper);
+    }
+
+    if (theme.launcherWidgets) {
+        for (const [slot, value] of Object.entries(theme.launcherWidgets)) {
+            if (typeof value === 'string' && value.startsWith('data:')) {
+                await DB.saveAsset(`widget_${slot}`, value);
+            }
+        }
+    }
+
+    if (theme.desktopDecorations) {
+        for (const deco of theme.desktopDecorations) {
+            if (deco?.type === 'image' && typeof deco.content === 'string' && deco.content.startsWith('data:')) {
+                await DB.saveAsset(`deco_${deco.id}`, deco.content);
+            }
+        }
+    }
+
+    if (typeof theme.customFont === 'string' && theme.customFont.startsWith('data:')) {
+        await DB.saveAsset('custom_font_data', theme.customFont);
+    }
+}
+
 function getStoresToProcess(mode: SystemBackupMode, options: SystemBackupOptions = {}): string[] {
     let stores: string[];
     if (mode === 'full') stores = [...ALL_STORES];
@@ -991,8 +1177,9 @@ export async function exportSystemData(
     const zip = new JSZip();
     const assetsFolder = zip.folder("assets");
     const assetCounter = { count: 0 };
+    const assetRegistry = new Map<string, string>();
 
-    const processObject = (obj: any) => processObjectForZip(obj, assetsFolder, assetCounter);
+    const processObject = (obj: any) => processObjectForZip(obj, assetsFolder, assetCounter, assetRegistry);
 
     const storesToProcess = getStoresToProcess(mode, options);
     const includeMemoryRecordAudio = shouldIncludeMemoryRecordAudio(mode, options);
@@ -1042,6 +1229,7 @@ export async function exportSystemData(
         if (backupData.theme) backupData.theme = processObject(backupData.theme);
         if (backupData.customIcons) backupData.customIcons = processObject(backupData.customIcons);
         if (backupData.appearancePresets) backupData.appearancePresets = processObject(backupData.appearancePresets);
+        if (backupData.musicAssets) backupData.musicAssets = processObject(backupData.musicAssets);
     } else {
         if (backupData.socialAppData?.userProfile) backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
         if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
@@ -1079,13 +1267,22 @@ export async function exportSystemData(
             }
 
             if (storeName === 'memory_record_audio') {
-                processedData = await serializeMemoryRecordAudioForBackup(rawData);
-                backupData.memoryRecordAudio = processedData;
+                const exportableAudio = filterMemoryRecordAudioForBackup(rawData, backupData.memoryRecords || []);
+                processedData = processObject(await serializeMemoryRecordAudioForBackup(exportableAudio));
+                const keptAudioIds = new Set(
+                    processedData
+                        .map((item: any) => item?.id)
+                        .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
+                );
+                if (backupData.memoryRecords) {
+                    backupData.memoryRecords = removePrunedMemoryRecordAudioReferences(backupData.memoryRecords, keptAudioIds);
+                }
+                backupData.memoryRecordAudio = processedData.length > 0 ? processedData : undefined;
                 continue;
             }
 
             if (storeName === 'voice_audio') {
-                processedData = await serializeVoiceAudioForBackup(rawData);
+                processedData = processObject(await serializeVoiceAudioForBackup(rawData));
                 backupData.voiceAudio = processedData;
                 continue;
             }
@@ -1115,7 +1312,11 @@ export async function exportSystemData(
                 continue;
             }
 
-            processedData = processObject(rawData);
+            processedData = processObject(
+                storeName === 'assets' && Array.isArray(rawData)
+                    ? rawData.filter((asset: any) => !shouldSkipRawAssetInBackup(asset))
+                    : rawData,
+            );
             if (storeName === 'memory_records' && !includeMemoryRecordAudio) {
                 processedData = stripMemoryRecordAudioReferences(processedData);
             }
@@ -1204,7 +1405,11 @@ export async function exportSystemData(
 
     zip.file("data.json", JSON.stringify(backupData));
 
-    const content = await zip.generateAsync({ type: "blob" }, (metadata: { percent: number }) => {
+    const content = await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+    }, (metadata: { percent: number }) => {
         if (Math.random() > 0.8) {
             onProgress(`压缩中 ${metadata.percent.toFixed(0)}%...`, 95);
         }
@@ -1283,6 +1488,7 @@ export async function importSystemData(
 
     await DB.importFullData(data);
     await saveSullyOsCompatPayload(data);
+    await restoreThemeAssetsFromBackup(data.theme);
     await restoreAssetBackedUpstreamFields(data);
 
     if (data.musicAssets) {

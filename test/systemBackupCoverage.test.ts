@@ -67,6 +67,19 @@ async function readBackupData(blob: Blob): Promise<FullBackupData> {
     return JSON.parse(await dataFile.async('string')) as FullBackupData;
 }
 
+async function readBackupJson(blob: Blob): Promise<{ json: string; data: FullBackupData; assetEntries: string[] }> {
+    const zip = await JSZip.loadAsync(blob);
+    const dataFile = zip.file('data.json');
+    if (!dataFile) throw new Error('missing data.json');
+    const json = await dataFile.async('string');
+    const files = (zip as any).files || {};
+    return {
+        json,
+        data: JSON.parse(json) as FullBackupData,
+        assetEntries: Object.keys(files).filter(name => name.startsWith('assets/') && !files[name].dir),
+    };
+}
+
 function resetIndexedDb() {
     Object.defineProperty(globalThis, 'indexedDB', { value: new IDBFactory(), configurable: true });
     Object.defineProperty(globalThis, 'IDBKeyRange', { value: IDBKeyRange, configurable: true });
@@ -242,7 +255,7 @@ describe('system backup coverage', () => {
         expect(data.version).toBe(3);
         expect(data.characters?.[0].ttsVoiceId).toBe('voice-clone-123');
         expect(data.voiceAudio?.[0].msgId).toBe('call_1_0');
-        expect(data.voiceAudio?.[0].dataUrl).toContain('data:audio/webm');
+        expect(data.voiceAudio?.[0].dataUrl).toMatch(/^assets\/.*\.webm$/);
         expect(data.extraLocalStorageConfig?.os_sub_api_config).toBe('{"model":"flash"}');
         expect(data.extraLocalStorageConfig?.character_refine_prompts).toBe('["soft"]');
         expect(data.extraLocalStorageConfig?.os_tts_presets).toBe('[{"name":"voice"}]');
@@ -306,7 +319,7 @@ describe('system backup coverage', () => {
         });
 
         const fullData = await readBackupData(await exportSystemData('full', makeStateSnapshot(), noopProgress));
-        expect(fullData.memoryRecordAudio?.[0].dataUrl).toContain('data:audio/mpeg');
+        expect(fullData.memoryRecordAudio?.[0].dataUrl).toMatch(/^assets\/.*\.mp3$/);
         expect(fullData.memoryRecords?.[0].masterAudioId).toBe('mrec-cloud:master');
 
         const cloudData = await readBackupData(await exportSystemData('full', makeStateSnapshot(), noopProgress, {
@@ -323,6 +336,101 @@ describe('system backup coverage', () => {
         expect(cloudRecord?.durationMs).toBeUndefined();
         expect(cloudRecord?.lyricsOffsetMs).toBeUndefined();
         expect(cloudRecord?.lyricTiming).toBeUndefined();
+    }, 15000);
+
+    it('exports only restorable memory record audio and skips cache rows', async () => {
+        const record: MemoryRecord = {
+            id: 'mrec-slim',
+            charId: 'char-a',
+            charName: 'Sully',
+            userName: '你',
+            mode: 'dream_mix',
+            status: 'ready',
+            title: '月光唱片',
+            albumName: '回声唱片匣',
+            artistName: 'Sully',
+            monologueText: '开场独白',
+            lyrics: '[verse]\n一小段歌词',
+            musicPrompt: 'soft piano ballad',
+            coverGradient: 'linear-gradient(135deg,#111,#333)',
+            seedMemoryIds: [],
+            createdAt: 1,
+            updatedAt: 2,
+            durationMs: 123000,
+            lyricsOffsetMs: 1200,
+            monologueAudioId: 'mrec-slim:monologue',
+            musicAudioId: 'mrec-slim:music',
+            masterAudioId: 'mrec-slim:master',
+        };
+        await DB.saveMemoryRecord(record);
+
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'mrec-slim:monologue',
+            recordId: 'mrec-slim',
+            kind: 'monologue',
+            blob: new Blob(['monologue-audio'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            dataUrl: 'data:audio/mpeg;base64,bW9ub2xvZ3VlLWF1ZGlv',
+            createdAt: 1,
+        });
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'mrec-slim:music',
+            recordId: 'mrec-slim',
+            kind: 'music',
+            blob: new Blob(['music-audio'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            dataUrl: 'data:audio/mpeg;base64,bXVzaWMtYXVkaW8=',
+            createdAt: 2,
+        });
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'mrec-slim:master',
+            recordId: 'mrec-slim',
+            kind: 'master',
+            blob: new Blob(['master-audio'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            durationMs: 123000,
+            dataUrl: 'data:audio/mpeg;base64,bWFzdGVyLWF1ZGlv',
+            createdAt: 3,
+        });
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'bgm-theater-cache',
+            recordId: '__theater_bgm__',
+            kind: 'music',
+            blob: new Blob(['cached-bgm'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            dataUrl: 'data:audio/mpeg;base64,Y2FjaGVkLWJnbQ==',
+            createdAt: 4,
+        });
+        await putExistingDbValue(DB_NAME_CONST, STORE_MEMORY_RECORD_AUDIO, {
+            id: 'orphan-audio',
+            recordId: 'missing-record',
+            kind: 'music',
+            blob: new Blob(['orphan-audio'], { type: 'audio/mpeg' }),
+            mimeType: 'audio/mpeg',
+            dataUrl: 'data:audio/mpeg;base64,b3JwaGFuLWF1ZGlv',
+            createdAt: 5,
+        });
+
+        const backupBlob = await exportSystemData('full', makeStateSnapshot(), noopProgress);
+        const data = await readBackupData(backupBlob);
+
+        expect(data.memoryRecordAudio?.map(item => item.id)).toEqual(['mrec-slim:master']);
+        expect(data.memoryRecords?.[0].masterAudioId).toBe('mrec-slim:master');
+        expect(data.memoryRecords?.[0].monologueAudioId).toBeUndefined();
+        expect(data.memoryRecords?.[0].musicAudioId).toBeUndefined();
+
+        resetIndexedDb();
+        localStorage.clear();
+        await importWithoutReload(new File([backupBlob], 'backup.zip', { type: 'application/zip' }));
+
+        const restoredRecord = await DB.getMemoryRecordById('mrec-slim');
+        const restoredMaster = await DB.getMemoryRecordAudio('mrec-slim:master');
+        expect(restoredRecord?.masterAudioId).toBe('mrec-slim:master');
+        expect(restoredRecord?.monologueAudioId).toBeUndefined();
+        expect(restoredRecord?.musicAudioId).toBeUndefined();
+        expect(await restoredMaster?.text()).toBe('master-audio');
+        expect(await DB.getMemoryRecordAudio('mrec-slim:music')).toBeNull();
+        expect(await DB.getMemoryRecordAudio('bgm-theater-cache')).toBeNull();
     }, 15000);
 
     it('does not export or restore device identity localStorage keys', async () => {
@@ -434,7 +542,7 @@ describe('system backup coverage', () => {
         const backupBlob = await exportSystemData('media_only', makeStateSnapshot(), noopProgress);
         const data = await readBackupData(backupBlob);
 
-        expect(data.musicAssets?.profileBackground?.dataUrl).toContain('data:image/png');
+        expect(data.musicAssets?.profileBackground?.dataUrl).toMatch(/^assets\/.*\.png$/);
         expect(data.musicAssets?.customSkins?.[0]).toMatchObject({ id: 'custom-skin-1', name: '雨夜' });
         expect(data.extraLocalStorageConfig?.music_profile_bg_setting).toBe('{"type":"custom"}');
         expect(data.extraLocalStorageConfig?.music_player_skin).toBe('custom-skin-1');
@@ -453,6 +561,74 @@ describe('system backup coverage', () => {
         expect(await restoredSkins[0].blob.text()).toBe('skin-image');
         expect(localStorage.getItem('music_profile_bg_setting')).toBe('{"type":"custom"}');
     });
+
+    it('deduplicates exported asset files and omits raw appearance compatibility rows', async () => {
+        const sharedImage = 'data:image/png;base64,c2hhcmVkLWltYWdl';
+        const customFont = 'data:font/ttf;base64,Zm9udC1ieXRlcw==';
+        const state = makeStateSnapshot();
+        state.theme = {
+            ...state.theme,
+            wallpaper: sharedImage,
+            launcherWidgets: { tl: sharedImage },
+            customFont,
+        };
+
+        await DB.saveAsset('wallpaper', sharedImage);
+        await DB.saveAsset('custom_font_data', customFont);
+        await DB.saveAsset('icon_Chat', sharedImage);
+        await DB.saveAsset('sullyos_upstream_compat_payload', JSON.stringify({
+            pixelHomeAssets: [{ id: 'pixel-home-old', image: sharedImage }],
+        }));
+        await DB.saveAsset('appearance_preset_ap_dup', JSON.stringify({
+            id: 'ap_dup',
+            name: 'SULLY',
+            createdAt: 1,
+            theme: {
+                ...state.theme,
+                desktopDecorations: [{
+                    id: 'deco-a',
+                    type: 'image',
+                    content: sharedImage,
+                    x: 50,
+                    y: 50,
+                    scale: 1,
+                    rotation: 0,
+                    opacity: 1,
+                    zIndex: 1,
+                }],
+            },
+            customIcons: { Chat: sharedImage },
+        }));
+
+        const backupBlob = await exportSystemData('full', state, noopProgress);
+        const { json, data, assetEntries } = await readBackupJson(backupBlob);
+
+        expect(json).not.toContain('c2hhcmVkLWltYWdl');
+        expect(json).not.toContain('Zm9udC1ieXRlcw==');
+        expect(data.assets?.some(asset => asset.id === 'wallpaper')).toBe(false);
+        expect(data.assets?.some(asset => asset.id === 'custom_font_data')).toBe(false);
+        expect(data.assets?.some(asset => asset.id === 'icon_Chat')).toBe(false);
+        expect(data.assets?.some(asset => asset.id === 'appearance_preset_ap_dup')).toBe(false);
+        expect(data.assets?.some(asset => asset.id === 'sullyos_upstream_compat_payload')).toBe(false);
+        expect(data.theme?.wallpaper).toMatch(/^assets\/.*\.png$/);
+        expect(data.theme?.launcherWidgets?.tl).toBe(data.theme?.wallpaper);
+        expect(data.customIcons?.Chat).toBe(data.theme?.wallpaper);
+        expect(data.appearancePresets?.[0].theme.wallpaper).toBe(data.theme?.wallpaper);
+        expect(data.theme?.customFont).toMatch(/^assets\/.*\.ttf$/);
+        expect(assetEntries.filter(name => name.endsWith('.png'))).toHaveLength(1);
+        expect(assetEntries.filter(name => name.endsWith('.ttf'))).toHaveLength(1);
+
+        resetIndexedDb();
+        localStorage.clear();
+        await importWithoutReload(new File([backupBlob], 'backup.zip', { type: 'application/zip' }));
+
+        expect(await DB.getAsset('wallpaper')).toBe(sharedImage);
+        expect(await DB.getAsset('widget_tl')).toBe(sharedImage);
+        expect(await DB.getAsset('custom_font_data')).toBe(customFont);
+        expect(await DB.getAsset('icon_Chat')).toBe(sharedImage);
+        expect(await DB.getAsset('appearance_preset_ap_dup')).toContain('SULLY');
+        expect(await DB.getAsset('sullyos_upstream_compat_payload')).toContain('pixel-home-old');
+    }, 15000);
 
     it('declares every primary IndexedDB store in the backup coverage map', () => {
         const coreSource = fs.readFileSync(path.join(process.cwd(), 'utils/db/core.ts'), 'utf8');

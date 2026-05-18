@@ -1,7 +1,7 @@
 
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 41; // Bumped for per-character instance ownership
+const DB_VERSION = 42; // Bumped for per-character message windows
 
 export const STORE_CHARACTERS = 'characters';
 export const STORE_MESSAGES = 'messages';
@@ -85,6 +85,8 @@ export const openDB = (): Promise<IDBDatabase> => {
                 msgStore.createIndex('charId', 'charId', { unique: false });
                 msgStore.createIndex('groupId', 'groupId', { unique: false });
                 msgStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
+                msgStore.createIndex('charIdTimestampId', ['charId', 'timestamp', 'id'], { unique: false });
+                msgStore.createIndex('ownerUserIdCharIdTimestampId', ['ownerUserId', 'charId', 'timestamp', 'id'], { unique: false });
             } else {
                 const msgStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_MESSAGES);
                 if (msgStore && !msgStore.indexNames.contains(STORE_MESSAGES) && !msgStore.indexNames.contains('groupId')) {
@@ -95,6 +97,16 @@ export const openDB = (): Promise<IDBDatabase> => {
                 if (msgStore && !msgStore.indexNames.contains('ownerUserIdCharId')) {
                     try {
                         msgStore.createIndex('ownerUserIdCharId', ['ownerUserId', 'charId'], { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
+                if (msgStore && !msgStore.indexNames.contains('charIdTimestampId')) {
+                    try {
+                        msgStore.createIndex('charIdTimestampId', ['charId', 'timestamp', 'id'], { unique: false });
+                    } catch (e) { console.log('Index already exists'); }
+                }
+                if (msgStore && !msgStore.indexNames.contains('ownerUserIdCharIdTimestampId')) {
+                    try {
+                        msgStore.createIndex('ownerUserIdCharIdTimestampId', ['ownerUserId', 'charId', 'timestamp', 'id'], { unique: false });
                     } catch (e) { console.log('Index already exists'); }
                 }
             }

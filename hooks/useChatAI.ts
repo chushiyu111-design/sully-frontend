@@ -181,6 +181,10 @@ export const useChatAI = ({
         if (isTyping || !char) return;
         if (!apiConfig.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
+        const refreshRecentMessages = async () => {
+            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+        };
+
         setIsTyping(true);
         setRecallStatus('');
 
@@ -748,7 +752,7 @@ mode 可选值：
 
                         if (textBefore) {
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             await new Promise(r => setTimeout(r, 500));
@@ -760,7 +764,7 @@ mode 可选值：
                                 metadata: { duration: durationSecs, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             onVoiceMessageSaved?.(savedVoiceId, voiceText);
@@ -773,7 +777,7 @@ mode 可选值：
 
                         if (textBefore) {
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             await new Promise(r => setTimeout(r, 500));
@@ -785,7 +789,7 @@ mode 可选值：
                                 metadata: { duration: estimatedDuration, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             onVoiceMessageSaved?.(savedVoiceId2, voiceText);
@@ -793,7 +797,7 @@ mode 可选值：
                         if (textAfter) {
                             await new Promise(r => setTimeout(r, 400));
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             saved++;
                         }
                     } else if (xmlMatch) {
@@ -805,7 +809,7 @@ mode 可选值：
 
                         if (textBefore) {
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             await new Promise(r => setTimeout(r, 500));
@@ -817,7 +821,7 @@ mode 可选值：
                                 metadata: { duration: estimatedDuration, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
                             onVoiceMessageSaved?.(savedVoiceId3, voiceText);
@@ -825,14 +829,14 @@ mode 可选值：
                         if (textAfter) {
                             await new Promise(r => setTimeout(r, 400));
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             saved++;
                         }
                     } else {
                         // Normal text message
                         const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData });
                         if (firstSavedMsgId === null) firstSavedMsgId = savedId;
-                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        await refreshRecentMessages();
                         playFirstNotification();
                         saved++;
                     }
@@ -873,7 +877,7 @@ mode 可选值：
                         replyTo: replyData,
                     });
                     if (firstSavedMsgId === null) firstSavedMsgId = savedId;
-                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    await refreshRecentMessages();
                     playFirstNotification();
                     return 1;
                 };
@@ -939,14 +943,14 @@ mode 可选值：
                                     metadata: { duration: estimatedDuration, sourceText: biContent, hasAudio: false },
                                     replyTo: replyData,
                                 });
-                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                                await refreshRecentMessages();
                                 playFirstNotification();
                                 globalMsgIndex++;
                                 onVoiceMessageSaved(savedVoiceId, originalText);
                             } else {
                                 // Auto-voice OFF: save as text with bilingual toggle
                                 await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData });
-                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                                await refreshRecentMessages();
                                 playFirstNotification();
                                 globalMsgIndex++;
                             }
@@ -978,7 +982,7 @@ mode 可选值：
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
                             await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
-                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            await refreshRecentMessages();
                             playFirstNotification();
                         }
                     }
@@ -1001,7 +1005,7 @@ mode 可选值：
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
                                 await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
-                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                                await refreshRecentMessages();
                                 playFirstNotification();
                             }
                         } else if (part.type === 'song') {
@@ -1057,11 +1061,11 @@ mode 可选值：
                 if (thinkingContent && firstSavedMsgId !== null) {
                     await DB.updateMessageMetadata(firstSavedMsgId, { thinking: thinkingContent });
                     // Refresh messages to pick up the updated metadata
-                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    await refreshRecentMessages();
                 }
             } else {
                 // If content was empty (e.g. only actions), just refresh
-                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                await refreshRecentMessages();
             }
             void BackendAgentManager.refreshCharacterContext(char.id, char);
 
@@ -1166,7 +1170,7 @@ mode 可选值：
 
         } catch (e: any) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
-            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+            await refreshRecentMessages();
         } finally {
             setIsTyping(false);
             setRecallStatus('');

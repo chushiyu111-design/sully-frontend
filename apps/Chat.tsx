@@ -58,7 +58,7 @@ function isMainChatVisibleMessage(message: Message): boolean {
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, appParams, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
-    const [totalMsgCount, setTotalMsgCount] = useState(0);
+    const [hasMoreHistory, setHasMoreHistory] = useState(false);
     const [isHistoryLoading, setIsHistoryLoading] = useState(false);
     const [lifeStreamVisibleInChat, setLifeStreamVisibleInChat] = useState(() => (
         activeCharacterId ? getLifeStreamVisibleInChat(activeCharacterId) : false
@@ -104,6 +104,8 @@ const Chat: React.FC = () => {
     const todayLifeSlowTimerRef = useRef<number | null>(null);
     const todayLifeHideTimerRef = useRef<number | null>(null);
     const lastTodayLifeEnsureKeyRef = useRef('');
+    const draftPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingDraftPersistRef = useRef<{ key: string; value: string } | null>(null);
     messagesRef.current = messages;
 
     // Reply Logic
@@ -551,19 +553,19 @@ const Chat: React.FC = () => {
 
         const charIdAtStart = activeCharacterId;
         try {
-            const { messages: recentMsgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, requestedVisibleCount);
+            const { messages: recentMsgs, hasMore } = await DB.getRecentMessageWindow(activeCharacterId, requestedVisibleCount);
 
             // Guard against stale async results: if the user switched characters
             // while the DB query was in flight, discard this result.
             if (activeCharIdRef.current !== charIdAtStart) return;
 
-            setTotalMsgCount(totalCount);
+            setHasMoreHistory(hasMore);
             setMessages(recentMsgs);
         } catch (error) {
             if (activeCharIdRef.current !== charIdAtStart) return;
             console.error('[Chat] Failed to load recent messages:', error);
             setMessages([]);
-            setTotalMsgCount(0);
+            setHasMoreHistory(false);
         } finally {
             if (activeCharIdRef.current === charIdAtStart) {
                 setIsHistoryLoading(false);
@@ -671,7 +673,7 @@ const Chat: React.FC = () => {
             activeCharIdRef.current = activeCharacterId;
             setIsHistoryLoading(true);
             setMessages([]);
-            setTotalMsgCount(0);
+            setHasMoreHistory(false);
 
             if (!hasTargetForActiveChar) {
                 reloadMessages(LOAD_BATCH_SIZE);
@@ -795,10 +797,43 @@ const Chat: React.FC = () => {
         visibleCountRef.current = visibleCount;
     }, [visibleCount]);
 
+    const persistDraftNow = useCallback((key: string, value: string) => {
+        if (value.trim()) localStorage.setItem(key, value);
+        else localStorage.removeItem(key);
+    }, []);
+
+    const clearPendingDraftPersist = useCallback(() => {
+        if (draftPersistTimerRef.current) {
+            clearTimeout(draftPersistTimerRef.current);
+            draftPersistTimerRef.current = null;
+        }
+        pendingDraftPersistRef.current = null;
+    }, []);
+
+    useEffect(() => () => {
+        if (draftPersistTimerRef.current) {
+            clearTimeout(draftPersistTimerRef.current);
+            draftPersistTimerRef.current = null;
+        }
+        const pendingDraft = pendingDraftPersistRef.current;
+        if (pendingDraft) {
+            persistDraftNow(pendingDraft.key, pendingDraft.value);
+            pendingDraftPersistRef.current = null;
+        }
+    }, [persistDraftNow]);
+
     const handleInputChange = (val: string) => {
         setInput(val);
-        if (val.trim()) localStorage.setItem(draftKey, val);
-        else localStorage.removeItem(draftKey);
+        if (draftPersistTimerRef.current) {
+            clearTimeout(draftPersistTimerRef.current);
+        }
+        pendingDraftPersistRef.current = { key: draftKey, value: val };
+        draftPersistTimerRef.current = setTimeout(() => {
+            const pendingDraft = pendingDraftPersistRef.current;
+            if (pendingDraft) persistDraftNow(pendingDraft.key, pendingDraft.value);
+            pendingDraftPersistRef.current = null;
+            draftPersistTimerRef.current = null;
+        }, 350);
     };
 
     useLayoutEffect(() => {
@@ -836,8 +871,15 @@ const Chat: React.FC = () => {
         if (!char || (!input.trim() && !customContent)) return;
         const text = customContent || input.trim();
         const type = customType || 'text';
+        const timestamp = Date.now();
+        const optimisticId = -timestamp;
 
-        if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
+        if (!customContent) {
+            setInput('');
+            clearPendingDraftPersist();
+            localStorage.removeItem(draftKey);
+        }
+        setShowPanel('none');
 
         if (type === 'image') {
             const recentChat = messages.slice(-10).map(m => {
@@ -866,7 +908,40 @@ const Chat: React.FC = () => {
             setReplyTarget(null);
         }
 
-        await DB.saveMessage(msgPayload);
+        const optimisticMessage: Message = {
+            id: optimisticId,
+            charId: char.id,
+            role: 'user',
+            type,
+            content: text,
+            timestamp,
+            metadata,
+            replyTo: msgPayload.replyTo,
+        };
+        setMessages(prev => {
+            const next = [...prev, optimisticMessage];
+            messagesRef.current = next;
+            return next;
+        });
+
+        let savedMessageId: number;
+        try {
+            savedMessageId = await DB.saveMessage({ ...msgPayload, timestamp });
+        } catch (error) {
+            console.error('[Chat] Failed to save outgoing message:', error);
+            setMessages(prev => {
+                const next = prev.filter(m => m.id !== optimisticId);
+                messagesRef.current = next;
+                return next;
+            });
+            addToast('消息发送失败，请重试', 'error');
+            return;
+        }
+        setMessages(prev => {
+            const next = prev.map(m => m.id === optimisticId ? { ...m, id: savedMessageId } : m);
+            messagesRef.current = next;
+            return next;
+        });
         haptic.medium();
 
         // Notify backend agent that user replied (resets consecutiveIgnored)
@@ -897,8 +972,9 @@ const Chat: React.FC = () => {
             }
         }
 
-        await reloadMessages(visibleCountRef.current);
-        setShowPanel('none');
+        window.setTimeout(() => {
+            void reloadMessages(visibleCountRef.current);
+        }, 0);
 
         // Manual trigger only: Removed auto triggerAI call
     };
@@ -1198,14 +1274,14 @@ const Chat: React.FC = () => {
             }
             await DB.deleteMessages(toDelete.map(m => m.id));
             setMessages(toKeep);
-            setTotalMsgCount(toKeep.length);
+            setHasMoreHistory(false);
             setVisibleCount(LOAD_BATCH_SIZE);
             visibleCountRef.current = LOAD_BATCH_SIZE;
             addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
         } else {
             await DB.clearMessages(char.id);
             setMessages([]);
-            setTotalMsgCount(0);
+            setHasMoreHistory(false);
             setVisibleCount(LOAD_BATCH_SIZE);
             visibleCountRef.current = LOAD_BATCH_SIZE;
             addToast('已清空', 'success');
@@ -1311,7 +1387,6 @@ const Chat: React.FC = () => {
         }
         await DB.deleteMessage(selectedMessage.id);
         setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
-        setTotalMsgCount(prev => Math.max(0, prev - 1));
 
         // 清理由于此条消息引发的心理状态残留
         if (char && char.moodState && typeof char.moodState === 'object') {
@@ -1563,7 +1638,6 @@ const Chat: React.FC = () => {
         }
         await DB.deleteMessages(Array.from(selectedMsgIds));
         setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
-        setTotalMsgCount(prev => Math.max(0, prev - deleteCount));
         addToast(`已删除 ${deleteCount} 条消息`, 'success');
         setSelectionMode(false);
         setSelectedMsgIds(new Set());
@@ -1677,7 +1751,13 @@ const Chat: React.FC = () => {
 
     const canReroll = !isTyping && displayMessages.length > 0 && displayMessages[displayMessages.length - 1].role === 'assistant';
 
-    const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
+    const lastAssistantId = useMemo(() => {
+        for (let i = displayMessages.length - 1; i >= 0; i -= 1) {
+            if (displayMessages[i].role === 'assistant') return displayMessages[i].id;
+        }
+        return null;
+    }, [displayMessages]);
+
     const todayScheduleItems = todaySchedule?.effectiveItems || [];
     const todayScheduleRevisionCount = todaySchedule?.revisions?.length || 0;
     const todayScheduleBadgeText = todaySchedule?.status === 'failed'
@@ -2015,14 +2095,16 @@ const Chat: React.FC = () => {
             )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
-                {collapsedCount > 0 && (
+                {hasMoreHistory && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
                             const nextVisibleCount = visibleCount + LOAD_BATCH_SIZE;
                             visibleCountRef.current = nextVisibleCount;
                             setVisibleCount(nextVisibleCount);
                             await reloadMessages(nextVisibleCount);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({collapsedCount})</button>
+                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">
+                            {visibleCount > LOAD_BATCH_SIZE ? '继续加载历史消息' : '加载历史消息'}
+                        </button>
                     </div>
                 )}
 
@@ -2045,7 +2127,7 @@ const Chat: React.FC = () => {
                     const prevMsg = i > 0 ? displayMessages[i - 1] : null;
                     const showTs = effectiveShowTimestamp && (!prevMsg || (m.timestamp - prevMsg.timestamp) >= timestampInterval);
                     // Inner voice: only show on the last assistant message
-                    const isLastAssistant = m.role === 'assistant' && !displayMessages.slice(i + 1).some(nm => nm.role === 'assistant');
+                    const isLastAssistant = m.role === 'assistant' && m.id === lastAssistantId;
                     return (
                         <div
                             key={m.id || i}

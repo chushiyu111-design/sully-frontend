@@ -34,6 +34,7 @@ export const DB = {
     // Messages
     getMessagesByCharId: characterStore.getMessagesByCharId,
     getMessagesByCharIdAfterTimestamp: characterStore.getMessagesByCharIdAfterTimestamp,
+    getRecentMessageWindow: characterStore.getRecentMessageWindow,
     getRecentMessagesByCharId: characterStore.getRecentMessagesByCharId,
     getRecentMessagesWithCount: characterStore.getRecentMessagesWithCount,
     getMessagesFromId: characterStore.getMessagesFromId,

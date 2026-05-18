@@ -14,7 +14,7 @@ vi.mock('../context/OSContext', () => ({
 vi.mock('../utils/db', () => ({
     DB: {
         getMessagesByCharId: vi.fn(() => Promise.resolve([])),
-        getRecentMessagesWithCount: vi.fn(() => Promise.resolve({ messages: [], totalCount: 0 })),
+        getRecentMessageWindow: vi.fn(() => Promise.resolve({ messages: [], hasMore: false })),
         initializeEmojiData: vi.fn(() => Promise.resolve()),
         getEmojis: vi.fn(() => Promise.resolve([])),
         getEmojiCategories: vi.fn(() => Promise.resolve([])),
@@ -231,12 +231,12 @@ describe('Chat active character fallback', () => {
     });
 
     it('shows a loading state while the first page of chat history is still loading', async () => {
-        let resolveRecentMessages: ((value: { messages: any[]; totalCount: number }) => void) | null = null;
+        let resolveRecentMessages: ((value: { messages: any[]; hasMore: boolean }) => void) | null = null;
         mockedUseOS.mockReturnValue(buildOsContext({
             characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
             activeCharacterId: 'char-1',
         }));
-        mockedDB.getRecentMessagesWithCount.mockImplementationOnce(() => (
+        mockedDB.getRecentMessageWindow.mockImplementationOnce(() => (
             new Promise((resolve) => {
                 resolveRecentMessages = resolve;
             })
@@ -247,14 +247,42 @@ describe('Chat active character fallback', () => {
         expect(screen.getByText('正在载入最近的聊天记录...')).toBeInTheDocument();
 
         const fulfillRecentMessages = resolveRecentMessages as
-            | ((value: { messages: any[]; totalCount: number }) => void)
+            | ((value: { messages: any[]; hasMore: boolean }) => void)
             | null;
         if (fulfillRecentMessages) {
-            fulfillRecentMessages({ messages: [], totalCount: 0 });
+            fulfillRecentMessages({ messages: [], hasMore: false });
         }
 
         await waitFor(() => {
             expect(screen.queryByText('正在载入最近的聊天记录...')).not.toBeInTheDocument();
+        });
+    });
+
+    it('loads additional history through the lightweight message window', async () => {
+        const makeMessages = (count: number) => Array.from({ length: count }, (_, index) => ({
+            id: index + 1,
+            charId: 'char-1',
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            type: 'text',
+            content: `message-${index + 1}`,
+            timestamp: 1000 + index,
+        }));
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
+            activeCharacterId: 'char-1',
+        }));
+        mockedDB.getRecentMessageWindow.mockImplementation((_charId: string, limit: number) => Promise.resolve({
+            messages: makeMessages(limit),
+            hasMore: limit <= 30,
+        }));
+
+        render(<Chat />);
+
+        const loadMore = await screen.findByRole('button', { name: '加载历史消息' });
+        fireEvent.click(loadMore);
+
+        await waitFor(() => {
+            expect(mockedDB.getRecentMessageWindow).toHaveBeenCalledWith('char-1', 60);
         });
     });
 
@@ -298,9 +326,9 @@ describe('Chat active character fallback', () => {
             characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
             activeCharacterId: 'char-1',
         }));
-        mockedDB.getRecentMessagesWithCount.mockResolvedValue({
+        mockedDB.getRecentMessageWindow.mockResolvedValue({
             messages,
-            totalCount: messages.length,
+            hasMore: false,
         });
 
         render(<Chat />);
@@ -337,9 +365,9 @@ describe('Chat active character fallback', () => {
         render(<Chat />);
 
         await waitFor(() => {
-            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalled();
+            expect(mockedDB.getRecentMessageWindow).toHaveBeenCalled();
         });
-        mockedDB.getRecentMessagesWithCount.mockClear();
+        mockedDB.getRecentMessageWindow.mockClear();
         clearUnread.mockClear();
 
         window.dispatchEvent(new CustomEvent(AGENT_MESSAGE_SAVED_EVENT_NAME, {
@@ -354,7 +382,7 @@ describe('Chat active character fallback', () => {
         }));
 
         await waitFor(() => {
-            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalledWith('char-1', 30);
+            expect(mockedDB.getRecentMessageWindow).toHaveBeenCalledWith('char-1', 30);
         });
         expect(clearUnread).toHaveBeenCalledWith('char-1');
     });
@@ -370,9 +398,9 @@ describe('Chat active character fallback', () => {
         render(<Chat />);
 
         await waitFor(() => {
-            expect(mockedDB.getRecentMessagesWithCount).toHaveBeenCalled();
+            expect(mockedDB.getRecentMessageWindow).toHaveBeenCalled();
         });
-        mockedDB.getRecentMessagesWithCount.mockClear();
+        mockedDB.getRecentMessageWindow.mockClear();
         clearUnread.mockClear();
 
         window.dispatchEvent(new CustomEvent(AGENT_MESSAGE_SAVED_EVENT_NAME, {
@@ -386,7 +414,7 @@ describe('Chat active character fallback', () => {
             },
         }));
 
-        expect(mockedDB.getRecentMessagesWithCount).not.toHaveBeenCalled();
+        expect(mockedDB.getRecentMessageWindow).not.toHaveBeenCalled();
         expect(clearUnread).not.toHaveBeenCalled();
     });
 });

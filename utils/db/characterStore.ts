@@ -2,6 +2,13 @@ import { CharacterProfile,GroupProfile,Message } from '../../types';
 import { openDB,STORE_CHARACTERS,STORE_MESSAGES,STORE_GROUPS,ScheduledMessage,STORE_SCHEDULED,STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS } from './core';
 import { getUserId } from '../backendConfig';
 
+const MESSAGE_TIME_INDEX = 'charIdTimestampId';
+
+export interface RecentMessageWindow {
+    messages: Message[];
+    hasMore: boolean;
+}
+
 function getCurrentOwnerUserId(): string {
     return getUserId();
 }
@@ -19,6 +26,37 @@ function withCurrentOwner<T extends { ownerUserId?: string }>(item: T): T {
 
 function normalizeId(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeLimit(limit: number): number {
+    return Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
+}
+
+function compareMessagesAsc(a: Message, b: Message): number {
+    return a.timestamp - b.timestamp || a.id - b.id;
+}
+
+function compareMessagesDesc(a: Message, b: Message): number {
+    return b.timestamp - a.timestamp || b.id - a.id;
+}
+
+function messageCharRange(charId: string): IDBKeyRange {
+    return IDBKeyRange.bound([charId], [charId, []]);
+}
+
+function messageAfterTimestampRange(charId: string, afterTimestamp: number): IDBKeyRange {
+    return IDBKeyRange.bound([charId, afterTimestamp], [charId, []], true, false);
+}
+
+function uniqueMessages(messages: Message[]): Message[] {
+    const seen = new Set<number>();
+    const unique: Message[] = [];
+    for (const message of messages) {
+        if (seen.has(message.id)) continue;
+        seen.add(message.id);
+        unique.push(message);
+    }
+    return unique;
 }
 
 async function getAllCharactersFromDb(db: IDBDatabase): Promise<CharacterProfile[]> {
@@ -101,6 +139,126 @@ async function getAllByCharIds<T>(storeName: string, charIds: string[]): Promise
     });
 }
 
+function readRecentMessagesForCharId(db: IDBDatabase, charId: string, limit: number): Promise<Message[]> {
+    if (limit <= 0) return Promise.resolve([]);
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+        const store = transaction.objectStore(STORE_MESSAGES);
+
+        if (!store.indexNames.contains(MESSAGE_TIME_INDEX)) {
+            const request = store.index('charId').getAll(IDBKeyRange.only(charId));
+            request.onsuccess = () => {
+                resolve((request.result || [])
+                    .filter((m: Message) => !m.groupId && belongsToCurrentOwner(m))
+                    .sort(compareMessagesDesc)
+                    .slice(0, limit));
+            };
+            request.onerror = () => reject(request.error);
+            return;
+        }
+
+        const index = store.index(MESSAGE_TIME_INDEX);
+        const collected: Message[] = [];
+        const request = index.openCursor(messageCharRange(charId), 'prev');
+
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor || collected.length >= limit) {
+                resolve(collected);
+                return;
+            }
+
+            const message = cursor.value as Message;
+            if (!message.groupId && belongsToCurrentOwner(message)) {
+                collected.push(message);
+            }
+            cursor.continue();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
+async function readRecentMessagesByCharIds(charIds: string[], limit: number): Promise<Message[]> {
+    if (charIds.length === 0 || limit <= 0) return [];
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_MESSAGES)) return [];
+    const batches = await Promise.all(charIds.map(id => readRecentMessagesForCharId(db, id, limit)));
+    return uniqueMessages(batches.flat());
+}
+
+function countMessagesForCharId(db: IDBDatabase, charId: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+        const store = transaction.objectStore(STORE_MESSAGES);
+        const indexName = store.indexNames.contains(MESSAGE_TIME_INDEX) ? MESSAGE_TIME_INDEX : 'charId';
+        const index = store.index(indexName);
+        const range = indexName === MESSAGE_TIME_INDEX ? messageCharRange(charId) : IDBKeyRange.only(charId);
+        let count = 0;
+        const request = index.openCursor(range);
+
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) {
+                resolve(count);
+                return;
+            }
+
+            const message = cursor.value as Message;
+            if (!message.groupId && belongsToCurrentOwner(message)) count += 1;
+            cursor.continue();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
+async function countMessagesByCharIds(charIds: string[]): Promise<number> {
+    if (charIds.length === 0) return 0;
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_MESSAGES)) return 0;
+    const counts = await Promise.all(charIds.map(id => countMessagesForCharId(db, id)));
+    return counts.reduce((sum, value) => sum + value, 0);
+}
+
+function readMessagesAfterTimestampForCharId(db: IDBDatabase, charId: string, afterTimestamp: number): Promise<Message[]> {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+        const store = transaction.objectStore(STORE_MESSAGES);
+
+        if (!store.indexNames.contains(MESSAGE_TIME_INDEX)) {
+            const request = store.index('charId').getAll(IDBKeyRange.only(charId));
+            request.onsuccess = () => {
+                resolve((request.result || [])
+                    .filter((m: Message) => m.timestamp > afterTimestamp && !m.groupId && belongsToCurrentOwner(m))
+                    .sort(compareMessagesAsc));
+            };
+            request.onerror = () => reject(request.error);
+            return;
+        }
+
+        const index = store.index(MESSAGE_TIME_INDEX);
+        const results: Message[] = [];
+        const request = index.openCursor(messageAfterTimestampRange(charId, afterTimestamp));
+
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) {
+                resolve(results);
+                return;
+            }
+
+            const message = cursor.value as Message;
+            if (!message.groupId && belongsToCurrentOwner(message)) {
+                results.push(message);
+            }
+            cursor.continue();
+        };
+        request.onerror = () => reject(request.error);
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
 function updateItemCharIdAndOwner<T extends { charId?: string; ownerUserId?: string }>(
     item: T,
     nextCharId: string,
@@ -163,19 +321,36 @@ export const getMessagesByCharId = async (charId: string): Promise<Message[]> =>
     const results = await getAllByCharIds<Message>(STORE_MESSAGES, charIds);
     return results
         .filter((m: Message) => !m.groupId && belongsToCurrentOwner(m))
-        .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
+        .sort(compareMessagesAsc);
+};
+
+export const getRecentMessageWindow = async (charId: string, limit: number): Promise<RecentMessageWindow> => {
+    const normalizedLimit = normalizeLimit(limit);
+    if (normalizedLimit <= 0) return { messages: [], hasMore: false };
+
+    const charIds = await resolveCharacterReadIds(charId);
+    const candidates = await readRecentMessagesByCharIds(charIds, normalizedLimit + 1);
+    candidates.sort(compareMessagesDesc);
+
+    return {
+        messages: candidates.slice(0, normalizedLimit).sort(compareMessagesAsc),
+        hasMore: candidates.length > normalizedLimit,
+    };
 };
 
 export const getRecentMessagesByCharId = async (charId: string, limit: number): Promise<Message[]> => {
-    const messages = await getMessagesByCharId(charId);
-    return messages.slice(Math.max(0, messages.length - limit));
+    return (await getRecentMessageWindow(charId, limit)).messages;
 };
 
 export const getRecentMessagesWithCount = async (charId: string, limit: number): Promise<{ messages: Message[], totalCount: number }> => {
-    const messages = await getMessagesByCharId(charId);
+    const charIds = await resolveCharacterReadIds(charId);
+    const [messages, totalCount] = await Promise.all([
+        getRecentMessagesByCharId(charId, limit),
+        countMessagesByCharIds(charIds),
+    ]);
     return {
-        messages: messages.slice(Math.max(0, messages.length - limit)),
-        totalCount: messages.length,
+        messages,
+        totalCount,
     };
 };
 
@@ -190,7 +365,12 @@ export const getMessagesFromId = async (charId: string, fromId: number): Promise
  * so memory usage is O(new messages) rather than O(all messages).
  */
 export const getMessagesByCharIdAfterTimestamp = async (charId: string, afterTimestamp: number): Promise<Message[]> => {
-    return (await getMessagesByCharId(charId)).filter(m => m.timestamp > afterTimestamp);
+    if (!Number.isFinite(afterTimestamp)) return [];
+    const charIds = await resolveCharacterReadIds(charId);
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_MESSAGES)) return [];
+    const batches = await Promise.all(charIds.map(id => readMessagesAfterTimestampForCharId(db, id, afterTimestamp)));
+    return uniqueMessages(batches.flat()).sort(compareMessagesAsc);
 };
 
 /**

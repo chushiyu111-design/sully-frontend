@@ -59,6 +59,10 @@ interface UseChatAIProps {
     onMoodUpdate?: (charId: string, moodState: any, statusCardData?: any) => void; // MindSnapshot / CreativeCard 完成后回调
 }
 
+interface TriggerAIOptions {
+    transientUserPrompt?: string;
+}
+
 export const useChatAI = ({
     char,
     userProfile,
@@ -173,7 +177,7 @@ export const useChatAI = ({
         }, 800);
     };
 
-    const triggerAI = async (currentMsgs: Message[]) => {
+    const triggerAI = async (currentMsgs: Message[], options: TriggerAIOptions = {}) => {
         if (isTyping || !char) return;
         if (!apiConfig.baseUrl) { alert("请先在设置中配置 API URL"); return; }
 
@@ -199,7 +203,22 @@ export const useChatAI = ({
                     console.error('Failed to load full history from DB, using React state:', e);
                 }
             }
-            const promptContextMsgs = contextMsgs.filter(m => {
+            const transientUserPrompt = options.transientUserPrompt?.trim();
+            const contextMsgsWithTransient: Message[] = transientUserPrompt
+                ? [
+                    ...contextMsgs,
+                    {
+                        id: -1,
+                        charId: char.id,
+                        role: 'user',
+                        type: 'text',
+                        content: transientUserPrompt,
+                        timestamp: Date.now(),
+                        metadata: { source: 'worldline_orb', transient: true },
+                    },
+                ]
+                : contextMsgs;
+            const promptContextMsgs = contextMsgsWithTransient.filter(m => {
                 const source = m.metadata?.source;
                 if (source === 'date' || source === 'theater') {
                     // Only include date/theater messages that are explicit context bridges

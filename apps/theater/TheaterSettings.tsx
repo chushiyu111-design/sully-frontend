@@ -1,5 +1,5 @@
 /**
- * TheaterSettings — 剧场设置面板
+ * TheaterSettings — 约会设置面板
  * 上传角色立绘 & 用户头像（复用 DateApp 的 sprites 数据）
  * 直接拖拽/双指缩放调整立绘位置（优雅交互）
  */
@@ -349,7 +349,7 @@ const TheaterSettings: React.FC<TheaterSettingsProps> = ({ char, location, isOpe
                                 className="rounded-xl p-3 text-[10px] leading-relaxed"
                                 style={{ background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.05)' }}
                             >
-                                💡 保存后会同步到「见面」模式。也可以直接在上方预览区拖拽立绘。
+                                note 保存后会同步到「见面」模式。也可以直接在上方预览区拖拽立绘。
                             </div>
                         </div>
                     )}

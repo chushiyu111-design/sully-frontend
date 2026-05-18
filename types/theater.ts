@@ -1,5 +1,5 @@
 /**
- * Theater App Types — 520 约会剧场
+ * Theater App Types — 520 约会
  * 导演引擎驱动的沉浸式文游体验
  */
 
@@ -98,10 +98,10 @@ export interface PityCounter {
 export type TimeSlot = 'morning' | 'afternoon' | 'evening' | 'night';
 
 export const TIME_SLOT_LABELS: Record<TimeSlot, { zh: string; icon: string }> = {
-    morning:   { zh: '早晨', icon: '🌅' },
-    afternoon: { zh: '下午', icon: '☀️' },
-    evening:   { zh: '傍晚', icon: '🌆' },
-    night:     { zh: '深夜', icon: '🌙' },
+    morning:   { zh: '早晨', icon: 'AM' },
+    afternoon: { zh: '下午', icon: 'PM' },
+    evening:   { zh: '傍晚', icon: 'EVE' },
+    night:     { zh: '深夜', icon: 'NITE' },
 };
 
 // ── Session State (serializable) ──
@@ -126,7 +126,7 @@ export interface TheaterSessionState {
 export interface TheaterTimeline {
     timelineId: string;              // UUID, 同时作为消息 metadata.branchId
     charId: string;
-    label: string;                   // "☕ 咖啡厅·温柔线" — 用户可编辑
+    label: string;                   // "咖啡厅·温柔线" — 用户可编辑
     createdAt: number;
     lastActiveAt: number;
 

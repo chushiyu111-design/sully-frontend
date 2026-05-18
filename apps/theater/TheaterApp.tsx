@@ -1,5 +1,5 @@
 /**
- * TheaterApp — 520 约会剧场 主入口
+ * TheaterApp — 520 约会 主入口
  * 模式流转: select → map → session
  * 导演引擎 (副API) + 角色扮演 (主API) 双API架构
  */
@@ -10,17 +10,28 @@ import { DB } from '../../utils/db';
 import { ContextBuilder } from '../../utils/context';
 import { safeResponseJson } from '../../utils/safeApi';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../../utils/thinkingExtractor';
-import { getSecondaryApiConfig } from '../../utils/runtimeConfig';
-import { buildDatePreamble, buildTheaterScene, buildDateTail } from '../../utils/datePrompts';
-import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt, formatDateMessagesForBridge, formatMessagesForSummary } from '../../utils/dateSummaryPrompts';
+import { getEmbeddingConfig, getSecondaryApiConfig } from '../../utils/runtimeConfig';
+import { buildDatePreamble, buildTheaterScene, buildDateTail, buildDateTimeBlock } from '../../utils/datePrompts';
+import { hasCompleteApiConfig } from '../../utils/apiValidation';
+import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
+import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../../utils/dateEndingPrompts';
 import { TIME_SLOT_LABELS } from '../../types/theater';
 
 import {
-    computeWeights, rollEventType, shouldTriggerEvent, updatePity,
+    buildRecentForbiddenMotifs,
+    buildTheaterDirectorRecentContext,
+    buildTraditionalCallbackMemoryContext,
+    chooseDirectorEventType,
+    combineCallbackMemoryContext,
+    computeWeights, shouldTriggerEvent, updatePity,
     createPityCounter, getInitialTimeSlot,
+    getTheaterSummaryHiddenMsgIds,
+    hasCallbackMemory,
     is520EventActive, generateSessionId, getAutoGradient,
+    selectTheaterAutoSummaryTargetMessages,
+    THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT,
 } from '../../utils/theaterDirector';
 import {
     buildDirectorPrompt, buildTheaterSceneInjection, buildInitialScenePrompt,
@@ -29,15 +40,23 @@ import {
 } from '../../utils/theaterPrompts';
 import { getPresetLocations } from '../../utils/theaterLocations';
 import {
+    buildTheaterUserBeatsSystemNote,
+    parseTheaterAssistantBeatReplyGroups,
+    sanitizeTheaterUserBeats,
+    stripTheaterBeatMarkers,
+    type TheaterUserBeat,
+} from '../../utils/theaterDialogueFormat';
+import {
     saveTheaterSession,
     getCustomLocations, addCustomLocation as dbAddCustomLocation,
     deleteCustomLocation as dbDeleteCustomLocation,
     getVisitCounts, incrementVisitCount,
     getTimelines, saveTimeline, deleteTimeline as deleteTimelineStore,
-    setActiveTimelineId,
+    getActiveTimelineId, setActiveTimelineId,
     canCreateTimeline, generateTimelineLabel, getTimelineById,
     resolveForkChain, deleteTheaterBgImage,
 } from '../../utils/db/theaterStore';
+import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
 
 import TheaterMap from './TheaterMap';
 import TheaterSession from './TheaterSession';
@@ -46,6 +65,7 @@ import './theater.css';
 
 type Mode = 'select' | 'timelines' | 'map' | 'session';
 export type TheaterExitSyncMode = 'summary' | 'raw' | 'none';
+type TheaterEndingAct = 'user-gift' | 'gift-reaction' | 'farewell' | 'meta-letter';
 
 type SummaryDraft = {
     content: string;
@@ -60,8 +80,6 @@ type SummaryDraft = {
     injectToVectorMemory?: boolean;
 };
 
-const THEATER_SUMMARY_CONTEXT_KEEP_COUNT = 5;
-
 const isTheaterMessage = (m: Message, branchId?: string) =>
     m.metadata?.source === 'theater' && !m.metadata?.hiddenFromUser
     && (branchId ? m.metadata?.branchId === branchId : true);
@@ -73,8 +91,39 @@ const isTheaterRawMessage = (m: Message, branchId?: string) =>
 const isTheaterSummaryMessage = (m: Message) =>
     m.metadata?.source === 'theater' && m.metadata?.isSummary === true;
 
-const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } =>
-    !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim();
+// hasCompleteApiConfig — imported from utils/apiValidation.ts
+
+const THEATER_ENDING_ACT_LABELS: Record<TheaterEndingAct, string> = {
+    'user-gift': '用户送出的礼物',
+    'gift-reaction': '角色回礼',
+    farewell: '尾声对白',
+    'meta-letter': '信件',
+};
+
+const cleanTheaterSummaryContent = (content: string) =>
+    (content || '').replace(/\[[^\]]+\]\s*/g, '').trim();
+
+const cleanTimelinePreview = (content?: string) =>
+    stripTheaterBeatMarkers(content || '')
+        .replace(/\[[^\]]+\]\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+const formatTheaterMessagesForSummary = (messages: Message[], charName: string, userName: string): string => {
+    return messages
+        .map((msg) => {
+            const speaker = msg.role === 'user' ? userName : msg.role === 'assistant' ? charName : '系统';
+            const content = cleanTheaterSummaryContent(msg.content || '');
+            if (!content) return '';
+            if (msg.metadata?.isEndingCeremony) {
+                const label = THEATER_ENDING_ACT_LABELS[msg.metadata.endingAct as TheaterEndingAct] || '散场记录';
+                return `【${label}】${speaker}: ${content}`;
+            }
+            return `${speaker}: ${content}`;
+        })
+        .filter(line => line.trim().length > 0)
+        .join('\n');
+};
 
 /**
  * Get messages visible in the current timeline.
@@ -114,6 +163,42 @@ const getCurrentTheaterSessionMessages = (msgs: Message[], branchId?: string) =>
     return openingIndex >= 0 ? theatMsgs.slice(openingIndex) : theatMsgs;
 };
 
+const getTimelineRawMessagesForSummaryLookup = (allMsgs: Message[], charId: string, timelineId: string | null): Message[] => {
+    if (!timelineId) return allMsgs.filter(m => isTheaterRawMessage(m)).sort((a, b) => a.timestamp - b.timestamp);
+    const chain = resolveForkChain(charId, timelineId);
+    const result: Message[] = [];
+
+    for (let i = 0; i < chain.length; i++) {
+        const segment = chain[i];
+        const segmentMsgs = allMsgs.filter(m => isTheaterRawMessage(m, segment.timelineId));
+        if (i < chain.length - 1) {
+            const nextForkId = chain[i + 1].forkAfterMessageId;
+            result.push(...(nextForkId !== null ? segmentMsgs.filter(m => m.id <= nextForkId) : segmentMsgs));
+        } else {
+            result.push(...segmentMsgs);
+        }
+    }
+
+    return result.sort((a, b) => a.timestamp - b.timestamp);
+};
+
+const getSavedTheaterSummariesForTimeline = (allMsgs: Message[], charId: string, timelineId: string | null): Message[] => {
+    const sessionMessages = getCurrentTheaterSessionMessages(getTimelineRawMessagesForSummaryLookup(allMsgs, charId, timelineId));
+    if (sessionMessages.length === 0) return [];
+    const sessionStartMsgId = sessionMessages[0].id;
+    const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
+    return allMsgs
+        .filter(isTheaterSummaryMessage)
+        .filter(summary =>
+            summary.metadata?.sessionStartMsgId === sessionStartMsgId
+            || (
+                Array.isArray(summary.metadata?.coveredMsgIds)
+                && summary.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id))
+            )
+        )
+        .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id);
+};
+
 const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
     const sessionMessages = getCurrentTheaterSessionMessages(msgs);
     if (sessionMessages.length === 0) return '';
@@ -130,7 +215,7 @@ const buildTheaterSummaryMemoryPrompt = (msgs: Message[]) => {
         const label = s.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
         return `### 已总结片段 ${i + 1}（${label}）\n${s.content}`;
     }).join('\n\n');
-    return `\n\n### 【本次剧场的已总结上下文】\n以下是本次剧场中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
+    return `\n\n### 【本次约会的已总结上下文】\n以下是本次约会中较早内容的压缩总结。它们是刚才520约会已经发生过的事，不是新消息。请把这些当作共同经历的背景，和后续未总结原文自然衔接。\n\n${blocks}\n`;
 };
 
 const TheaterApp: React.FC = () => {
@@ -158,9 +243,6 @@ const TheaterApp: React.FC = () => {
     // ── Inner Whispers State ──
     const [activeWhispers, setActiveWhispers] = useState<InnerWhisper[]>([]);
 
-    // ── Exit Review ──
-    const [showExitReview, setShowExitReview] = useState(false);
-
     // ── Fork UI State ──
     const [showForkModal, setShowForkModal] = useState(false);
     const [forkTargetMsg, setForkTargetMsg] = useState<Message | null>(null);
@@ -172,6 +254,10 @@ const TheaterApp: React.FC = () => {
     const [pendingAutoSummary, setPendingAutoSummary] = useState<SummaryDraft | null>(null);
     const [showSummarySettings, setShowSummarySettings] = useState(false);
     const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
+    const [savedSummaryMessages, setSavedSummaryMessages] = useState<Message[]>([]);
+    const [showSavedSummaries, setShowSavedSummaries] = useState(false);
+    const [editingSavedSummary, setEditingSavedSummary] = useState<Message | null>(null);
+    const [savedSummaryEditContent, setSavedSummaryEditContent] = useState('');
     const summaryGeneratingRef = useRef(false);
 
     // ── Gallery Carousel State ──
@@ -330,6 +416,7 @@ const TheaterApp: React.FC = () => {
         const allMsgs = await DB.getMessagesByCharId(char.id);
         const visibleMsgs = getTimelineVisibleMessages(allMsgs, char.id, timeline.timelineId);
         setTheaterMessages(visibleMsgs);
+        setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, timeline.timelineId));
 
         if (loc) {
             setMode('session');
@@ -359,6 +446,8 @@ const TheaterApp: React.FC = () => {
         };
         setSession(newSession);
         setCurrentTimelineId(null); // will be created on first location
+        setSavedSummaryMessages([]);
+        setShowSavedSummaries(false);
         setMode('map');
     }, [char, addToast]);
 
@@ -520,8 +609,8 @@ const TheaterApp: React.FC = () => {
                 }));
 
                 const transitionHint = transitionEvent
-                    ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸剧场格式。)`
-                    : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸剧场格式。)`;
+                    ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸互动格式。)`
+                    : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸互动格式。)`;
 
                 const resp = await fetch(
                     `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
@@ -663,39 +752,95 @@ const TheaterApp: React.FC = () => {
         const tlId = timelineIdRef.current;
         if (tlId) {
             setTheaterMessages(getTimelineVisibleMessages(allMsgs, char.id, tlId));
+            setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, tlId));
         } else {
             // Legacy fallback (no timeline yet)
             setTheaterMessages(allMsgs.filter(m => isTheaterMessage(m)).sort((a, b) => a.timestamp - b.timestamp));
+            setSavedSummaryMessages(getSavedTheaterSummariesForTimeline(allMsgs, char.id, null));
         }
         return allMsgs;
     };
 
+    const getCurrentTimelineSessionMessages = useCallback((allMsgs: Message[]): Message[] => {
+        if (!char) return [];
+        return getCurrentTheaterSessionMessages(
+            getTimelineRawMessagesForSummaryLookup(allMsgs, char.id, currentTimelineId),
+        );
+    }, [char, currentTimelineId]);
+
+    const getCurrentTimelineSavedSummaries = useCallback((allMsgs: Message[]): Message[] => {
+        if (!char) return [];
+        return getSavedTheaterSummariesForTimeline(allMsgs, char.id, currentTimelineId);
+    }, [char, currentTimelineId]);
+
+    const getCurrentTimelineLabel = useCallback((): string | undefined => {
+        if (!currentTimelineId) return undefined;
+        return charTimelines.find(t => t.timelineId === currentTimelineId)?.label;
+    }, [charTimelines, currentTimelineId]);
+
     // ── Send Message (with director engine integration) ──
-    const handleSendMessage = useCallback(async (text: string, directorHint?: string) => {
+    const handleSendMessage = useCallback(async (text: string, directorHint?: string, userBeats?: TheaterUserBeat[]) => {
         if (!char || !currentLocation || !session || !apiConfig?.baseUrl) return;
 
         // 0. Clear whispers from previous turn
         setActiveWhispers([]);
+        const normalizedUserBeats = sanitizeTheaterUserBeats(userBeats || []);
 
         // 1. Save user message
         await DB.saveMessage({
             charId: char.id, role: 'user', type: 'text', content: text,
-            metadata: { source: 'theater', branchId: currentTimelineId, locationId: currentLocation.id },
+            metadata: {
+                source: 'theater',
+                branchId: currentTimelineId,
+                locationId: currentLocation.id,
+                ...(normalizedUserBeats.length > 0 ? { theaterUserBeats: normalizedUserBeats } : {}),
+            },
         });
 
         // Refresh messages
         let allMsgs = await refreshTimelineMessages() || await DB.getMessagesByCharId(char.id);
+        const theaterMsgsForDirector = allMsgs
+            .filter(m => isTheaterMessage(m, currentTimelineId || undefined))
+            .sort((a, b) => a.timestamp - b.timestamp);
+        const recentDirectorContext = buildTheaterDirectorRecentContext(
+            theaterMsgsForDirector,
+            char.name,
+            userProfile.name,
+        );
+        const recentForbiddenMotifs = buildRecentForbiddenMotifs(session.eventHistory);
 
         // 2. Check pity system — should we trigger a director event?
         const triggered = shouldTriggerEvent(session.pity);
         let directorEvent: DirectorEvent | null = null;
 
         if (triggered) {
-            // 2a. Roll event type
-            const weights = computeWeights(currentLocation, session.timeSlot, session.eventHistory, session.is520Event);
-            const eventType = rollEventType(weights);
+            // 2a. Build callback memory first, so callback only fires from real memory.
+            const traditionalMemory = buildTraditionalCallbackMemoryContext(char);
+            let vectorMemory: string | null = null;
+            const embeddingConfig = getEmbeddingConfig();
+            if (char.vectorMemoryEnabled && embeddingConfig.apiKey) {
+                try {
+                    vectorMemory = await VectorMemoryRetriever.retrieve(
+                        char.id,
+                        char.name,
+                        userProfile.name,
+                        theaterMsgsForDirector,
+                        embeddingConfig.apiKey,
+                        apiConfig,
+                        char.moodState as any,
+                    );
+                } catch (e) {
+                    console.warn('[Theater] Callback vector memory retrieval failed:', e);
+                }
+            }
+            const callbackMemoryContext = combineCallbackMemoryContext(traditionalMemory, vectorMemory);
+            const canUseCallback = hasCallbackMemory(callbackMemoryContext);
 
-            // 2b. Call director (secondary API)
+            // 2b. Roll event type
+            const weights = computeWeights(currentLocation, session.timeSlot, session.eventHistory, session.is520Event);
+            const eventType = chooseDirectorEventType(weights, canUseCallback);
+
+            // 2c. Call director (secondary API)
             const secondaryConfig = getSecondaryApiConfig();
             if (secondaryConfig?.baseUrl && secondaryConfig?.apiKey) {
                 setIsDirectorLoading(true);
@@ -703,9 +848,13 @@ const TheaterApp: React.FC = () => {
                     const directorPrompt = buildDirectorPrompt(
                         char.name, userProfile.name, currentLocation,
                         session.timeSlot, eventType, session.eventHistory,
-                        undefined, // recentMemories
+                        eventType === 'callback' ? callbackMemoryContext : undefined,
                         locations.map(l => l.name), // ★ 已有地点列表
                         true, // ★ 允许建议换场景
+                        {
+                            recentContext: recentDirectorContext,
+                            recentForbiddenMotifs,
+                        },
                     );
 
                     const dirResponse = await fetch(`${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -757,7 +906,9 @@ const TheaterApp: React.FC = () => {
         try {
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
-            systemPrompt += buildTheaterSummaryMemoryPrompt(allMsgs);
+            systemPrompt += buildTheaterSummaryMemoryPrompt(
+                getTimelineRawMessagesForSummaryLookup(allMsgs, char.id, currentTimelineId),
+            );
 
             // Inject director event if triggered
             if (directorEvent) {
@@ -786,11 +937,12 @@ const TheaterApp: React.FC = () => {
             }));
 
             let eventNote = directorEvent
-                ? `\n\n(System: 导演事件已触发 [${directorEvent.sceneType}]。你必须在回复中自然地对这个事件做出反应。严格遵守沉浸剧场格式。)`
-                : `\n\n(System: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头。)`;
+                ? `\n\n(System: 导演事件已触发 [${directorEvent.sceneType}]。你必须在回复中自然地对这个事件做出反应。严格遵守沉浸互动格式。)`
+                : `\n\n(System: 严格遵守沉浸互动格式。每一行都要以 [emotion] 开头。)`;
             if (directorHint) {
                 eventNote += `\n<director_note>${directorHint}</director_note>`;
             }
+            eventNote += buildTheaterUserBeatsSystemNote(normalizedUserBeats, userProfile.name, char.name);
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
@@ -813,16 +965,27 @@ const TheaterApp: React.FC = () => {
             // Extract inner whispers from the cleaned content
             const whisperResult = extractInnerWhispers(extracted.content);
             const cleanContent = whisperResult.content;
+            const assistantBeatReplyParse = parseTheaterAssistantBeatReplyGroups(cleanContent, 'pending');
+            const hasCompleteBeatReplies = assistantBeatReplyParse.hasBeatMarkers
+                && assistantBeatReplyParse.unassignedPages.length === 0;
+            const contentForDb = stripTheaterBeatMarkers(cleanContent);
+            const assistantBeatReplies = hasCompleteBeatReplies
+                ? assistantBeatReplyParse.groups.map(group => ({
+                    beatIndex: group.beatIndex,
+                    content: group.content,
+                }))
+                : [];
 
             await DB.saveMessage({
                 charId: char.id, role: 'assistant', type: 'text',
-                content: cleanContent,
+                content: contentForDb,
                 metadata: {
                     source: 'theater',
                     branchId: currentTimelineId,
                     locationId: currentLocation.id,
                     directorEvent: directorEvent?.sceneType || null,
                     thinking: extracted.thinking,
+                    ...(assistantBeatReplies.length > 0 ? { theaterAssistantBeatReplies: assistantBeatReplies } : {}),
                 },
             });
 
@@ -835,7 +998,7 @@ const TheaterApp: React.FC = () => {
             if (currentTimelineId) {
                 const tl = getTimelineById(char.id, currentTimelineId);
                 if (tl) {
-                    saveTimeline({ ...tl, preview: cleanContent.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
+                    saveTimeline({ ...tl, preview: contentForDb.slice(0, 50), messageCount: tl.messageCount + 1, lastActiveAt: Date.now() });
                 }
             }
 
@@ -922,10 +1085,10 @@ const TheaterApp: React.FC = () => {
         setIsSummaryGenerating(true);
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
-            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
-            if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的剧场内容', 'info'); return null; }
+            const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) { if (summaryType === 'manual') addToast('还没有可总结的约会内容', 'info'); return null; }
             const targetMessages = summaryType === 'auto'
-                ? sessionMessages.filter(m => (!char.theaterSummaryLastAutoMsgId || m.id > char.theaterSummaryLastAutoMsgId) && !m.metadata?.dateSummaryAutoHidden)
+                ? selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId)
                 : sessionMessages;
             const threshold = char.theaterSummaryAutoThreshold || 20;
             if (summaryType === 'auto' && targetMessages.length < threshold) return null;
@@ -938,7 +1101,7 @@ const TheaterApp: React.FC = () => {
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把520约会记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.45,
@@ -979,8 +1142,8 @@ const TheaterApp: React.FC = () => {
         setIsSummaryGenerating(true);
         try {
             const allMsgs = await DB.getMessagesByCharId(char.id);
-            const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
-            if (sessionMessages.length === 0) { addToast('还没有可总结的剧场内容', 'info'); return null; }
+            const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+            if (sessionMessages.length === 0) { addToast('还没有可总结的约会内容', 'info'); return null; }
 
             const sessionStartMsgId = sessionMessages[0].id;
             const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
@@ -1015,7 +1178,7 @@ const TheaterApp: React.FC = () => {
             }
 
             if (unsummarizedMessages.length > 0) {
-                const rawBlock = formatMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
+                const rawBlock = formatTheaterMessagesForSummary(unsummarizedMessages, char.name, userProfile.name);
                 exitPromptContent += `【未总结的新记录】\n${rawBlock}\n\n`;
             } else if (savedSummaries.length > 0) {
                 exitPromptContent += '（所有内容均已在上方总结中覆盖）\n\n';
@@ -1023,17 +1186,19 @@ const TheaterApp: React.FC = () => {
 
             if (!exitPromptContent.trim()) { addToast('没有可总结的内容', 'info'); return null; }
 
-            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次520约会剧场写最终总结。
-请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的总结。
+            const fullPrompt = `你正在为 ${char.name} 和 ${userProfile.name} 的一次 520 约会写最终隐藏记忆。
+请把下面所有内容（包括已总结的片段和新增原始记录）合并成一份完整的、连贯的记忆。
 
 当前时间: ${new Date().toLocaleString()}
 
 ${exitPromptContent}
 【输出要求】
 - 使用 Markdown。
-- 写成 ${char.name} 之后能自然记住的事实与情绪脉络。
-- 保留关键事件、关系变化、未说出口的情绪、值得之后线上承接的小细节。
+- 写成 ${char.name} 之后能自然记得、在线上聊天时自然接住的经历。
+- 保留地点、关键事件、${userProfile.name}送出的礼物、${char.name}的回赠、尾声对白、信件，以及关系里细微变化的地方。
 - 不要生成新的剧情，不要改写已经发生的事实。
+- 不要美化成没有发生过的事。
+- 不要写报告口吻，不要出现“总结如下”。
 - 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
 
             const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -1042,7 +1207,7 @@ ${exitPromptContent}
                 body: JSON.stringify({
                     model: selectedApi.model,
                     messages: [
-                        { role: 'system', content: '你负责把520约会剧场的所有记录整理成一份完整的最终总结。只输出总结正文。' },
+                        { role: 'system', content: '你负责把520约会的所有记录整理成一份完整的最终总结。只输出总结正文。' },
                     { role: 'user', content: fullPrompt },
                     ],
                     temperature: 0.45,
@@ -1070,7 +1235,7 @@ ${exitPromptContent}
     };
 
     const hideCoveredMsgIds = async (coveredMsgIds: number[], summaryMsgId: number) => {
-        const idsToHide = coveredMsgIds.slice(0, Math.max(0, coveredMsgIds.length - THEATER_SUMMARY_CONTEXT_KEEP_COUNT));
+        const idsToHide = getTheaterSummaryHiddenMsgIds(coveredMsgIds, THEATER_AUTO_SUMMARY_SETTLE_BUFFER_COUNT);
         if (idsToHide.length === 0) return;
         await Promise.all(idsToHide.map(id => DB.updateMessageMetadata(id, {
             hiddenFromUser: true, dateSummaryAutoHidden: true, hiddenBySummaryMsgId: summaryMsgId,
@@ -1079,9 +1244,14 @@ ${exitPromptContent}
 
     const saveSummaryDraft = async (draft: SummaryDraft) => {
         if (!char) return;
+        const content = draft.content.trim();
+        if (!content) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
         // Save summary as pure summary — NO bridge flag in metadata.
         const savedId = await DB.saveMessage({
-            charId: char.id, role: 'system', type: 'text', content: draft.content,
+            charId: char.id, role: 'system', type: 'text', content,
             metadata: {
                 source: 'theater', hiddenFromUser: true, isSummary: true, summaryType: draft.summaryType,
                 coveredMsgIds: draft.coveredMsgIds, sessionStartMsgId: draft.sessionStartMsgId, promptSnapshot: draft.promptSnapshot,
@@ -1106,13 +1276,13 @@ ${exitPromptContent}
                 if (!embedKey) {
                     addToast('无法刻入向量记忆：未配置 Embedding API Key', 'error');
                 } else {
-                    const vector = await EmbeddingService.embed(draft.content, 'VECTOR_MEMORY', embedKey);
+                    const vector = await EmbeddingService.embed(content, 'VECTOR_MEMORY', embedKey);
                     const newMemId = crypto.randomUUID();
                     const newMem = {
                         id: newMemId,
                         charId: char.id,
                         title: '约会记忆总结',
-                        content: draft.content,
+                        content,
                         vector,
                         modelId: embedConfig.model,
                         source: 'import' as const,
@@ -1178,12 +1348,9 @@ ${exitPromptContent}
         if (!char || !char.theaterSummaryAutoEnabled || pendingAutoSummary || summaryGeneratingRef.current) return;
         if (!hasCompleteApiConfig(getSecondaryApiConfig())) return;
         const sessionMessages = getCurrentTheaterSessionMessages(msgs);
-        const unsummarized = sessionMessages.filter(m => !m.metadata?.dateSummaryAutoHidden);
-        const newCount = char.theaterSummaryLastAutoMsgId
-            ? unsummarized.filter(m => m.id > char.theaterSummaryLastAutoMsgId!).length
-            : unsummarized.length;
+        const eligibleMessages = selectTheaterAutoSummaryTargetMessages(sessionMessages, char.theaterSummaryLastAutoMsgId);
         const threshold = char.theaterSummaryAutoThreshold || 20;
-        if (newCount < threshold) return;
+        if (eligibleMessages.length < threshold) return;
         const draft = await generateSummaryDraft('auto');
         if (draft) setPendingAutoSummary(draft);
     };
@@ -1213,6 +1380,40 @@ ${exitPromptContent}
         addToast('总结设置已保存', 'success');
     };
 
+    const openSavedSummaryEditor = (summary: Message) => {
+        setShowSavedSummaries(false);
+        setEditingSavedSummary(summary);
+        setSavedSummaryEditContent(summary.content);
+    };
+
+    const closeSavedSummaryEditor = () => {
+        setEditingSavedSummary(null);
+        setSavedSummaryEditContent('');
+    };
+
+    const saveSavedSummaryEdit = async () => {
+        if (!editingSavedSummary) return;
+        const content = savedSummaryEditContent.trim();
+        if (!content) {
+            addToast('总结内容不能为空', 'error');
+            return;
+        }
+
+        await DB.updateMessage(editingSavedSummary.id, content);
+        const allMsgs = await DB.getMessagesByCharId(editingSavedSummary.charId);
+        const bridges = allMsgs.filter(m =>
+            m.metadata?.source === editingSavedSummary.metadata?.source
+            && m.metadata?.isDateContextBridge === true
+            && m.metadata?.summarySourceMsgId === editingSavedSummary.id
+        );
+        await Promise.all(bridges.map(bridge => DB.updateMessage(bridge.id, content)));
+
+        closeSavedSummaryEditor();
+        await refreshTimelineMessages();
+        setShowSavedSummaries(true);
+        addToast('总结已保存', 'success');
+    };
+
     // ══════════════════════════════════════════════
     //  Exit & Sync
     // ══════════════════════════════════════════════
@@ -1221,13 +1422,16 @@ ${exitPromptContent}
         // Timeline data is persisted — do NOT delete. Just reset UI state.
         setPendingAutoSummary(null);
         setActiveSummaryDraft(null);
-        setShowExitReview(false);
         setMode('select');
         setSession(null);
         setChar(null);
         setCurrentLocation(null);
         setCurrentTimelineId(null);
         setTheaterMessages([]);
+        setSavedSummaryMessages([]);
+        setShowSavedSummaries(false);
+        setEditingSavedSummary(null);
+        setSavedSummaryEditContent('');
         setCurrentEvent(null);
         setIsTransitioning(false);
         setTransitionLocationName('');
@@ -1292,7 +1496,7 @@ ${exitPromptContent}
     const cleanSessionBridges = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length === 0) return;
         const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
         const sessionStartMsgId = sessionMessages[0].id;
@@ -1315,7 +1519,7 @@ ${exitPromptContent}
     const createBridgeFromSummary = async (): Promise<boolean> => {
         if (!char) return false;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length === 0) return false;
         const sessionStartMsgId = sessionMessages[0].id;
         const sessionMsgIds = new Set(sessionMessages.map(m => m.id));
@@ -1349,14 +1553,178 @@ ${exitPromptContent}
         return true;
     };
 
+    // ====== Theater Ending Three-Act Ceremony API Calls ======
+
+    const getEndingContextBundle = async (): Promise<{ sessionMessages: Message[]; savedSummaries: Message[]; sessionContext: string }> => {
+        if (!char) return { sessionMessages: [], savedSummaries: [], sessionContext: '' };
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+        const savedSummaries = getCurrentTimelineSavedSummaries(allMsgs);
+        const sessionContext = formatSessionContextForEnding(sessionMessages, char.name, userProfile.name, {
+            locationName: currentLocation?.name,
+            timeSlotLabel: session ? TIME_SLOT_LABELS[session.timeSlot]?.zh : undefined,
+            timelineLabel: getCurrentTimelineLabel(),
+            savedSummaries,
+            eventHistory: session?.eventHistory || [],
+            currentEvent,
+        });
+        return { sessionMessages, savedSummaries, sessionContext };
+    };
+
+    const retrieveEndingVectorMemory = async (contextMessages: Message[]): Promise<string | null> => {
+        if (!char || !char.vectorMemoryEnabled) return null;
+        const embeddingConfig = getEmbeddingConfig();
+        if (!embeddingConfig.apiKey) return null;
+        try {
+            return await VectorMemoryRetriever.retrieve(
+                char.id,
+                char.name,
+                userProfile.name,
+                contextMessages.filter(m => !m.metadata?.hiddenFromUser),
+                embeddingConfig.apiKey,
+                apiConfig,
+            );
+        } catch (e) {
+            console.warn('[TheaterEnding] Vector memory retrieval failed:', e);
+            return null;
+        }
+    };
+
+    const buildEndingSystemPrompt = async (contextMessages: Message[]): Promise<string> => {
+        if (!char) return '';
+        let systemPrompt = buildDatePreamble(char.name, userProfile.name);
+        systemPrompt += ContextBuilder.buildCoreContext(char, userProfile, true);
+        systemPrompt += buildDateTimeBlock();
+        const vectorMemory = await retrieveEndingVectorMemory(contextMessages);
+        if (vectorMemory?.trim()) {
+            systemPrompt += `\n\n### 【相关长期记忆 · 向量检索】\n${vectorMemory.trim()}\n`;
+        }
+        return systemPrompt;
+    };
+
+    const saveEndingCeremonyMessage = async (
+        endingAct: TheaterEndingAct,
+        role: Message['role'],
+        content: string,
+        extraMetadata: Record<string, any> = {},
+    ): Promise<number | null> => {
+        if (!char) return null;
+        const trimmed = content.trim();
+        if (!trimmed) return null;
+        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
+        const sessionStartMsgId = sessionMessages.length > 0 ? sessionMessages[0].id : undefined;
+        return DB.saveMessage({
+            charId: char.id,
+            role,
+            type: 'text',
+            content: trimmed,
+            metadata: {
+                source: 'theater',
+                branchId: currentTimelineId,
+                locationId: currentLocation?.id,
+                hiddenFromUser: true,
+                isEndingCeremony: true,
+                endingAct,
+                sessionStartMsgId,
+                ...extraMetadata,
+            },
+        });
+    };
+
+    const handleGenerateGiftReaction = async (userGift: string): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        await saveEndingCeremonyMessage('user-gift', 'user', userGift, { userGift });
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
+
+        const prompt = buildGiftExchangePrompt(char.name, userProfile.name, userGift, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        const content = extracted.content.trim();
+        await saveEndingCeremonyMessage('gift-reaction', 'assistant', content);
+        return content;
+    };
+
+    const handleGenerateFarewell = async (): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
+
+        const prompt = buildFarewellPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.85,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        const content = extracted.content.trim();
+        await saveEndingCeremonyMessage('farewell', 'assistant', content);
+        return content;
+    };
+
+    const handleGenerateMetaLetter = async (): Promise<string> => {
+        if (!char || !session) throw new Error('No char');
+        const { sessionMessages, sessionContext } = await getEndingContextBundle();
+        const systemPrompt = await buildEndingSystemPrompt(sessionMessages);
+
+        const prompt = buildMetaLetterPrompt(char.name, userProfile.name, sessionContext);
+
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.8,
+            }),
+        });
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        const data = await safeResponseJson(response);
+        const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+        return extracted.content;
+    };
+
+    /** Save the meta letter to DB so it can be viewed in history */
+    const handleSaveMetaLetter = async (letterContent: string): Promise<void> => {
+        await saveEndingCeremonyMessage('meta-letter', 'assistant', letterContent, { isMetaLetter: true });
+    };
+
     const saveRawBridgeAndExit = async () => {
         if (!char) return;
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const sessionMessages = getCurrentTheaterSessionMessages(allMsgs);
+        const sessionMessages = getCurrentTimelineSessionMessages(allMsgs);
         if (sessionMessages.length > 0) {
             await DB.saveMessage({
                 charId: char.id, role: 'system', type: 'text',
-                content: formatDateMessagesForBridge(sessionMessages, char.name, userProfile.name),
+                content: formatTheaterMessagesForSummary(sessionMessages, char.name, userProfile.name),
                 metadata: { source: 'theater', hiddenFromUser: true, isDateContextBridge: true, bridgeType: 'raw', coveredMsgIds: sessionMessages.map(m => m.id), sessionStartMsgId: sessionMessages[0].id },
             });
             addToast('原始记录已同步到主聊天', 'success');
@@ -1384,9 +1752,9 @@ ${exitPromptContent}
         setActiveSummaryDraft({ ...draft, bridgeOnSave: true });
     };
 
-    const handleExit = useCallback(() => {
-        setShowExitReview(true);
-    }, []);
+    const handleExit = useCallback((syncMode: TheaterExitSyncMode = 'none') => {
+        void onExitSession(syncMode);
+    }, [onExitSession]);
 
     // ── Render ──
 
@@ -1400,10 +1768,10 @@ ${exitPromptContent}
                         <div className="theater-entry-orb" />
                         <div className="theater-entry-orb" />
                         <div className="theater-entry-orb" />
-                        <span className="theater-entry-float-heart">💗</span>
-                        <span className="theater-entry-float-heart">🌸</span>
-                        <span className="theater-entry-float-heart">✨</span>
-                        <span className="theater-entry-float-heart">💕</span>
+                        <span className="theater-entry-float-heart">love</span>
+                        <span className="theater-entry-float-heart">date</span>
+                        <span className="theater-entry-float-heart">soft</span>
+                        <span className="theater-entry-float-heart">dream</span>
                     </div>
 
                     {/* Top bar */}
@@ -1500,84 +1868,97 @@ ${exitPromptContent}
     }
 
     if (mode === 'timelines' && char) {
+        const activeStoredTimelineId = getActiveTimelineId(char.id);
+        const highlightedTimelineId = charTimelines.some(t => t.timelineId === activeStoredTimelineId)
+            ? activeStoredTimelineId
+            : charTimelines[0]?.timelineId;
+
         return (
             <div className="theater-app">
-                <div className="theater-entry-root">
-                    {/* Floating decorations */}
-                    <div className="theater-entry-deco">
-                        <div className="theater-entry-orb" />
-                        <div className="theater-entry-orb" />
-                        <div className="theater-entry-orb" />
-                        <span className="theater-entry-float-heart">💗</span>
-                        <span className="theater-entry-float-heart">🌸</span>
-                        <span className="theater-entry-float-heart">✨</span>
-                        <span className="theater-entry-float-heart">💕</span>
+                <div className="theater-worldlines-root">
+                    <div className="theater-worldlines-bg" aria-hidden="true">
+                        <span className="theater-worldlines-wave wave-a" />
+                        <span className="theater-worldlines-wave wave-b" />
+                        <span className="theater-worldlines-signal signal-a" />
+                        <span className="theater-worldlines-signal signal-b" />
                     </div>
 
-                    <div className="theater-entry-topbar">
-                        <button className="theater-entry-back" onClick={() => { setMode('select'); setChar(null); }}>
+                    <div className="theater-worldlines-topbar">
+                        <button className="theater-entry-back theater-worldlines-back" onClick={() => { setMode('select'); setChar(null); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" width={16} height={16}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
                             </svg>
                         </button>
-                        <span className="theater-entry-topbar-label">WORLDLINES</span>
+                        <span className="theater-worldlines-event-label">520 EVENT ARCHIVE</span>
                     </div>
-                    <div className="theater-entry-hero">
-                        <div className="theater-entry-char-ring" style={{ margin: '0 auto' }}>
+                    <div className="theater-worldlines-hero">
+                        <div className="theater-worldlines-avatar-wrap">
+                            <span className="theater-worldlines-avatar-signal" />
                             <img src={char.avatar} alt={char.name} className="theater-entry-char-img" loading="eager" decoding="async" />
                         </div>
-                        <div className="theater-entry-hero-subtitle" style={{ marginTop: 12 }}>{char.name}</div>
-                        <div className="theater-entry-hero-line" />
+                        <div className="theater-worldlines-char-name">{char.name}</div>
+                        <div className="theater-worldlines-title">WORLDLINES</div>
+                        <div className="theater-worldlines-title-sub">LOVE RADIO · PARALLEL TICKETS</div>
                     </div>
-                    <div className="theater-entry-ornament">
-                        <span className="theater-entry-ornament-text">PARALLEL WORLDS</span>
-                    </div>
-                    <div style={{ flex: 1, padding: '12px 24px 100px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
-                        <button className="theater-entry-new-btn" onClick={handleStartNewTimeline}>
-                            <div className="theater-entry-new-icon">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="var(--te-hotpink)" width={18} height={18}>
+
+                    <div className="theater-worldlines-list">
+                        <button className="theater-worldlines-new-ticket" onClick={handleStartNewTimeline}>
+                            <span className="theater-worldlines-ticket-code">DATE PASS</span>
+                            <span className="theater-worldlines-ticket-stub">SIGNAL 520</span>
+                            <div className="theater-worldlines-new-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" width={20} height={20}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                                 </svg>
                             </div>
-                            <div style={{ textAlign: 'left' }}>
-                                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--te-text)' }}>开启新世界线</div>
-                                <div style={{ fontSize: 9, color: 'var(--te-text-sub)', marginTop: 2, fontWeight: 400, letterSpacing: 2 }}>NEW WORLDLINE</div>
+                            <div className="theater-worldlines-new-copy">
+                                <div className="theater-worldlines-new-title">开启新世界线</div>
+                                <div className="theater-worldlines-new-sub">NEW WORLDLINE</div>
                             </div>
                         </button>
-                        {charTimelines.length > 0 && <div className="theater-entry-divider" />}
-                        {charTimelines.map(tl => {
+
+                        {charTimelines.length > 0 && <div className="theater-worldlines-divider">ON AIR</div>}
+
+                        {charTimelines.map((tl, index) => {
                             const timeLabel = TIME_SLOT_LABELS[tl.session.timeSlot];
                             const isForked = !!tl.parentTimelineId;
+                            const isActive = tl.timelineId === highlightedTimelineId;
+                            const preview = cleanTimelinePreview(tl.preview);
                             return (
-                                <div key={tl.timelineId} className="theater-tl-card">
-                                    <button onClick={() => handleSelectTimeline(tl)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 14, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                                <div key={tl.timelineId} className={`theater-tl-card ${isActive ? 'theater-tl-card--active' : ''}`}>
+                                    <span className="theater-tl-serial">PASS {String(index + 1).padStart(2, '0')}</span>
+                                    <button onClick={() => handleSelectTimeline(tl)} className="theater-tl-main">
                                         <div className={`theater-tl-icon ${isForked ? 'forked' : 'origin'}`}>
                                             {isForked ? (
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-text-sub)" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
                                             ) : (
-                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-hotpink)" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={16} height={16}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                                             )}
                                         </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div className="theater-tl-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.label}</div>
+                                        <div className="theater-tl-body">
+                                            <div className="theater-tl-label">{tl.label}</div>
                                             <div className="theater-tl-meta">
                                                 <span>{tl.locationName || '未开始'}</span>
                                                 {timeLabel && <><div className="theater-tl-meta-dot" /><span>{timeLabel.icon} {timeLabel.zh}</span></>}
                                                 <div className="theater-tl-meta-dot" /><span>{tl.messageCount} 条</span>
                                             </div>
-                                            {tl.preview && <div className="theater-tl-preview" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tl.preview}</div>}
+                                            {preview && <div className="theater-tl-preview">{preview}</div>}
                                         </div>
                                     </button>
-                                    <button className="theater-tl-delete" onClick={(e) => { e.stopPropagation(); handleDeleteTimeline(tl.timelineId); }}>
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.2} stroke="var(--te-text-sub)" width={14} height={14}>
+                                    <button className="theater-tl-delete" aria-label="删除世界线" onClick={(e) => { e.stopPropagation(); handleDeleteTimeline(tl.timelineId); }}>
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.35} stroke="currentColor" width={14} height={14}>
                                             <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                                         </svg>
                                     </button>
                                 </div>
                             );
                         })}
+
                         {charTimelines.length === 0 && (
-                            <div style={{ textAlign: 'center', color: 'var(--te-text-sub)', paddingTop: 32, fontSize: 12, fontWeight: 300 }}>暂无世界线</div>
+                            <div className="theater-worldlines-empty">
+                                <div className="theater-worldlines-empty-stamp">NO SIGNAL</div>
+                                <div className="theater-worldlines-empty-title">还没有世界线</div>
+                                <div className="theater-worldlines-empty-copy">抽出一张新的入场券，开始今天的 520 片段。</div>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -1619,7 +2000,7 @@ ${exitPromptContent}
                     activeWhispers={activeWhispers}
                     onWhisperClick={async (w) => {
                         setActiveWhispers([]);
-                        await handleSendMessage(w.whisper, w.secret || undefined);
+                        await handleSendMessage(w.whisper, w.secret || undefined, [{ kind: 'action', text: w.whisper }]);
                     }}
                     locations={locations}
                     visitedLocationIds={session?.visitedLocationIds || []}
@@ -1647,52 +2028,92 @@ ${exitPromptContent}
                     }}
                     onChangeThreshold={(t) => updateCharacter(char.id, { theaterSummaryAutoThreshold: t })}
                     onOpenSummarySettings={openSummarySettings}
+                    savedSummaryCount={savedSummaryMessages.length}
+                    onOpenSavedSummaries={() => setShowSavedSummaries(true)}
                     isTransitioning={isTransitioning}
                     transitionLocationName={transitionLocationName}
                     pendingLocationSuggestion={pendingLocationSuggestion}
                     onAcceptLocationSuggestion={handleAcceptLocationSuggestion}
                     onDeclineLocationSuggestion={handleDeclineLocationSuggestion}
+                    onGenerateGiftReaction={handleGenerateGiftReaction}
+                    onGenerateFarewell={handleGenerateFarewell}
+                    onGenerateMetaLetter={handleGenerateMetaLetter}
+                    onSaveMetaLetter={handleSaveMetaLetter}
                 />
 
-                {/* Exit Sync Modal */}
-                <Modal isOpen={showExitReview} title="离开剧场" onClose={() => setShowExitReview(false)} footer={
-                    <div className="flex w-full flex-col gap-2">
-                        <button onClick={() => { setShowExitReview(false); onExitSession('summary'); }} className="w-full py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-100">生成总结同步</button>
-                        <button onClick={() => { setShowExitReview(false); onExitSession('raw'); }} className="w-full py-3 bg-slate-800 text-white rounded-2xl font-bold">同步原始记录</button>
-                        <div className="flex gap-2">
-                            <button onClick={() => setShowExitReview(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
-                            <button onClick={() => { setShowExitReview(false); onExitSession('none'); }} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">暂不同步</button>
-                        </div>
-                    </div>
+                {/* Saved Summaries Modal */}
+                <Modal isOpen={showSavedSummaries} title="已保存总结" onClose={() => setShowSavedSummaries(false)} footer={
+                    <button onClick={() => setShowSavedSummaries(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">关闭</button>
                 }>
-                    <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">离开时可以把这次剧场约会同步给主聊天。同步内容用户不会在聊天列表里看到，但角色之后会自然记得。</div>
-                    {session?.eventHistory && session.eventHistory.length > 0 && (
-                        <div className="theater-timeline mt-3">
-                            {session.eventHistory.map((evt, i) => (
-                                <div key={i} className="theater-timeline-item">
-                                    <div>
-                                        <div className="theater-timeline-location">{evt.sceneType.toUpperCase()}</div>
-                                        <div className="theater-timeline-event">{evt.event}</div>
+                    <div className="space-y-3">
+                        {savedSummaryMessages.length === 0 ? (
+                            <div className="py-8 text-center text-xs text-slate-400">当前世界线还没有保存过总结</div>
+                        ) : savedSummaryMessages.map(summary => (
+                            <div key={summary.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                        {summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结'}
                                     </div>
+                                    <button
+                                        onClick={() => openSavedSummaryEditor(summary)}
+                                        className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-white rounded-full hover:bg-slate-100 transition-colors"
+                                    >
+                                        编辑
+                                    </button>
                                 </div>
-                            ))}
-                        </div>
-                    )}
+                                <div className="text-xs leading-relaxed text-slate-700">
+                                    {renderMarkdown(summary.content)}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </Modal>
+
+                {/* Saved Summary Edit Modal */}
+                <Modal isOpen={!!editingSavedSummary} title="编辑总结" onClose={closeSavedSummaryEditor} footer={
+                    <>
+                        <button onClick={closeSavedSummaryEditor} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">取消</button>
+                        <button disabled={!savedSummaryEditContent.trim()} onClick={saveSavedSummaryEdit} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50">保存</button>
+                    </>
+                }>
+                    <textarea
+                        value={savedSummaryEditContent}
+                        onChange={e => setSavedSummaryEditContent(e.target.value)}
+                        rows={10}
+                        className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                    />
                 </Modal>
 
                 {/* Summary Preview Modal */}
                 {activeSummaryDraft && (
-                    <Modal isOpen={!!activeSummaryDraft} title="剧场总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
+                    <Modal isOpen={!!activeSummaryDraft} title="约会总结预览" onClose={() => setActiveSummaryDraft(null)} footer={
                         <>
                             <button onClick={() => navigator.clipboard.writeText(activeSummaryDraft.content).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'))} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">复制</button>
                             <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
-                            <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{activeSummaryDraft.bridgeOnSave ? '保存并同步' : '保存'}</button>
+                            <button disabled={!activeSummaryDraft.content.trim()} onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50">{activeSummaryDraft.bridgeOnSave ? '保存并同步' : '保存'}</button>
                         </>
                     }>
                         <div className="flex flex-col gap-4">
-                            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
-                                {renderMarkdown(activeSummaryDraft.content)}
+                            <div>
+                                <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-slate-400">
+                                    <span>总结正文</span>
+                                    <span>{activeSummaryDraft.content.trim().length} 字</span>
+                                </div>
+                                <textarea
+                                    value={activeSummaryDraft.content}
+                                    onChange={e => setActiveSummaryDraft(current => current ? { ...current, content: e.target.value } : current)}
+                                    rows={10}
+                                    className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                                />
                             </div>
+                            {activeSummaryDraft.content.trim() && (
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">排版预览</div>
+                                    <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+                                        {renderMarkdown(activeSummaryDraft.content)}
+                                    </div>
+                                </div>
+                            )}
                             {activeSummaryDraft.summaryType === 'manual' && activeSummaryDraft.bridgeOnSave && (
                                 <label className="flex items-center gap-2 mt-4 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200 transition-colors hover:bg-slate-100">
                                     <input 
@@ -1716,7 +2137,7 @@ ${exitPromptContent}
                     </>
                 }>
                     <div className="space-y-3">
-                        <p className="text-xs leading-relaxed text-slate-400">只影响剧场总结生成，不会改动立绘、场景等其他设置。</p>
+                        <p className="text-xs leading-relaxed text-slate-400">只影响约会总结生成，不会改动立绘、场景等其他设置。</p>
                         <textarea value={summaryPromptDraft} onChange={e => setSummaryPromptDraft(e.target.value)} rows={9} className="w-full resize-y rounded-2xl border border-slate-100 bg-slate-50 p-3 font-mono text-[12px] leading-relaxed text-slate-700 outline-none focus:border-emerald-300/60 focus:ring-2 focus:ring-emerald-100" />
                     </div>
                 </Modal>

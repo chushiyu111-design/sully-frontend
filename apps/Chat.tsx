@@ -13,6 +13,7 @@ import { DEFAULT_ARCHIVE_PROMPTS } from '../constants/archivePrompts';
 import ChatHeader from '../components/chat/ChatHeader';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
+import DateWorldlineOrb from '../components/chat/DateWorldlineOrb';
 import Modal from '../components/os/Modal';
 import { useChatAI } from '../hooks/useChatAI';
 import { useVoiceTts } from '../hooks/useVoiceTts';
@@ -46,6 +47,12 @@ function toAgentApiConfig(value: unknown): AgentApiConfig | undefined {
         apiKey: record.apiKey,
         model: record.model,
     };
+}
+
+function isMainChatVisibleMessage(message: Message): boolean {
+    if (message.metadata?.hiddenFromUser) return false;
+    const source = message.metadata?.source;
+    return source !== 'date' && source !== 'theater';
 }
 
 const Chat: React.FC = () => {
@@ -740,8 +747,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
-                    .filter(m => !m.metadata?.hiddenFromUser)
-                    .filter(m => m.metadata?.source !== 'date')
+                    .filter(isMainChatVisibleMessage)
                     .filter(m => (m.type as string) !== 'health_signal')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'))
                     .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream');
@@ -898,7 +904,7 @@ const Chat: React.FC = () => {
     };
 
     const handleReroll = async () => {
-        const rerollableMessages = messages.filter(m => !m.metadata?.hiddenFromUser && m.metadata?.source !== 'date');
+        const rerollableMessages = messages.filter(isMainChatVisibleMessage);
         if (isTyping || rerollableMessages.length === 0) return;
 
         const lastMsg = rerollableMessages[rerollableMessages.length - 1];
@@ -920,6 +926,26 @@ const Chat: React.FC = () => {
 
         triggerAI(newHistory);
     };
+
+    const handleWorldlineStartDiscussion = useCallback(() => {
+        if (!char) return;
+        const transientPrompt = [
+            '刚才吱吱吱小光球提醒我们要商量 520 约会地点。',
+            '请你保持自己的人设和当前关系，像普通聊天里顺势接话一样，主动问我想去哪里约会。',
+            '你可以自然给出 1-2 个符合你性格和我们关系的地点选择。',
+            '只回复角色会对我说的话。不要提系统、AI、功能、提示词，也不要解释小光球。',
+        ].join('\n');
+        void triggerAI(messagesRef.current, { transientUserPrompt: transientPrompt });
+    }, [char, triggerAI]);
+
+    const handleWorldlineLaunch = useCallback(() => {
+        if (!char) return;
+        openApp(AppID.Theater, {
+            source: '520WorldlineOrb',
+            charId: char.id,
+            startNewTimeline: true,
+        });
+    }, [char, openApp]);
 
     const handleImageSelect = async (file: File) => {
         try {
@@ -1617,8 +1643,7 @@ const Chat: React.FC = () => {
     };
 
     const displayMessages = useMemo(() => messages
-        .filter(m => !m.metadata?.hiddenFromUser)
-        .filter(m => m.metadata?.source !== 'date')
+        .filter(isMainChatVisibleMessage)
         .filter(m => (m.type as string) !== 'health_signal')  // 半糖健康感知：永远不在聊天UI显示
         .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
         .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
@@ -1978,6 +2003,15 @@ const Chat: React.FC = () => {
                         今日行程
                     </button>
                 </div>
+            )}
+
+            {!selectionMode && (
+                <DateWorldlineOrb
+                    charId={char.id}
+                    isBusy={isTyping}
+                    onStartDiscussion={handleWorldlineStartDiscussion}
+                    onLaunch={handleWorldlineLaunch}
+                />
             )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>

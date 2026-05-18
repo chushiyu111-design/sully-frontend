@@ -125,7 +125,7 @@ const InlineLocationSheet: React.FC<InlineLocationSheetProps> = ({
 
                             {/* Current location indicator */}
                             <div className="tls-current">
-                                <span className="tls-current-pin">📍</span>
+                                <span className="tls-current-pin">now</span>
                                 <span className="tls-current-label">当前：</span>
                                 <span className="tls-current-name">
                                     {locations.find(l => l.id === currentLocationId)?.name || '未知'}
@@ -180,7 +180,7 @@ const InlineLocationSheet: React.FC<InlineLocationSheetProps> = ({
                                                         ))}
                                                         {!loc.isPreset && (
                                                             <span className="tls-card-tag tls-card-tag--custom">
-                                                                {loc.id.startsWith('dir_') ? '✨' : '⋯'}
+                                                                {loc.id.startsWith('dir_') ? 'found' : 'new'}
                                                             </span>
                                                         )}
                                                     </div>

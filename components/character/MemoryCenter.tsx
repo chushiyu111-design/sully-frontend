@@ -13,6 +13,7 @@ import {
   getHormoneBackfillJob,
   pullMemories,
   pushMemories,
+  updateCloudMemory,
   type CloudHormoneBackfillItem,
 } from '../../utils/backendClient';
 import {
@@ -33,6 +34,7 @@ import {
     clearVectorMemoriesManaged,
     deleteVectorMemoryManaged,
     refreshVectorMemoryCache,
+    updateVectorMemoryManaged,
     upsertVectorMemoriesManaged,
 } from './memoryCenterActions';
 import { markVectorMemoryAsPendingSync } from '../../utils/vectorMemorySyncState';
@@ -143,6 +145,8 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
     const [expandedVmId, setExpandedVmId] = useState<string | null>(null);
     const [sourceMessages, setSourceMessages] = useState<Record<string, Message[]>>({});
     const [loadingSource, setLoadingSource] = useState(false);
+    const [editingVm, setEditingVm] = useState<VectorMemory | null>(null);
+    const [savingVmEdit, setSavingVmEdit] = useState(false);
 
     const abortRef = useRef<AbortController | null>(null);
     const [isAborting, setIsAborting] = useState(false);
@@ -323,6 +327,7 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
         deleteLocalMemory: DB.deleteVectorMemory,
         clearLocalMemories: DB.clearVectorMemories,
         deleteCloudMemory,
+        updateCloudMemory,
         clearCloudMemories,
         pushCloudMemories: pushMemories,
     };
@@ -543,6 +548,46 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                     : '后端暂不可用，已先删除本地缓存',
             'info',
         );
+    };
+
+    const handleSaveVectorMemoryEdit = async () => {
+        if (!formData?.id || !editingVm || savingVmEdit) return;
+
+        const title = editingVm.title.trim();
+        const content = editingVm.content.trim();
+        const importance = Math.min(10, Math.max(1, Math.round(Number(editingVm.importance) || 5)));
+
+        if (!title || !content) {
+            addToast('标题和内容不能为空', 'error');
+            return;
+        }
+
+        setSavingVmEdit(true);
+        try {
+            const result = await updateVectorMemoryManaged(
+                formData.id,
+                editingVm,
+                { title, content, importance },
+                hasCloudSyncTarget(),
+                memoryActionDeps,
+            );
+            setVmList(result.memories);
+            setVmCount(result.memories.length);
+            setEditingVm(null);
+            addToast(
+                result.mode === 'cloud'
+                    ? '已保存并同步云端'
+                    : result.reason === 'local_only'
+                        ? '已保存到本地'
+                        : '后端暂不可用，已先保存本地',
+                result.mode === 'cloud' ? 'success' : 'info',
+            );
+        } catch (error) {
+            console.error('[MemoryCenter] Failed to update vector memory:', error);
+            addToast('保存向量记忆失败，请重试', 'error');
+        } finally {
+            setSavingVmEdit(false);
+        }
     };
 
     const handleBatchChat = async (mode: 'start' | 'resume' = 'start') => {
@@ -1360,7 +1405,8 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                                                             )}
                                                         </div>
                                                         
-                                                        <div className="flex justify-end pt-2 border-t border-slate-200/50">
+                                                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-200/50">
+                                                            <button onClick={() => setEditingVm(m)} className="text-[9px] text-indigo-500 hover:text-indigo-600 font-bold px-2 py-1 rounded hover:bg-indigo-50 transition-colors">编辑碎片</button>
                                                             <button onClick={() => handleDeleteMemory(m.id)} className="text-[9px] text-red-400 hover:text-red-500 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors">删除碎片</button>
                                                         </div>
                                                     </div>
@@ -1493,6 +1539,40 @@ const MemoryCenter: React.FC<MemoryCenterProps> = ({
                     <div className="space-y-2">
                         <div className="text-xs font-bold text-slate-400 tracking-wider">[{editingCore.year}年{editingCore.month}月] CONTEXT</div>
                         <textarea value={editingCore.content} onChange={e => setEditingCore({ ...editingCore, content: e.target.value })} className="w-full h-48 bg-slate-50 border border-slate-100 rounded-2xl p-4 text-sm text-slate-700 resize-none focus:outline-indigo-400 leading-relaxed" />
+                    </div>
+                )}
+            </Modal>
+
+            <Modal isOpen={!!editingVm} title="编辑向量记忆" onClose={() => setEditingVm(null)} footer={<div className="flex gap-2 w-full"><button onClick={() => setEditingVm(null)} disabled={savingVmEdit} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50">取消</button><button onClick={handleSaveVectorMemoryEdit} disabled={savingVmEdit} className="flex-1 py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200 disabled:opacity-50">{savingVmEdit ? '保存中...' : '保存'}</button></div>}>
+                {editingVm && (
+                    <div className="space-y-3">
+                        <label className="block">
+                            <span className="mb-1 block text-[10px] font-bold tracking-wider text-slate-400">标题</span>
+                            <input
+                                value={editingVm.title}
+                                onChange={e => setEditingVm({ ...editingVm, title: e.target.value })}
+                                className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none focus:border-indigo-200"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1 block text-[10px] font-bold tracking-wider text-slate-400">内容</span>
+                            <textarea
+                                value={editingVm.content}
+                                onChange={e => setEditingVm({ ...editingVm, content: e.target.value })}
+                                className="h-40 w-full resize-none rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm leading-relaxed text-slate-700 outline-none focus:border-indigo-200"
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="mb-1 block text-[10px] font-bold tracking-wider text-slate-400">重要度 {Math.min(10, Math.max(1, Math.round(Number(editingVm.importance) || 5)))}</span>
+                            <input
+                                type="range"
+                                min={1}
+                                max={10}
+                                value={Math.min(10, Math.max(1, Math.round(Number(editingVm.importance) || 5)))}
+                                onChange={e => setEditingVm({ ...editingVm, importance: Number(e.target.value) })}
+                                className="w-full accent-indigo-500"
+                            />
+                        </label>
                     </div>
                 )}
             </Modal>

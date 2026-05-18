@@ -4,7 +4,7 @@ import { fireEvent,render,screen,waitFor } from '@testing-library/react';
 import { beforeEach,describe,expect,it,vi } from 'vitest';
 import MemoryCenter from './MemoryCenter';
 import { DB } from '../../utils/db';
-import { pullMemories,pushMemories } from '../../utils/backendClient';
+import { pullMemories,pushMemories,updateCloudMemory } from '../../utils/backendClient';
 import { runHormoneBackfillJobFlow } from './memoryCenterBackfill';
 import { VectorMemoryExtractor } from '../../utils/vectorMemoryExtractor';
 
@@ -32,6 +32,7 @@ vi.mock('../../utils/backendClient', () => ({
     cancelHormoneBackfillJob: vi.fn(),
     pullMemories: vi.fn(),
     pushMemories: vi.fn(),
+    updateCloudMemory: vi.fn(),
 }));
 
 vi.mock('./memoryCenterBackfill', () => ({
@@ -47,6 +48,7 @@ vi.mock('../../utils/vectorMemoryExtractor', () => ({
 const mockedDB = vi.mocked(DB);
 const mockedPullMemories = vi.mocked(pullMemories);
 const mockedPushMemories = vi.mocked(pushMemories);
+const mockedUpdateCloudMemory = vi.mocked(updateCloudMemory);
 const mockedRunHormoneBackfillJobFlow = vi.mocked(runHormoneBackfillJobFlow);
 const mockedBackfillHormoneSnapshots = vi.mocked(VectorMemoryExtractor.backfillHormoneSnapshots);
 
@@ -145,6 +147,7 @@ describe('MemoryCenter hormone backfill flow', () => {
 
         mockedPullMemories.mockImplementation(async () => cloudMemories as any);
         mockedPushMemories.mockResolvedValue({ synced: 1, skipped: 0 });
+        mockedUpdateCloudMemory.mockResolvedValue({ ok: true });
         mockedBackfillHormoneSnapshots.mockImplementation(async () => {
             localMemories = [makeMemory({ hormoneSnapshot: { dopamine: 0.7 } })];
             return { success: 1, skipped: 0, failed: 0 };
@@ -188,6 +191,42 @@ describe('MemoryCenter hormone backfill flow', () => {
         await waitFor(() => {
             expect(mockedRunHormoneBackfillJobFlow).toHaveBeenCalledTimes(1);
             expect(addToast).toHaveBeenCalledWith('Emotion backfill completed: 1 memories updated', 'success');
+        });
+    });
+
+    it('edits a vector memory from the vector tab', async () => {
+        cloudMemories = [makeMemory()];
+        mockedUpdateCloudMemory.mockImplementation(async (_memoryId, updates) => {
+            cloudMemories = [makeMemory(updates as any)];
+            return { ok: true };
+        });
+
+        const { addToast } = renderMemoryCenter();
+
+        fireEvent.click(screen.getAllByRole('button')[1]);
+        fireEvent.click(await screen.findByText('Memory 1'));
+        fireEvent.click(await screen.findByText('编辑碎片'));
+
+        fireEvent.change(screen.getByDisplayValue('Memory 1'), {
+            target: { value: 'Updated memory' },
+        });
+        fireEvent.change(screen.getByDisplayValue('A remembered moment'), {
+            target: { value: 'Updated detail' },
+        });
+        const importanceSlider = screen.getAllByRole('slider').at(-1);
+        expect(importanceSlider).toBeTruthy();
+        fireEvent.change(importanceSlider!, {
+            target: { value: '8' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+        await waitFor(() => {
+            expect(mockedUpdateCloudMemory).toHaveBeenCalledWith('vm-1', {
+                title: 'Updated memory',
+                content: 'Updated detail',
+                importance: 8,
+            });
+            expect(addToast).toHaveBeenCalledWith('已保存并同步云端', 'success');
         });
     });
 

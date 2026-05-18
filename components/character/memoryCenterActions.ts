@@ -17,6 +17,10 @@ export interface MemoryCenterActionDeps {
     deleteLocalMemory: (memoryId: string) => Promise<void>;
     clearLocalMemories: (charId: string) => Promise<void>;
     deleteCloudMemory: (memoryId: string) => Promise<{ ok: boolean; reason?: string }>;
+    updateCloudMemory: (
+        memoryId: string,
+        updates: VectorMemoryEditableFields,
+    ) => Promise<{ ok: boolean; reason?: string }>;
     clearCloudMemories: (charId: string) => Promise<{ ok: boolean; reason?: string }>;
     pushCloudMemories: (
         charId: string,
@@ -37,6 +41,12 @@ export interface ManagedMemoryMutationResult {
 
 export interface ManagedMemoryUpsertResult extends ManagedMemoryMutationResult {
     imported: number;
+}
+
+export interface VectorMemoryEditableFields {
+    title: string;
+    content: string;
+    importance: number;
 }
 
 function normalizeCloudMemories(memories: VectorMemory[]): VectorMemory[] {
@@ -117,6 +127,42 @@ export async function deleteVectorMemoryManaged(
         memories: await listLocalMemoriesNormalized(charId, deps),
         mode: 'local_fallback',
         reason: cloudResult.reason,
+    };
+}
+
+export async function updateVectorMemoryManaged(
+    charId: string,
+    memory: VectorMemory,
+    updates: VectorMemoryEditableFields,
+    hasCloudSyncTarget: boolean,
+    deps: Pick<
+        MemoryCenterActionDeps,
+        'updateCloudMemory' | 'saveLocalMemory' | 'pullCloudMemories' | 'replaceLocalMemories' | 'listLocalMemories'
+    >,
+): Promise<ManagedMemoryMutationResult> {
+    const updatedMemory: VectorMemory = {
+        ...memory,
+        ...updates,
+        updatedAt: Date.now(),
+    };
+
+    const cloudResult = await deps.updateCloudMemory(memory.id, updates);
+    if (cloudResult.ok) {
+        const refreshed = await refreshVectorMemoryCache(charId, deps);
+        return {
+            memories: refreshed.memories,
+            mode: 'cloud',
+            reason: cloudResult.reason,
+        };
+    }
+
+    const fallbackSyncState = resolveLocalFallbackSyncState(hasCloudSyncTarget);
+    await deps.saveLocalMemory(withVectorMemorySyncState(updatedMemory, fallbackSyncState));
+
+    return {
+        memories: await listLocalMemoriesNormalized(charId, deps),
+        mode: 'local_fallback',
+        reason: fallbackSyncState,
     };
 }
 

@@ -1,16 +1,17 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars,migrateCloudCharacterInstance } from '../utils/backendClient';
+import { buildBackendHeaders,getBackendUrl,getUserId,sanitizeBackendHeader,setUserId,pushMemories,pullMemories,listCloudChars,migrateCloudCharacterInstance,updateCloudMemory } from '../utils/backendClient';
 import { DB } from '../utils/db';
 import { useOS } from '../context/OSContext';
 import { haptic } from '../utils/haptics';
-import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
+import { getEmbeddingConfig,getSecondaryApiConfig,hasCloudSyncTarget } from '../utils/runtimeConfig';
 import { safeTimeoutSignal } from '../utils/safeTimeout';
 import { findCharacterByAnyId,getCharacterIdentityIds,getOrphanCloudStats,getSelectedCharacterStats } from '../utils/cognitiveNetworkCharacterStats';
 import type { CognitiveCharStats } from '../utils/cognitiveNetworkCharacterStats';
 import { AppID,type CharacterProfile,type VectorMemory } from '../types';
 import MemoryBrowser from '../components/cognitive/MemoryBrowser';
+import { updateVectorMemoryManaged,type VectorMemoryEditableFields } from '../components/character/memoryCenterActions';
 
 /* Recovered comment */
 
@@ -1110,6 +1111,38 @@ const CognitiveNetworkApp: React.FC = () => {
         }
     }, [addToast, fetchStats]);
 
+    const handleUpdateBrowserVectorMemory = useCallback(async (
+        memoryId: string,
+        updates: VectorMemoryEditableFields,
+    ): Promise<{ mode: 'cloud' | 'local_fallback'; reason?: string }> => {
+        const memory = await DB.getVectorMemoryById(memoryId);
+        if (!memory) throw new Error('没有找到这条向量记忆');
+
+        const result = await updateVectorMemoryManaged(
+            memory.charId,
+            memory,
+            updates,
+            hasCloudSyncTarget(),
+            {
+                updateCloudMemory,
+                saveLocalMemory: DB.saveVectorMemory,
+                pullCloudMemories: pullMemories,
+                replaceLocalMemories: DB.replaceVectorMemories,
+                listLocalMemories: DB.getAllVectorMemories,
+            },
+        );
+
+        await Promise.all([
+            fetchStats(),
+            fetchGraphInsights(),
+        ]);
+
+        return {
+            mode: result.mode,
+            reason: result.reason,
+        };
+    }, [fetchGraphInsights, fetchStats]);
+
     const openClaimDrawer = useCallback((cloudCharId: string) => {
         setClaimDrawerCharId(cloudCharId);
         setClaimTargetCharId(selectedMemoryChar?.id || null);
@@ -1704,6 +1737,7 @@ const CognitiveNetworkApp: React.FC = () => {
                         userName={userProfile.name}
                         addToast={addToast}
                         onOpenSourceInChat={handleOpenSourceInChat}
+                        onUpdateVectorMemory={handleUpdateBrowserVectorMemory}
                     />
                 )}
 

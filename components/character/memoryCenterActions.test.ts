@@ -6,6 +6,7 @@ import {
     clearVectorMemoriesManaged,
     deleteVectorMemoryManaged,
     refreshVectorMemoryCache,
+    updateVectorMemoryManaged,
     upsertVectorMemoriesManaged,
 } from './memoryCenterActions';
 
@@ -200,6 +201,75 @@ describe('memoryCenterActions', () => {
             mode: 'cloud',
             reason: 'not_found',
         });
+    });
+
+    it('updates a cloud memory and refreshes the local cache', async () => {
+        const cloudMemory = makeMemory({
+            title: 'Updated title',
+            content: 'Updated content',
+            importance: 8,
+        });
+        const replaceLocalMemories = vi.fn().mockResolvedValue(undefined);
+
+        const result = await updateVectorMemoryManaged(
+            'char-1',
+            makeMemory(),
+            { title: 'Updated title', content: 'Updated content', importance: 8 },
+            true,
+            {
+                updateCloudMemory: vi.fn().mockResolvedValue({ ok: true }),
+                saveLocalMemory: vi.fn().mockResolvedValue(undefined),
+                pullCloudMemories: vi.fn().mockResolvedValue([cloudMemory]),
+                replaceLocalMemories,
+                listLocalMemories: vi.fn().mockResolvedValue([]),
+            },
+        );
+
+        expect(result.mode).toBe('cloud');
+        expect(result.memories).toEqual([
+            expect.objectContaining({
+                title: 'Updated title',
+                content: 'Updated content',
+                importance: 8,
+            }),
+        ]);
+        expect(replaceLocalMemories).toHaveBeenCalledWith('char-1', expect.arrayContaining([
+            expect.objectContaining({ title: 'Updated title' }),
+        ]));
+    });
+
+    it('keeps vector memory edits locally as pending_sync when cloud update fails', async () => {
+        const saveLocalMemory = vi.fn().mockResolvedValue(undefined);
+        const localEditedMemory = makeMemory({
+            title: 'Local edit',
+            content: 'Edited while offline',
+            importance: 7,
+            syncState: 'pending_sync' as const,
+        });
+
+        const result = await updateVectorMemoryManaged(
+            'char-1',
+            makeMemory(),
+            { title: 'Local edit', content: 'Edited while offline', importance: 7 },
+            true,
+            {
+                updateCloudMemory: vi.fn().mockResolvedValue({ ok: false, reason: 'backend_unavailable' }),
+                saveLocalMemory,
+                pullCloudMemories: vi.fn().mockResolvedValue(null),
+                replaceLocalMemories: vi.fn().mockResolvedValue(undefined),
+                listLocalMemories: vi.fn().mockResolvedValue([localEditedMemory]),
+            },
+        );
+
+        expect(result.mode).toBe('local_fallback');
+        expect(result.reason).toBe('pending_sync');
+        expect(saveLocalMemory).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Local edit',
+            content: 'Edited while offline',
+            importance: 7,
+            syncState: 'pending_sync',
+            cloudSynced: false,
+        }));
     });
 
     it('stores imported memories locally as pending_sync when cloud upsert fails', async () => {

@@ -166,6 +166,38 @@ describe('MemoryBrowser', () => {
         expect(onOpenSourceInChat).toHaveBeenCalledWith('char-1', 101);
     });
 
+    it('allows vector memories to be edited from the browser', async () => {
+        const onUpdateVectorMemory = vi.fn().mockResolvedValue({ mode: 'cloud' });
+        const { addToast } = renderBrowser({ onUpdateVectorMemory });
+
+        fireEvent.click(await screen.findByText('奶茶约定'));
+        fireEvent.click(await screen.findByRole('button', { name: /编辑记忆/ }));
+
+        fireEvent.change(screen.getByDisplayValue('奶茶约定'), {
+            target: { value: '新的奶茶约定' },
+        });
+        fireEvent.change(screen.getByDisplayValue('记得那次雨夜奶茶。'), {
+            target: { value: '修改后的雨夜奶茶细节。' },
+        });
+        fireEvent.change(screen.getByRole('slider'), {
+            target: { value: '6' },
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+        await waitFor(() => {
+            expect(onUpdateVectorMemory).toHaveBeenCalledWith('vm-1', {
+                title: '新的奶茶约定',
+                content: '修改后的雨夜奶茶细节。',
+                importance: 6,
+            });
+            expect(addToast).toHaveBeenCalledWith('已保存并同步云端', 'success');
+        });
+
+        expect(screen.getByText('新的奶茶约定')).toBeInTheDocument();
+        expect(screen.getByText(/修改后的雨夜奶茶细节/)).toBeInTheDocument();
+    });
+
     it('falls back to nearby chat records for traditional memories without source ids', async () => {
         mockedDB.getAllVectorMemories.mockResolvedValue([]);
         mockedDB.getMemoryRecords.mockResolvedValue([]);

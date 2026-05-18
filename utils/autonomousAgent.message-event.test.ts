@@ -112,6 +112,7 @@ describe('BackendAgentManager agent message saved event', () => {
                     backendMessageId: 'backend-msg-1',
                     role: 'assistant',
                     source: 'autonomous',
+                    contentPreview: '我回来了',
                 },
             ]);
             expect(mockedDB.saveMessageOnceByBackendId).toHaveBeenCalledWith(expect.objectContaining({

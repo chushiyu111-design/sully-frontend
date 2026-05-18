@@ -1,14 +1,19 @@
 import React,{ createContext,useContext,useEffect,useRef,useState } from 'react';
 import {
+    AGENT_MESSAGE_SAVED_EVENT_NAME,
+    type AgentMessageSavedEventDetail,
     BackendAgentManager,
     getAgentConfig,
     type SecondaryApiConfig,
 } from '../utils/autonomousAgent';
 import { didCharacterContextRelevantFieldsChange } from '../utils/agentContextSnapshot';
-import { disablePushSubscription,initPushSubscription } from '../utils/pushSubscription';
+import { showLocalNotification } from '../utils/localNotification';
+import { disablePushSubscription,getPushDebugInfo,initPushSubscription } from '../utils/pushSubscription';
 import { getSecondaryApiConfig as getRuntimeSecondaryApiConfig } from '../utils/runtimeConfig';
 import { consumeCharacterUpdateOptions,useCharacter } from './CharacterContext';
 import { useConfig } from './ConfigContext';
+import { useApp } from './AppContext';
+import { AppID } from '../types';
 
 export interface AgentContextType {}
 
@@ -36,8 +41,9 @@ const getAgentStartApiConfig = (): SecondaryApiConfig | undefined => {
 };
 
 export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { characters, activeCharacterId, isCharacterDataLoaded } = useCharacter();
+    const { characters, activeCharacterId, setActiveCharacterId, isCharacterDataLoaded } = useCharacter();
     const { isConfigLoaded } = useConfig();
+    const { openApp } = useApp();
     const [agentReloadCounter, setAgentReloadCounter] = useState(0);
     const [agentEnabled, setAgentEnabled] = useState(
         () => getAgentConfig().enabled,
@@ -171,6 +177,56 @@ export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             window.removeEventListener('pageshow', refreshPushSubscription);
         };
     }, [isAgentReady, agentEnabled, notificationsEnabled]);
+
+    useEffect(() => {
+        if (!isAgentReady || !agentEnabled || !notificationsEnabled) return;
+
+        const handleAgentMessageSaved = (event: Event) => {
+            const detail = (event as CustomEvent<AgentMessageSavedEventDetail>).detail;
+            if (!detail || detail.role !== 'assistant') return;
+            if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+
+            const pushInfo = getPushDebugInfo();
+            if (pushInfo.offlineCapable) return;
+
+            const character = characters.find(char =>
+                char.id === detail.charId
+                || char.id === detail.contentCharId
+                || char.charInstanceId === detail.contentCharId,
+            );
+            const title = character?.name || 'CSY-Sully OS';
+
+            void showLocalNotification({
+                title,
+                body: detail.contentPreview || '发来了一条新消息',
+                icon: character?.avatar || '/icons/icon-192.webp',
+                badge: '/icons/icon-96.webp',
+                tag: `agent-${detail.backendMessageId}`,
+                data: { charId: character?.id || detail.charId },
+                silent: false,
+                renotify: true,
+                requireInteraction: false,
+                vibrate: [200, 100, 200],
+                onClick: () => {
+                    window.focus();
+                    if (character) {
+                        setActiveCharacterId(character.id);
+                    }
+                    openApp(AppID.Chat);
+                },
+            });
+        };
+
+        window.addEventListener(AGENT_MESSAGE_SAVED_EVENT_NAME, handleAgentMessageSaved);
+        return () => window.removeEventListener(AGENT_MESSAGE_SAVED_EVENT_NAME, handleAgentMessageSaved);
+    }, [
+        characters,
+        isAgentReady,
+        agentEnabled,
+        notificationsEnabled,
+        openApp,
+        setActiveCharacterId,
+    ]);
 
     return (
         <AgentContext.Provider value={{}}>

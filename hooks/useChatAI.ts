@@ -38,6 +38,7 @@ import {
     shouldInjectPlaybackLyricSnapshot,
 } from '../utils/playbackLyricsRuntime';
 import { shouldInjectPlaybackContextFromState } from '../utils/playbackContextRuntime';
+import { showLocalNotification } from '../utils/localNotification';
 
 interface UseChatAIProps {
     char: CharacterProfile | undefined;
@@ -61,6 +62,15 @@ interface UseChatAIProps {
 
 interface TriggerAIOptions {
     transientUserPrompt?: string;
+}
+
+function buildChatNotificationBody(content: string, fallback = '发来了一条新消息'): string {
+    const normalized = (content || '')
+        .replace(new RegExp(BILINGUAL_MARKER, 'g'), '\n')
+        .replace(/\r\n?/g, '\n')
+        .trim();
+
+    return (normalized || fallback).slice(0, 500);
 }
 
 export const useChatAI = ({
@@ -708,6 +718,26 @@ mode 可选值：
                 let globalMsgIndex = 0;
                 let firstSavedMsgId: number | null = null;
                 let notificationPlayed = false;
+                const showBrowserChatNotification = (
+                    savedId: number,
+                    content: string,
+                    fallback?: string,
+                ) => {
+                    if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+
+                    void showLocalNotification({
+                        title: char.name,
+                        body: buildChatNotificationBody(content, fallback),
+                        icon: char.avatar || '/icons/icon-192.webp',
+                        badge: '/icons/icon-96.webp',
+                        tag: `chat-${char.id}-${savedId}-${Date.now()}`,
+                        data: { charId: char.id, messageId: savedId },
+                        silent: false,
+                        renotify: true,
+                        requireInteraction: false,
+                        vibrate: [200, 100, 200],
+                    });
+                };
                 const playFirstNotification = () => {
                     if (notificationPlayed) { haptic.light(); return; }
                     notificationPlayed = true;
@@ -751,7 +781,8 @@ mode 可选值：
                         const voiceText = durMatch[2].trim();
 
                         if (textBefore) {
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            showBrowserChatNotification(savedId, textBefore);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -764,6 +795,7 @@ mode 可选值：
                                 metadata: { duration: durationSecs, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
+                            showBrowserChatNotification(savedVoiceId, `语音消息：${voiceText}`);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -776,7 +808,8 @@ mode 可选值：
                         const estimatedDuration = Math.max(2, Math.ceil(voiceText.length / 4));
 
                         if (textBefore) {
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            showBrowserChatNotification(savedId, textBefore);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -789,6 +822,7 @@ mode 可选值：
                                 metadata: { duration: estimatedDuration, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
+                            showBrowserChatNotification(savedVoiceId2, `语音消息：${voiceText}`);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -796,7 +830,8 @@ mode 可选值：
                         }
                         if (textAfter) {
                             await new Promise(r => setTimeout(r, 400));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
+                            showBrowserChatNotification(savedId, textAfter);
                             await refreshRecentMessages();
                             saved++;
                         }
@@ -808,7 +843,8 @@ mode 可选值：
                         const estimatedDuration = Math.max(2, Math.ceil(voiceText.length / 4));
 
                         if (textBefore) {
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textBefore, replyTo: replyData });
+                            showBrowserChatNotification(savedId, textBefore);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -821,6 +857,7 @@ mode 可选值：
                                 metadata: { duration: estimatedDuration, sourceText: voiceText, hasAudio: false },
                                 replyTo: textBefore ? undefined : replyData,
                             });
+                            showBrowserChatNotification(savedVoiceId3, `语音消息：${voiceText}`);
                             await refreshRecentMessages();
                             playFirstNotification();
                             saved++;
@@ -828,7 +865,8 @@ mode 可选值：
                         }
                         if (textAfter) {
                             await new Promise(r => setTimeout(r, 400));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: textAfter });
+                            showBrowserChatNotification(savedId, textAfter);
                             await refreshRecentMessages();
                             saved++;
                         }
@@ -836,6 +874,7 @@ mode 可选值：
                         // Normal text message
                         const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: cleanChunk, replyTo: replyData });
                         if (firstSavedMsgId === null) firstSavedMsgId = savedId;
+                        showBrowserChatNotification(savedId, cleanChunk);
                         await refreshRecentMessages();
                         playFirstNotification();
                         saved++;
@@ -877,6 +916,7 @@ mode 可选值：
                         replyTo: replyData,
                     });
                     if (firstSavedMsgId === null) firstSavedMsgId = savedId;
+                    showBrowserChatNotification(savedId, fallbackText);
                     await refreshRecentMessages();
                     playFirstNotification();
                     return 1;
@@ -943,13 +983,15 @@ mode 可选值：
                                     metadata: { duration: estimatedDuration, sourceText: biContent, hasAudio: false },
                                     replyTo: replyData,
                                 });
+                                showBrowserChatNotification(savedVoiceId, originalText || translatedText);
                                 await refreshRecentMessages();
                                 playFirstNotification();
                                 globalMsgIndex++;
                                 onVoiceMessageSaved(savedVoiceId, originalText);
                             } else {
                                 // Auto-voice OFF: save as text with bilingual toggle
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData });
+                                const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: biContent, replyTo: replyData });
+                                showBrowserChatNotification(savedId, originalText || translatedText || biContent);
                                 await refreshRecentMessages();
                                 playFirstNotification();
                                 globalMsgIndex++;
@@ -981,7 +1023,8 @@ mode 可选值：
                         const foundEmoji = emojis.find(e => e.name === emojiName);
                         if (foundEmoji) {
                             await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                            const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                            showBrowserChatNotification(savedId, `发来一个表情：${emojiName}`);
                             await refreshRecentMessages();
                             playFirstNotification();
                         }
@@ -1004,7 +1047,8 @@ mode 可选值：
                             const foundEmoji = emojis.find(e => e.name === part.content);
                             if (foundEmoji) {
                                 await new Promise(r => setTimeout(r, Math.random() * 500 + 300));
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                                const savedId = await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                                showBrowserChatNotification(savedId, `发来一个表情：${part.content}`);
                                 await refreshRecentMessages();
                                 playFirstNotification();
                             }

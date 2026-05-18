@@ -64,6 +64,22 @@ const AgentSettings: React.FC = () => {
         }
     };
 
+    const handleNotificationsToggle = async (enabled: boolean) => {
+        haptic.medium();
+
+        if (
+            enabled
+            && typeof window !== 'undefined'
+            && 'Notification' in window
+            && Notification.permission === 'default'
+        ) {
+            await Notification.requestPermission();
+        }
+
+        update({ notificationsEnabled: enabled });
+        setPushInfo(getPushDebugInfo());
+    };
+
     return (
         <div className="space-y-5">
 
@@ -209,14 +225,14 @@ const AgentSettings: React.FC = () => {
                             <span className="text-sm font-bold text-[#7faa95]">🔔 系统通知</span>
                         </div>
                         <p className="text-[10px] text-[#a89b91] leading-relaxed max-w-[240px]">
-                            Web 端依赖浏览器的 Web Push 和 Service Worker。当前 Android 原生壳还没有接入真正的后端推送。
+                            Web 端优先使用 Web Push；如果页面还活着，只是短时间切到后台，会用浏览器通知兜底。
                         </p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                         <input
                             type="checkbox"
                             checked={config.notificationsEnabled}
-                            onChange={e => { haptic.medium(); update({ notificationsEnabled: e.target.checked }); }}
+                            onChange={e => { void handleNotificationsToggle(e.target.checked); }}
                             className="sr-only peer"
                         />
                         <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7faa95]"></div>
@@ -249,6 +265,11 @@ const AgentSettings: React.FC = () => {
                         <span className="text-[#8b7e74] font-bold">离线能力</span>
                         <span className={pushInfo.offlineCapable ? 'text-[#6f9f84] font-bold' : 'text-[#c4929f] font-bold'}>
                             {pushInfo.offlineCapable ? '可进入系统通知栏' : '未确认或不可用'}
+                        </span>
+
+                        <span className="text-[#8b7e74] font-bold">短后台兜底</span>
+                        <span className={permissionLabel === '已允许' ? 'text-[#6f9f84] font-bold' : 'text-[#c4929f] font-bold'}>
+                            {permissionLabel === '已允许' ? '页面存活时可用' : '需要允许通知'}
                         </span>
 
                         <span className="text-[#8b7e74] font-bold">修复建议</span>

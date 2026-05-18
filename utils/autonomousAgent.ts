@@ -7,7 +7,7 @@
  *   3. Receives backend-generated messages via SSE or polling
  *   4. Mirrors LifeStream fragments into the local message store
  *   5. Notifies the backend when the user replies
- *   6. Triggers foreground ticks while the app is open so local debug / interval settings take effect
+ *   6. Triggers open-page ticks while the app is visible, or briefly backgrounded for short Chrome sessions
  */
 
 import { DB } from './db';
@@ -111,6 +111,7 @@ const LIFE_STREAM_VISIBILITY_STORAGE_PREFIX = 'agent_lifestream_visibility_';
 const AUTONOMOUS_DEBUG_STORAGE_KEY = 'autonomous_debug';
 export const LIFE_STREAM_VISIBILITY_EVENT_NAME = 'agent-lifestream-visibility-changed';
 export const AGENT_MESSAGE_SAVED_EVENT_NAME = 'agent-message-saved';
+export const SHORT_BACKGROUND_TICK_GRACE_MS = 5 * 60_000;
 
 export interface AgentMessageSavedEventDetail {
     charId: string;
@@ -119,6 +120,7 @@ export interface AgentMessageSavedEventDetail {
     backendMessageId: string;
     role: string;
     source: string;
+    contentPreview: string;
 }
 
 type MemorySummary = Pick<
@@ -244,6 +246,11 @@ function getBackendMessageTargetClientId(
         }
     }
     return '';
+}
+
+function buildAgentMessagePreview(content: unknown): string {
+    if (typeof content !== 'string') return '';
+    return content.replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 function pickTopMemory(memories: MemorySummary[]): MemorySummary | undefined {
@@ -456,6 +463,8 @@ export class BackendAgentManager {
     private reconnectDelay = 1000;
     private foregroundTickInFlight = false;
     private lastContextPushAt = 0;
+    private hiddenSinceAt = 0;
+    private visibilityChangeHandler: (() => void) | null = null;
 
     start(
         charId: string,
@@ -543,6 +552,31 @@ export class BackendAgentManager {
             clearInterval(this.contextTimer);
             this.contextTimer = null;
         }
+        if (this.visibilityChangeHandler && typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', this.visibilityChangeHandler);
+            this.visibilityChangeHandler = null;
+        }
+        this.hiddenSinceAt = 0;
+    }
+
+    private syncVisibilityStateForTicks(): void {
+        if (typeof document === 'undefined') {
+            this.hiddenSinceAt = 0;
+            return;
+        }
+
+        this.hiddenSinceAt = document.visibilityState === 'visible' ? 0 : Date.now();
+    }
+
+    private canRunOpenPageTick(): boolean {
+        if (typeof document === 'undefined') return true;
+        if (document.visibilityState === 'visible') return true;
+
+        if (!this.hiddenSinceAt) {
+            this.hiddenSinceAt = Date.now();
+        }
+
+        return Date.now() - this.hiddenSinceAt <= SHORT_BACKGROUND_TICK_GRACE_MS;
     }
 
     private startForegroundTickLoop(config: AgentConfig): void {
@@ -553,9 +587,15 @@ export class BackendAgentManager {
             console.log(`[Agent] Foreground tick loop started (${intervalMs}ms)`);
         }
 
+        if (typeof document !== 'undefined' && !this.visibilityChangeHandler) {
+            this.visibilityChangeHandler = () => this.syncVisibilityStateForTicks();
+            this.visibilityChangeHandler();
+            document.addEventListener('visibilitychange', this.visibilityChangeHandler);
+        }
+
         this.tickTimer = setInterval(() => {
             if (this.stopped) return;
-            if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+            if (!this.canRunOpenPageTick()) return;
 
             this.triggerForegroundTick().catch((error: any) => {
                 if (getAutonomousDebugEnabled()) {
@@ -661,6 +701,7 @@ export class BackendAgentManager {
                     backendMessageId,
                     role,
                     source,
+                    contentPreview: buildAgentMessagePreview(message.content),
                 },
             }));
         }

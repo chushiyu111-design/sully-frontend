@@ -19,6 +19,7 @@ import CharacterLifeProfileCard from '../components/character/CharacterLifeProfi
 import { safeResponseJson } from '../utils/safeApi';
 import { useCharacterScreenDeps } from '../hooks/useCharacterScreenDeps';
 import type { CharacterUpdateOptions } from '../context/CharacterContext';
+import { formatMemoryArchiveLine,selectMessagesForMemoryArchive } from '../utils/archiveMessageSelector';
 
 const CHARACTER_AUTO_SAVE_DEBOUNCE_MS = 350;
 const DEFAULT_WORLDBOOK_CATEGORY = '未分类设定 (General)';
@@ -836,7 +837,7 @@ const CharacterComponent: React.FC = () => {
         setBatchProgress('Initializing...');
 
         try {
-            const msgs = await DB.getMessagesByCharId(targetId);
+            const msgs = selectMessagesForMemoryArchive(await DB.getMessagesByCharId(targetId));
             const msgsByDate: Record<string, any[]> = {};
 
             msgs.forEach(m => {
@@ -863,15 +864,10 @@ const CharacterComponent: React.FC = () => {
                 setBatchProgress(`Processing ${date} (${i + 1}/${dates.length})`);
 
                 const dayMsgs = msgsByDate[date];
-                const rawLog = dayMsgs.map(m => {
-                    if (m.type === 'call_log') return m.content; // 已含 [电话记录] 标记，直接透传
-                    const time = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-                    let content = m.content;
-                    if (m.type === 'image') content = '[图片/Image]';
-                    if (m.type === 'emoji') content = `[表情包: ${m.content.split('/').pop() || 'sticker'}]`;
-
-                    return `[${time}] ${m.role === 'user' ? userProfile.name : formData.name}: ${content}`;
-                }).join('\n');
+                const rawLog = dayMsgs.map(m => formatMemoryArchiveLine(m, {
+                    charName: formData.name,
+                    userName: userProfile.name,
+                })).join('\n');
 
                 // Use selected template (same as ChatApp) with variable substitution
                 const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];

@@ -37,6 +37,7 @@ import {
   type AgentTodayScheduleState,
 } from '../utils/agentBackendClient';
 import { buildLifeProfileContextSnapshot } from '../utils/lifeProfileContextSnapshot';
+import { formatMemoryArchiveLine,selectMessagesForMemoryArchive } from '../utils/archiveMessageSelector';
 
 function toAgentApiConfig(value: unknown): AgentApiConfig | undefined {
     const record = value as Partial<AgentApiConfig> | undefined;
@@ -1303,7 +1304,7 @@ const Chat: React.FC = () => {
             addToast('请先配置 API Key', 'error');
             return;
         }
-        const allMessages = await DB.getMessagesByCharId(char.id);
+        const allMessages = selectMessagesForMemoryArchive(await DB.getMessagesByCharId(char.id));
         const msgsByDate: Record<string, Message[]> = {};
         allMessages
             .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
@@ -1332,10 +1333,13 @@ const Chat: React.FC = () => {
 
             for (const dateStr of datesToProcess) {
                 const dayMsgs = msgsByDate[dateStr];
-                const rawLog = dayMsgs.map(m => {
-                    if (m.type === 'call_log') return m.content; // 已含 [电话记录] 标记，直接透传
-                    return `[${formatTime(m.timestamp)}] ${m.role === 'user' ? userProfile.name : char.name}: ${m.type === 'image' ? '[Image]' : m.content}`;
-                }).join('\n');
+                const rawLog = dayMsgs.map(m => formatMemoryArchiveLine(m, {
+                    charName: char.name,
+                    userName: userProfile.name,
+                    imageLabel: '[Image]',
+                    formatEmoji: false,
+                    formatTime,
+                })).join('\n');
 
                 let prompt = template;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);

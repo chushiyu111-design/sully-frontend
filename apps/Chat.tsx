@@ -37,7 +37,6 @@ import {
   type AgentTodayScheduleState,
 } from '../utils/agentBackendClient';
 import { buildLifeProfileContextSnapshot } from '../utils/lifeProfileContextSnapshot';
-import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 
 function toAgentApiConfig(value: unknown): AgentApiConfig | undefined {
     const record = value as Partial<AgentApiConfig> | undefined;
@@ -339,7 +338,6 @@ const Chat: React.FC = () => {
             if (!contextSnapshot) return;
             const result = await ensureAgentTodayLife(char.id, contextSnapshot, {
                 mainApiConfig: toAgentApiConfig(apiConfig),
-                apiConfig: toAgentApiConfig(getSecondaryApiConfig()),
             });
             if (visible) {
                 if (todayLifeEnsureSeqRef.current !== seq) return;
@@ -1011,6 +1009,7 @@ const Chat: React.FC = () => {
             '你可以自然给出 1-2 个符合你性格和我们关系的地点选择。',
             '只回复角色会对我说的话。不要提系统、AI、功能、提示词，也不要解释这个提醒。',
         ].join('\n');
+
         void triggerAI(messagesRef.current, { transientUserPrompt: transientPrompt });
     }, [char, triggerAI]);
 

@@ -28,7 +28,7 @@ const notificationMocks = vi.hoisted(() => ({
 }));
 const runtimeConfigMocks = vi.hoisted(() => ({
     getPrimaryApiConfig: vi.fn(),
-    getSecondaryApiConfig: vi.fn(),
+    selectSecondaryApiConfig: vi.fn(),
 }));
 const agentMocks = vi.hoisted(() => ({
     disconnectFrontend: vi.fn(),
@@ -66,7 +66,7 @@ vi.mock('./AppContext', () => ({
 
 vi.mock('../utils/runtimeConfig', () => ({
     getPrimaryApiConfig: runtimeConfigMocks.getPrimaryApiConfig,
-    getSecondaryApiConfig: runtimeConfigMocks.getSecondaryApiConfig,
+    selectSecondaryApiConfig: runtimeConfigMocks.selectSecondaryApiConfig,
 }));
 
 vi.mock('../utils/pushSubscription', () => ({
@@ -119,7 +119,7 @@ describe('AgentContext location updates', () => {
             baseUrl: '',
             model: 'gpt-4o-mini',
         });
-        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue({
+        runtimeConfigMocks.selectSecondaryApiConfig.mockReturnValue({
             apiKey: 'sub-key',
             baseUrl: 'https://sub.example.com',
             model: 'gpt-sub',
@@ -165,7 +165,7 @@ describe('AgentContext location updates', () => {
         );
 
         expect(agentMocks.start).not.toHaveBeenCalled();
-        expect(runtimeConfigMocks.getSecondaryApiConfig).not.toHaveBeenCalled();
+        expect(runtimeConfigMocks.selectSecondaryApiConfig).not.toHaveBeenCalled();
     });
 
     it('does not start backend agent with the primary API when secondary API is missing', () => {
@@ -174,7 +174,7 @@ describe('AgentContext location updates', () => {
             baseUrl: 'https://main.example.com',
             model: 'gpt-main',
         });
-        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue(undefined);
+        runtimeConfigMocks.selectSecondaryApiConfig.mockReturnValue(undefined);
 
         render(
             <AgentProvider>
@@ -192,7 +192,7 @@ describe('AgentContext location updates', () => {
             baseUrl: 'https://main.example.com',
             model: 'gpt-main',
         });
-        runtimeConfigMocks.getSecondaryApiConfig.mockReturnValue({
+        runtimeConfigMocks.selectSecondaryApiConfig.mockReturnValue({
             apiKey: 'sub-key',
             baseUrl: 'https://sub.example.com',
             model: '',

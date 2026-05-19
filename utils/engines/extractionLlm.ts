@@ -1,5 +1,6 @@
 import type { APIConfig } from '../../types';
 import { formatMessagesForContext } from '../messageContext';
+import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from '../runtimeConfig';
 
 export interface ExtractResult {
     action: 'create' | 'update' | 'skip' | 'invalidate';
@@ -106,28 +107,38 @@ export async function callLLM(
         promptText: string,
         maxTokens: number,
     ): Promise<{ content: string; truncated: boolean }> => {
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiConfig.apiKey}`,
-            },
-            body: JSON.stringify({
-                model: apiConfig.model,
-                messages: [{ role: 'user', content: promptText }],
-                temperature: 0.3,
-                max_tokens: maxTokens,
-            }),
-            signal,
-        });
+        let response: Response;
+        try {
+            response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiConfig.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: apiConfig.model,
+                    messages: [{ role: 'user', content: promptText }],
+                    temperature: 0.3,
+                    max_tokens: maxTokens,
+                }),
+                signal,
+            });
+        } catch (error) {
+            markSecondaryApiConfigFailure(apiConfig, error);
+            throw error;
+        }
 
         if (!response.ok) {
             const detail = await readLlmErrorDetail(response);
             const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
-            throw new Error(`LLM API error ${response.status}${suffix}`);
+            const error = new Error(`LLM API error ${response.status}${suffix}`);
+            (error as any).status = response.status;
+            markSecondaryApiConfigFailure(apiConfig, error);
+            throw error;
         }
 
         const data = await response.json();
+        markSecondaryApiConfigSuccess(apiConfig);
         const content = (data.choices?.[0]?.message?.content || '')
             .replace(/```json/g, '')
             .replace(/```/g, '')

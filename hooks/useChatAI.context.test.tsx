@@ -6,6 +6,10 @@ import { useChatAI } from './useChatAI';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { safeFetchJson } from '../utils/safeApi';
+import { VectorMemoryExtractor } from '../utils/vectorMemoryExtractor';
+import { MindSnapshotExtractor } from '../utils/mindSnapshotExtractor';
+import { EventExtractor } from '../utils/eventExtractor';
+import { getEmbeddingConfig, getSecondaryApiConfig, selectSecondaryApiConfig } from '../utils/runtimeConfig';
 import type { CharacterProfile, Message } from '../types';
 
 vi.mock('../utils/db', () => ({
@@ -81,8 +85,13 @@ vi.mock('../utils/deepseekPrompts', () => ({
 }));
 
 vi.mock('../utils/runtimeConfig', () => ({
+    DEFAULT_CHAT_TEMPERATURE: 0.85,
     getEmbeddingConfig: vi.fn(() => ({ apiKey: '' })),
     getSecondaryApiConfig: vi.fn(() => null),
+    normalizeChatTemperature: vi.fn((value: unknown, fallback: number) => (
+        typeof value === 'number' && Number.isFinite(value) ? value : fallback
+    )),
+    selectSecondaryApiConfig: vi.fn(() => null),
 }));
 
 vi.mock('../utils/autonomousAgent', () => ({
@@ -126,6 +135,12 @@ vi.mock('../utils/playbackContextRuntime', () => ({
 const mockedDB = vi.mocked(DB);
 const mockedChatPrompts = vi.mocked(ChatPrompts);
 const mockedSafeFetchJson = vi.mocked(safeFetchJson);
+const mockedGetEmbeddingConfig = vi.mocked(getEmbeddingConfig);
+const mockedGetSecondaryApiConfig = vi.mocked(getSecondaryApiConfig);
+const mockedSelectSecondaryApiConfig = vi.mocked(selectSecondaryApiConfig);
+const mockedVectorMemoryExtractor = vi.mocked(VectorMemoryExtractor);
+const mockedMindSnapshotExtractor = vi.mocked(MindSnapshotExtractor);
+const mockedEventExtractor = vi.mocked(EventExtractor);
 
 function makeMessage(id: number, content: string): Message {
     return {
@@ -141,6 +156,9 @@ function makeMessage(id: number, content: string): Message {
 describe('useChatAI context loading', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockedGetEmbeddingConfig.mockReturnValue({ apiKey: '' } as any);
+        mockedGetSecondaryApiConfig.mockReturnValue(null as any);
+        mockedSelectSecondaryApiConfig.mockReturnValue(null as any);
         mockedDB.getRecentMessagesByCharId.mockResolvedValue([makeMessage(2, 'full db context')]);
         mockedSafeFetchJson.mockResolvedValue({
             choices: [{ message: { content: 'assistant reply' } }],
@@ -189,5 +207,49 @@ describe('useChatAI context loading', () => {
             undefined,
             [],
         );
+    });
+
+    it('does not run secondary background tasks through the primary API when secondary API is missing', async () => {
+        mockedGetEmbeddingConfig.mockReturnValue({ apiKey: 'embedding-key' } as any);
+        mockedGetSecondaryApiConfig.mockReturnValue(null as any);
+        mockedSelectSecondaryApiConfig.mockReturnValue(null as any);
+        const setMessages = vi.fn();
+        const char = {
+            id: 'char-1',
+            name: 'Sully',
+            avatar: '',
+            description: '',
+            systemPrompt: '',
+            memories: [],
+            contextLimit: 777,
+            statusBarMode: 'classic',
+            vectorMemoryEnabled: true,
+            vectorMemoryAutoExtract: true,
+        } as CharacterProfile;
+
+        const { result } = renderHook(() => useChatAI({
+            char,
+            userProfile: { name: 'Tester', avatar: '' } as any,
+            apiConfig: { baseUrl: 'https://primary.example.test', apiKey: 'sk-primary', model: 'primary-model' },
+            groups: [],
+            emojis: [],
+            categories: [],
+            addToast: vi.fn(),
+            setMessages,
+        }));
+
+        await act(async () => {
+            await result.current.triggerAI([makeMessage(1, '明天提醒我开会')]);
+        });
+
+        expect(mockedSafeFetchJson).toHaveBeenCalledTimes(1);
+        expect(mockedSafeFetchJson).toHaveBeenCalledWith(
+            'https://primary.example.test/chat/completions',
+            expect.objectContaining({ method: 'POST' }),
+        );
+        expect(mockedMindSnapshotExtractor.senseBefore).not.toHaveBeenCalled();
+        expect(mockedMindSnapshotExtractor.generateInnerVoice).not.toHaveBeenCalled();
+        expect(mockedVectorMemoryExtractor.maybeExtract).not.toHaveBeenCalled();
+        expect(mockedEventExtractor.extract).not.toHaveBeenCalled();
     });
 });

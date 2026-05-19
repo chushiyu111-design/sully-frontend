@@ -6,18 +6,27 @@ import {
     EMBEDDING_BASE_URL_KEY,
     EMBEDDING_MODEL_KEY,
     EMBEDDING_PROVIDER_KEY,
+    DEFAULT_CHAT_TEMPERATURE,
     LEGACY_SUB_API_BASE_URL_KEY,
     LEGACY_SUB_API_KEY,
     LEGACY_SUB_API_MODEL_KEY,
     REALTIME_CONFIG_KEY,
     SECONDARY_API_CONFIG_KEY,
+    SECONDARY_API_POOL_CURSOR_KEY,
+    SECONDARY_API_POOL_KEY,
+    SECONDARY_API_POOL_STATE_KEY,
     STT_CONFIG_KEY,
     getEmbeddingConfig,
     getRealtimeConfig,
     getSecondaryApiConfig,
+    getSecondaryApiPool,
     getSttConfig,
     hasCloudSyncTarget,
+    markSecondaryApiConfigFailure,
+    normalizeChatTemperature,
+    selectSecondaryApiConfig,
     setEmbeddingConfig,
+    setSecondaryApiPool,
     setSecondaryApiConfig,
 } from './runtimeConfig';
 
@@ -46,10 +55,18 @@ describe('runtimeConfig', () => {
             apiKey: 'structured-key',
             baseUrl: 'https://llm.example.com',
             model: 'gpt-structured',
+            temperature: DEFAULT_CHAT_TEMPERATURE,
             useGeminiJailbreak: false,
             useDeepSeekMode: false,
             disablePrefill: false,
         });
+    });
+
+    it('normalizes chat temperature with clamping and the current default', () => {
+        expect(normalizeChatTemperature(undefined)).toBe(DEFAULT_CHAT_TEMPERATURE);
+        expect(normalizeChatTemperature('1.234')).toBe(1.23);
+        expect(normalizeChatTemperature('-1')).toBe(0);
+        expect(normalizeChatTemperature(9)).toBe(2);
     });
 
     it('writes the secondary API config to both the structured key and legacy keys', () => {
@@ -67,6 +84,58 @@ describe('runtimeConfig', () => {
         expect(localStorage.getItem(LEGACY_SUB_API_KEY)).toBe('sub-key');
         expect(localStorage.getItem(LEGACY_SUB_API_BASE_URL_KEY)).toBe('https://llm.example.com');
         expect(localStorage.getItem(LEGACY_SUB_API_MODEL_KEY)).toBe('gpt-test');
+        expect(getSecondaryApiPool()).toHaveLength(1);
+    });
+
+    it('round-robins enabled secondary API pool entries', () => {
+        setSecondaryApiPool([
+            {
+                id: 'sub-a',
+                name: 'A',
+                enabled: true,
+                config: { apiKey: 'key-a', baseUrl: 'https://a.example.com', model: 'model-a' },
+            },
+            {
+                id: 'sub-b',
+                name: 'B',
+                enabled: true,
+                config: { apiKey: 'key-b', baseUrl: 'https://b.example.com', model: 'model-b' },
+            },
+        ]);
+
+        expect(selectSecondaryApiConfig()?.model).toBe('model-a');
+        expect(selectSecondaryApiConfig()?.model).toBe('model-b');
+        expect(selectSecondaryApiConfig()?.model).toBe('model-a');
+        expect(localStorage.getItem(SECONDARY_API_POOL_CURSOR_KEY)).toBe('1');
+    });
+
+    it('skips cooled-down secondary API pool entries', () => {
+        setSecondaryApiPool([
+            {
+                id: 'sub-a',
+                name: 'A',
+                enabled: true,
+                config: { apiKey: 'key-a', baseUrl: 'https://a.example.com', model: 'model-a' },
+            },
+            {
+                id: 'sub-b',
+                name: 'B',
+                enabled: true,
+                config: { apiKey: 'key-b', baseUrl: 'https://b.example.com', model: 'model-b' },
+            },
+        ]);
+
+        markSecondaryApiConfigFailure(
+            { apiKey: 'key-a', baseUrl: 'https://a.example.com', model: 'model-a' },
+            Object.assign(new Error('HTTP 429'), { status: 429 }),
+        );
+
+        expect(getSecondaryApiConfig()?.model).toBe('model-b');
+        expect(selectSecondaryApiConfig()?.model).toBe('model-b');
+
+        const state = JSON.parse(localStorage.getItem(SECONDARY_API_POOL_STATE_KEY) || '{}');
+        expect(state['sub-a'].cooldownUntil).toBeGreaterThan(Date.now());
+        expect(localStorage.getItem(SECONDARY_API_POOL_KEY)).toContain('model-a');
     });
 
     it('normalizes embedding config with provider-aware defaults', () => {

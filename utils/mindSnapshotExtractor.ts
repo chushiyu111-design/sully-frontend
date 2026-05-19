@@ -19,6 +19,7 @@ import { RealtimeContextManager } from './realtimeContext';
 import { composeCustomStatusTemplateHtml } from './statusTemplateComposer';
 import { parseStatusBlock } from './statusBlockParser';
 import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
+import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from './runtimeConfig';
 import {
   RawSenseOutput,
   SenseDelta,
@@ -197,30 +198,40 @@ async function callSecondaryLLM(
     temperature: number = 0.6,
 ): Promise<string | null> {
     const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
-    const resp = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiConfig.apiKey}`,
-        },
-        body: JSON.stringify({
-            model: apiConfig.model,
-            messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: user },
-            ],
-            temperature,
-            max_tokens: maxTokens,
-        }),
-        signal,
-    });
+    let resp: Response;
+    try {
+        resp = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [
+                    { role: 'system', content: system },
+                    { role: 'user', content: user },
+                ],
+                temperature,
+                max_tokens: maxTokens,
+            }),
+            signal,
+        });
+    } catch (error) {
+        markSecondaryApiConfigFailure(apiConfig, error);
+        throw error;
+    }
 
     if (!resp.ok) {
         const errBody = await resp.text().catch(() => '');
-        throw new Error(`HTTP ${resp.status}${errBody ? ': ' + errBody.slice(0, 100) : ''}`);
+        const error = new Error(`HTTP ${resp.status}${errBody ? ': ' + errBody.slice(0, 100) : ''}`);
+        (error as any).status = resp.status;
+        markSecondaryApiConfigFailure(apiConfig, error);
+        throw error;
     }
 
     const data = await resp.json();
+    markSecondaryApiConfigSuccess(apiConfig);
     return (data.choices?.[0]?.message?.content || '').trim();
 }
 

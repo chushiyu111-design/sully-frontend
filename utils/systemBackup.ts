@@ -916,7 +916,7 @@ const ALL_STORES = SYSTEM_BACKUP_ALWAYS_STORES;
 // localStorage keys to include in backup (sub API, embedding, backend, etc.)
 export const SYSTEM_BACKUP_LOCAL_STORAGE_KEYS = [
     'sub_api_key', 'sub_api_base_url', 'sub_api_model', 'sub_api_presets',
-    'os_sub_api_config', 'character_refine_prompts',
+    'os_sub_api_config', 'os_sub_api_pool', 'os_sub_api_pool_state', 'os_sub_api_pool_cursor', 'character_refine_prompts',
     'csyos_backend_token', 'csyos_backend_url',
     'embedding_provider', 'embedding_api_key', 'embedding_base_url', 'embedding_model',
     'embedding_api_key_openai', 'embedding_base_url_openai', 'embedding_model_openai',

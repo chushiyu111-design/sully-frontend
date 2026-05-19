@@ -4,24 +4,56 @@ import { useOS } from '../../context/OSContext';
 import { safeResponseJson } from '../../utils/safeApi';
 import Modal from '../../components/os/Modal';
 import { getGuardedInputProps } from '../../utils/inputGuards';
-import { getSecondaryApiConfig,setSecondaryApiConfig } from '../../utils/runtimeConfig';
+import {
+    getSecondaryApiPoolWithStatus,
+    setSecondaryApiPool,
+    type SecondaryApiPoolEntry,
+    type SecondaryApiPoolEntryWithStatus,
+} from '../../utils/runtimeConfig';
 import { readJsonStorage,safeLocalStorageGet,safeLocalStorageSet,writeJsonStorage } from '../../utils/storage';
 
 const SUB_API_PRESETS_KEY = 'sub_api_presets';
 const BODY_SIGNAL_MODE_KEY = 'body_signal_mode';
 
 function getInitialSubApiState() {
-    const config = getSecondaryApiConfig();
+    const entry = getSecondaryApiPoolWithStatus()[0];
+    const config = entry?.config;
     return {
+        editingId: entry?.id || null,
         apiKey: config?.apiKey || '',
         baseUrl: config?.baseUrl || '',
         model: config?.model || '',
     };
 }
 
+function buildPoolEntry(
+    current: SecondaryApiPoolEntryWithStatus | undefined,
+    config: { baseUrl: string; apiKey: string; model: string },
+    index: number,
+): SecondaryApiPoolEntry {
+    return {
+        id: current?.id || `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: current?.name || `副 API ${index + 1}`,
+        enabled: current?.enabled ?? true,
+        config,
+    };
+}
+
+function getPoolStatus(entry: SecondaryApiPoolEntryWithStatus): { label: string; tone: 'ready' | 'cooldown' | 'off' } {
+    if (!entry.enabled) return { label: '已停用', tone: 'off' };
+    const cooldownUntil = entry.cooldownUntil || 0;
+    if (cooldownUntil > Date.now()) {
+        const minutes = Math.max(1, Math.ceil((cooldownUntil - Date.now()) / 60000));
+        return { label: `冷却 ${minutes} 分钟`, tone: 'cooldown' };
+    }
+    return { label: '可用', tone: 'ready' };
+}
+
 const SubApiSettings: React.FC = () => {
     const { addToast } = useOS();
 
+    const [subPool, setSubPool] = useState<SecondaryApiPoolEntryWithStatus[]>(() => getSecondaryApiPoolWithStatus());
+    const [editingPoolId, setEditingPoolId] = useState<string | null>(() => getInitialSubApiState().editingId);
     const [subKey, setSubKey] = useState(() => getInitialSubApiState().apiKey);
     const [subUrl, setSubUrl] = useState(() => getInitialSubApiState().baseUrl);
     const [subModel, setSubModel] = useState(() => getInitialSubApiState().model);
@@ -37,32 +69,85 @@ const SubApiSettings: React.FC = () => {
     });
     const [signalMode, setSignalMode] = useState(() => safeLocalStorageGet(BODY_SIGNAL_MODE_KEY) || 'raw');
 
+    const persistSubPool = (entries: SecondaryApiPoolEntry[]) => {
+        setSecondaryApiPool(entries);
+        setSubPool(getSecondaryApiPoolWithStatus());
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('agent-config-changed'));
+        }
+    };
+
     const handleSaveSubApi = () => {
         const trimmedKey = subKey.trim();
-        const trimmedUrl = subUrl.trim();
+        const trimmedUrl = subUrl.trim().replace(/\/+$/, '');
         const trimmedModel = subModel.trim();
 
         if (!trimmedKey && !trimmedUrl && !trimmedModel) {
-            setSecondaryApiConfig(null);
+            persistSubPool([]);
+            setEditingPoolId(null);
             setSubKey('');
             setSubUrl('');
             setSubModel('');
         } else {
-            setSecondaryApiConfig({
+            const config = {
                 apiKey: trimmedKey,
                 baseUrl: trimmedUrl,
                 model: trimmedModel,
-            });
+            };
+            const currentIndex = subPool.findIndex(entry => entry.id === editingPoolId);
+            const current = currentIndex >= 0 ? subPool[currentIndex] : undefined;
+            const nextEntry = buildPoolEntry(current, config, currentIndex >= 0 ? currentIndex : subPool.length);
+            const nextPool = currentIndex >= 0
+                ? subPool.map(entry => entry.id === editingPoolId ? nextEntry : entry)
+                : [...subPool, nextEntry];
+
+            persistSubPool(nextPool);
+            setEditingPoolId(nextEntry.id);
             setSubKey(trimmedKey);
-            setSubUrl(trimmedUrl.replace(/\/+$/, ''));
+            setSubUrl(trimmedUrl);
             setSubModel(trimmedModel);
         }
 
         setSubStatusMsg('配置已保存');
         setTimeout(() => setSubStatusMsg(''), 2000);
         setSubTestStatus('idle');
-        if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('agent-config-changed'));
+    };
+
+    const handleNewPoolEntry = () => {
+        setEditingPoolId(null);
+        setSubKey('');
+        setSubUrl('');
+        setSubModel('');
+        setSubStatusMsg('正在新增');
+        setSubTestStatus('idle');
+        setTimeout(() => setSubStatusMsg(''), 1200);
+    };
+
+    const handleEditPoolEntry = (entry: SecondaryApiPoolEntryWithStatus) => {
+        setEditingPoolId(entry.id);
+        setSubUrl(entry.config.baseUrl);
+        setSubKey(entry.config.apiKey);
+        setSubModel(entry.config.model);
+        setSubTestStatus('idle');
+        setSubStatusMsg(`正在编辑 ${entry.name}`);
+        setTimeout(() => setSubStatusMsg(''), 1500);
+    };
+
+    const handleTogglePoolEntry = (entryId: string) => {
+        persistSubPool(subPool.map(entry => (
+            entry.id === entryId ? { ...entry, enabled: !entry.enabled } : entry
+        )));
+    };
+
+    const handleRemovePoolEntry = (entryId: string) => {
+        const nextPool = subPool.filter(entry => entry.id !== entryId);
+        persistSubPool(nextPool);
+        if (editingPoolId === entryId) {
+            const nextEditing = nextPool[0];
+            setEditingPoolId(nextEditing?.id || null);
+            setSubUrl(nextEditing?.config.baseUrl || '');
+            setSubKey(nextEditing?.config.apiKey || '');
+            setSubModel(nextEditing?.config.model || '');
         }
     };
 
@@ -175,6 +260,58 @@ const SubApiSettings: React.FC = () => {
                     )}
 
                     <div>
+                        <div className="flex items-center justify-between mb-2 pl-1">
+                            <label className="text-[10px] font-bold text-[#b0a48a] uppercase tracking-widest">副 API 池</label>
+                            <button onClick={handleNewPoolEntry} className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200/60 rounded-full px-2.5 py-1 active:scale-95 transition-all">
+                                新增
+                            </button>
+                        </div>
+
+                        {subPool.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-[#e8e0cc]/80 bg-white/35 px-4 py-3 text-xs text-[#b0a48a]">
+                                还没有副 API。保存下方配置后会加入池，后台任务只会从这里分流。
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                {subPool.map((entry, index) => {
+                                    const status = getPoolStatus(entry);
+                                    const isEditing = editingPoolId === entry.id;
+                                    return (
+                                        <div key={entry.id} className={`rounded-2xl border px-3 py-2.5 transition-all ${isEditing ? 'bg-amber-50/70 border-amber-200/80' : 'bg-white/45 border-[#e8e0cc]/60'}`}>
+                                            <div className="flex items-start justify-between gap-2">
+                                                <button onClick={() => handleEditPoolEntry(entry)} className="min-w-0 flex-1 text-left">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-bold text-[#8b7e64]">{entry.name || `副 API ${index + 1}`}</span>
+                                                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${status.tone === 'ready'
+                                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                                            : status.tone === 'cooldown'
+                                                            ? 'bg-orange-50 text-orange-600 border border-orange-100'
+                                                            : 'bg-slate-50 text-slate-400 border border-slate-100'
+                                                        }`}>{status.label}</span>
+                                                    </div>
+                                                    <div className="mt-1 truncate font-mono text-[10px] text-[#b0a48a]">{entry.config.model}</div>
+                                                    <div className="truncate font-mono text-[9px] text-[#c2b79e]">{entry.config.baseUrl}</div>
+                                                    {entry.lastError && (
+                                                        <div className="mt-1 truncate text-[9px] text-orange-500">{entry.lastError}</div>
+                                                    )}
+                                                </button>
+                                                <div className="flex shrink-0 items-center gap-1">
+                                                    <button onClick={() => handleTogglePoolEntry(entry.id)} className={`rounded-full px-2.5 py-1 text-[10px] font-bold border transition-all ${entry.enabled ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
+                                                        {entry.enabled ? '启用' : '停用'}
+                                                    </button>
+                                                    <button onClick={() => handleRemovePoolEntry(entry.id)} className="rounded-full p-1.5 text-[#b0a48a] hover:bg-red-50 hover:text-red-400 transition-colors" aria-label="删除副 API">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div>
                         <label className="text-[10px] font-bold text-[#b0a48a] uppercase tracking-widest mb-1.5 block pl-1">URL</label>
                         <input type="text" value={subUrl} onChange={e => setSubUrl(e.target.value)} placeholder="https://..." className="w-full bg-white/50 border border-[#e8e0cc]/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" {...getGuardedInputProps({ kind: 'url', field: 'secondary-api-url' })} />
                     </div>
@@ -218,7 +355,7 @@ const SubApiSettings: React.FC = () => {
 
                     <div className="flex gap-2">
                         <button onClick={handleSaveSubApi} className="flex-1 py-3 rounded-2xl font-bold text-white shadow-lg shadow-amber-500/20 bg-gradient-to-r from-amber-500 to-yellow-500 active:scale-95 transition-all">
-                            {subStatusMsg || '保存配置'}
+                            {subStatusMsg || (editingPoolId ? '保存到池' : '新增到池')}
                         </button>
                         <button onClick={() => {
                             const name = prompt('预设名称：');
@@ -230,7 +367,7 @@ const SubApiSettings: React.FC = () => {
                 </div>
 
                 <p className="relative text-[10px] text-[#b0a48a] mt-4 leading-relaxed px-1">
-                    💡 此接口用于心声、情绪状态栏等辅助功能。建议使用 <b>Flash 系列</b>模型（如 Gemini Flash、GPT-4o-mini）以降低成本、提高效率。留空则自动使用主 API。
+                    💡 此接口用于心声、情绪状态栏等辅助功能。建议使用 <b>Flash 系列</b>模型（如 Gemini Flash、GPT-4o-mini）以降低成本、提高效率。后台任务会在启用项之间轮询分流，429 或超时会临时冷却 1 分钟。
                 </p>
             </section>
 

@@ -8,6 +8,7 @@ import {
     LEGACY_SUB_API_KEY,
     LEGACY_SUB_API_MODEL_KEY,
     SECONDARY_API_CONFIG_KEY,
+    SECONDARY_API_POOL_KEY,
 } from '../../utils/runtimeConfig';
 
 const { addToast } = vi.hoisted(() => ({
@@ -55,7 +56,7 @@ describe('SubApiSettings', () => {
             expect(keyInput.getAttribute('name')).toMatch(/^sully-field-[a-z0-9]+-[a-z0-9]+$/);
             expect(keyInput).toHaveAttribute('data-lpignore', 'true');
 
-            fireEvent.click(screen.getByRole('button', { name: /保存配置/i }));
+            fireEvent.click(screen.getByRole('button', { name: /保存到池/i }));
 
             expect(JSON.parse(localStorage.getItem(SECONDARY_API_CONFIG_KEY) || '{}')).toMatchObject({
                 apiKey: 'structured-key',
@@ -65,6 +66,7 @@ describe('SubApiSettings', () => {
             expect(localStorage.getItem(LEGACY_SUB_API_KEY)).toBe('structured-key');
             expect(localStorage.getItem(LEGACY_SUB_API_BASE_URL_KEY)).toBe('https://structured.example.com');
             expect(localStorage.getItem(LEGACY_SUB_API_MODEL_KEY)).toBe('gpt-structured');
+            expect(localStorage.getItem(SECONDARY_API_POOL_KEY)).toContain('gpt-structured');
             expect(listener).toHaveBeenCalledTimes(1);
         } finally {
             window.removeEventListener('agent-config-changed', listener);

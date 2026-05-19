@@ -30,6 +30,9 @@ export const PRIMARY_API_CONFIG_KEY = 'os_api_config';
 export const AVAILABLE_MODELS_KEY = 'os_available_models';
 export const API_PRESETS_KEY = 'os_api_presets';
 export const SECONDARY_API_CONFIG_KEY = 'os_sub_api_config';
+export const SECONDARY_API_POOL_KEY = 'os_sub_api_pool';
+export const SECONDARY_API_POOL_STATE_KEY = 'os_sub_api_pool_state';
+export const SECONDARY_API_POOL_CURSOR_KEY = 'os_sub_api_pool_cursor';
 export const REALTIME_CONFIG_KEY = 'os_realtime_config';
 export const TTS_CONFIG_KEY = 'os_tts_config';
 export const STT_CONFIG_KEY = 'os_stt_config';
@@ -37,6 +40,7 @@ export const STT_CONFIG_KEY = 'os_stt_config';
 export const LEGACY_SUB_API_KEY = 'sub_api_key';
 export const LEGACY_SUB_API_BASE_URL_KEY = 'sub_api_base_url';
 export const LEGACY_SUB_API_MODEL_KEY = 'sub_api_model';
+const SECONDARY_API_RETRY_COOLDOWN_MS = 60 * 1000;
 
 export const EMBEDDING_PROVIDER_KEY = 'embedding_provider';
 export const EMBEDDING_API_KEY_KEY = 'embedding_api_key';
@@ -45,6 +49,10 @@ export const EMBEDDING_MODEL_KEY = 'embedding_model';
 export const RERANK_API_KEY_KEY = 'cohere_rerank_api_key';
 export const RERANK_USE_PAID_KEY = 'cohere_rerank_use_paid';
 export const CHARACTER_REFINE_PROMPTS_KEY = 'character_refine_prompts';
+
+export const DEFAULT_CHAT_TEMPERATURE = 0.85;
+export const MIN_CHAT_TEMPERATURE = 0;
+export const MAX_CHAT_TEMPERATURE = 2;
 
 export const DEFAULT_RUNTIME_REALTIME_CONFIG: RealtimeConfig = {
     weatherEnabled: false,
@@ -74,6 +82,7 @@ export const DEFAULT_RUNTIME_API_CONFIG: APIConfig = {
     baseUrl: '',
     apiKey: '',
     model: 'gpt-4o-mini',
+    temperature: DEFAULT_CHAT_TEMPERATURE,
 };
 
 export const EMBEDDING_ENGINES: Record<
@@ -135,6 +144,7 @@ export interface RuntimeConfigSnapshot {
     api: {
         primary: APIConfig;
         secondary?: APIConfig;
+        secondaryPool: SecondaryApiPoolEntry[];
         availableModels: string[];
         presets: ApiPreset[];
     };
@@ -150,6 +160,27 @@ export interface CharacterRefinePromptConfig {
     content: string;
 }
 
+export interface SecondaryApiPoolEntry {
+    id: string;
+    name: string;
+    enabled: boolean;
+    config: APIConfig;
+}
+
+export interface SecondaryApiPoolEntryWithStatus extends SecondaryApiPoolEntry {
+    cooldownUntil?: number;
+    lastError?: string;
+    lastUsedAt?: number;
+}
+
+interface SecondaryApiPoolState {
+    [entryId: string]: {
+        cooldownUntil?: number;
+        lastError?: string;
+        lastUsedAt?: number;
+    };
+}
+
 function readJsonValue<T>(key: string): T | null {
     return readJsonStorage<T>(key);
 }
@@ -160,6 +191,20 @@ function normalizeString(value: unknown): string {
 
 function normalizeUrl(value: unknown): string {
     return normalizeString(value).replace(/\/+$/, '');
+}
+
+export function normalizeChatTemperature(
+    value: unknown,
+    fallback = DEFAULT_CHAT_TEMPERATURE,
+): number {
+    const numeric = typeof value === 'number'
+        ? value
+        : (typeof value === 'string' && value.trim() ? Number(value) : NaN);
+    const fallbackValue = Number.isFinite(fallback) ? fallback : DEFAULT_CHAT_TEMPERATURE;
+    if (!Number.isFinite(numeric)) return fallbackValue;
+
+    const clamped = Math.min(MAX_CHAT_TEMPERATURE, Math.max(MIN_CHAT_TEMPERATURE, numeric));
+    return Math.round(clamped * 100) / 100;
 }
 
 function normalizeEmbeddingProvider(value: unknown): EmbeddingProvider {
@@ -174,6 +219,7 @@ function normalizeApiConfig(
         baseUrl: normalizeUrl(value?.baseUrl) || defaults.baseUrl,
         apiKey: normalizeString(value?.apiKey),
         model: normalizeString(value?.model) || defaults.model,
+        temperature: normalizeChatTemperature(value?.temperature, defaults.temperature ?? DEFAULT_CHAT_TEMPERATURE),
         useGeminiJailbreak: value?.useGeminiJailbreak === true,
         useDeepSeekMode: value?.useDeepSeekMode === true,
         disablePrefill: value?.disablePrefill === true,
@@ -305,6 +351,42 @@ function normalizeApiPresets(value: unknown): ApiPreset[] {
         .filter((preset): preset is ApiPreset => Boolean(preset));
 }
 
+function normalizeSecondaryApiPool(value: unknown): SecondaryApiPoolEntry[] {
+    if (!Array.isArray(value)) return [];
+
+    const seenIds = new Set<string>();
+    return value
+        .map((item, index): SecondaryApiPoolEntry | null => {
+            if (!item || typeof item !== 'object') return null;
+            const parsed = item as Partial<SecondaryApiPoolEntry>;
+            const config = normalizeApiConfig(parsed.config || {}, DEFAULT_RUNTIME_API_CONFIG);
+            if (!hasCompleteApiConfig(config)) return null;
+
+            let id = normalizeString(parsed.id) || `sub-${index + 1}`;
+            while (seenIds.has(id)) {
+                id = `${id}-${index + 1}`;
+            }
+            seenIds.add(id);
+
+            return {
+                id,
+                name: normalizeString(parsed.name) || `副 API ${index + 1}`,
+                enabled: parsed.enabled !== false,
+                config,
+            };
+        })
+        .filter((entry): entry is SecondaryApiPoolEntry => Boolean(entry));
+}
+
+function readSecondaryApiPoolState(): SecondaryApiPoolState {
+    const value = readJsonValue<SecondaryApiPoolState>(SECONDARY_API_POOL_STATE_KEY);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function writeSecondaryApiPoolState(state: SecondaryApiPoolState): void {
+    safeLocalStorageSet(SECONDARY_API_POOL_STATE_KEY, JSON.stringify(state));
+}
+
 function hasCompleteApiConfig(config?: APIConfig): config is APIConfig {
     return Boolean(config?.apiKey && config.baseUrl && config.model);
 }
@@ -380,16 +462,7 @@ function readLegacySecondaryApiConfig(): APIConfig | undefined {
     return hasCompleteApiConfig(config) ? config : undefined;
 }
 
-export function getSecondaryApiConfig(): APIConfig | undefined {
-    const structured = normalizeApiConfig(readJsonValue<Partial<APIConfig>>(SECONDARY_API_CONFIG_KEY));
-    if (hasCompleteApiConfig(structured)) {
-        return structured;
-    }
-
-    return readLegacySecondaryApiConfig();
-}
-
-export function setSecondaryApiConfig(config?: APIConfig | null): void {
+function writeSecondaryCompatConfig(config?: APIConfig): void {
     if (!config) {
         safeLocalStorageRemove(SECONDARY_API_CONFIG_KEY);
         safeLocalStorageRemove(LEGACY_SUB_API_KEY);
@@ -403,6 +476,176 @@ export function setSecondaryApiConfig(config?: APIConfig | null): void {
     safeLocalStorageSet(LEGACY_SUB_API_KEY, normalized.apiKey);
     safeLocalStorageSet(LEGACY_SUB_API_BASE_URL_KEY, normalized.baseUrl);
     safeLocalStorageSet(LEGACY_SUB_API_MODEL_KEY, normalized.model);
+}
+
+function buildLegacySecondaryPoolEntry(config: APIConfig): SecondaryApiPoolEntry {
+    return {
+        id: 'secondary-default',
+        name: '副 API 1',
+        enabled: true,
+        config,
+    };
+}
+
+export function getSecondaryApiPool(): SecondaryApiPoolEntry[] {
+    const rawPool = readJsonValue<unknown>(SECONDARY_API_POOL_KEY);
+    const pool = normalizeSecondaryApiPool(rawPool);
+    if (pool.length > 0 || Array.isArray(rawPool)) {
+        return pool;
+    }
+
+    const structured = normalizeApiConfig(readJsonValue<Partial<APIConfig>>(SECONDARY_API_CONFIG_KEY));
+    if (hasCompleteApiConfig(structured)) {
+        return [buildLegacySecondaryPoolEntry(structured)];
+    }
+
+    const legacy = readLegacySecondaryApiConfig();
+    return legacy ? [buildLegacySecondaryPoolEntry(legacy)] : [];
+}
+
+export function getSecondaryApiPoolWithStatus(): SecondaryApiPoolEntryWithStatus[] {
+    const state = readSecondaryApiPoolState();
+    return getSecondaryApiPool().map(entry => ({
+        ...entry,
+        cooldownUntil: state[entry.id]?.cooldownUntil,
+        lastError: state[entry.id]?.lastError,
+        lastUsedAt: state[entry.id]?.lastUsedAt,
+    }));
+}
+
+export function setSecondaryApiPool(entries: SecondaryApiPoolEntry[]): void {
+    const normalized = normalizeSecondaryApiPool(entries);
+    if (normalized.length === 0) {
+        safeLocalStorageRemove(SECONDARY_API_POOL_KEY);
+        safeLocalStorageRemove(SECONDARY_API_POOL_STATE_KEY);
+        safeLocalStorageRemove(SECONDARY_API_POOL_CURSOR_KEY);
+        writeSecondaryCompatConfig(undefined);
+        return;
+    }
+
+    safeLocalStorageSet(SECONDARY_API_POOL_KEY, JSON.stringify(normalized));
+
+    const validIds = new Set(normalized.map(entry => entry.id));
+    const existingState = readSecondaryApiPoolState();
+    const nextState: SecondaryApiPoolState = {};
+    for (const id of validIds) {
+        if (existingState[id]) nextState[id] = existingState[id];
+    }
+    writeSecondaryApiPoolState(nextState);
+
+    const firstEnabled = normalized.find(entry => entry.enabled) || normalized[0];
+    writeSecondaryCompatConfig(firstEnabled.config);
+}
+
+function getRetryableStatus(error: unknown): number | null {
+    const anyError = error as { status?: unknown; name?: unknown; message?: unknown };
+    if (typeof anyError?.status === 'number') return anyError.status;
+
+    const message = String(anyError?.message || error || '');
+    const match = message.match(/\b(?:HTTP|API|status)\s*(429|408|500|502|503|504)\b/i)
+        || message.match(/\b(429|408|500|502|503|504)\b/);
+    return match ? Number(match[1]) : null;
+}
+
+export function isSecondaryApiRetryableError(error: unknown): boolean {
+    const anyError = error as { name?: unknown; message?: unknown };
+    const status = getRetryableStatus(error);
+    if (status === 429 || status === 408 || (status !== null && status >= 500 && status < 600)) return true;
+
+    const name = String(anyError?.name || '');
+    const message = String(anyError?.message || error || '');
+    return /abort|timeout|network|failed to fetch/i.test(`${name} ${message}`);
+}
+
+function findSecondaryApiPoolEntryByConfig(config: APIConfig): SecondaryApiPoolEntry | undefined {
+    const normalized = normalizeApiConfig(config);
+    return getSecondaryApiPool().find(entry =>
+        entry.config.baseUrl === normalized.baseUrl
+        && entry.config.apiKey === normalized.apiKey
+        && entry.config.model === normalized.model
+    );
+}
+
+export function markSecondaryApiConfigSuccess(config: APIConfig): void {
+    const entry = findSecondaryApiPoolEntryByConfig(config);
+    if (!entry) return;
+
+    const state = readSecondaryApiPoolState();
+    state[entry.id] = {
+        ...state[entry.id],
+        cooldownUntil: undefined,
+        lastError: undefined,
+        lastUsedAt: Date.now(),
+    };
+    writeSecondaryApiPoolState(state);
+}
+
+export function markSecondaryApiConfigFailure(config: APIConfig, error: unknown): void {
+    const entry = findSecondaryApiPoolEntryByConfig(config);
+    if (!entry) return;
+
+    const now = Date.now();
+    const message = String((error as { message?: unknown })?.message || error || '请求失败').slice(0, 160);
+    const retryable = isSecondaryApiRetryableError(error);
+    const state = readSecondaryApiPoolState();
+    state[entry.id] = {
+        ...state[entry.id],
+        cooldownUntil: retryable ? now + SECONDARY_API_RETRY_COOLDOWN_MS : state[entry.id]?.cooldownUntil,
+        lastError: message,
+        lastUsedAt: state[entry.id]?.lastUsedAt,
+    };
+    writeSecondaryApiPoolState(state);
+}
+
+export function getSecondaryApiConfig(): APIConfig | undefined {
+    const pool = getSecondaryApiPool().filter(entry => entry.enabled);
+    if (pool.length === 0) return undefined;
+
+    const now = Date.now();
+    const state = readSecondaryApiPoolState();
+    const candidates = pool.filter(entry => {
+        const cooldownUntil = state[entry.id]?.cooldownUntil || 0;
+        return cooldownUntil <= now;
+    });
+    if (candidates.length === 0) return undefined;
+
+    return candidates[0].config;
+}
+
+export function selectSecondaryApiConfig(): APIConfig | undefined {
+    const pool = getSecondaryApiPool().filter(entry => entry.enabled);
+    if (pool.length === 0) return undefined;
+
+    const now = Date.now();
+    const state = readSecondaryApiPoolState();
+    const candidates = pool.filter(entry => {
+        const cooldownUntil = state[entry.id]?.cooldownUntil || 0;
+        return cooldownUntil <= now;
+    });
+    if (candidates.length === 0) return undefined;
+
+    const cursorRaw = Number(safeLocalStorageGet(SECONDARY_API_POOL_CURSOR_KEY) || '0');
+    const cursor = Number.isFinite(cursorRaw) && cursorRaw >= 0 ? cursorRaw : 0;
+    const selected = candidates[cursor % candidates.length];
+    safeLocalStorageSet(SECONDARY_API_POOL_CURSOR_KEY, String((cursor + 1) % candidates.length));
+
+    state[selected.id] = {
+        ...state[selected.id],
+        lastUsedAt: now,
+    };
+    writeSecondaryApiPoolState(state);
+
+    return selected.config;
+}
+
+export function setSecondaryApiConfig(config?: APIConfig | null): void {
+    if (!config) {
+        setSecondaryApiPool([]);
+        return;
+    }
+
+    const normalized = normalizeApiConfig(config);
+    setSecondaryApiPool([buildLegacySecondaryPoolEntry(normalized)]);
 }
 
 export function getRealtimeConfig(): RealtimeConfig {
@@ -493,6 +736,7 @@ export function getRuntimeConfigSnapshot(): RuntimeConfigSnapshot {
         api: {
             primary: getPrimaryApiConfig(),
             secondary: getSecondaryApiConfig(),
+            secondaryPool: getSecondaryApiPool(),
             availableModels: getAvailableModels(),
             presets: getApiPresets(),
         },

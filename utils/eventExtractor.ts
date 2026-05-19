@@ -10,6 +10,7 @@
 
 import { addPendingEvent,PendingEvent } from './temporalContext';
 import { extractJsonTyped } from './safeApi';
+import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from './runtimeConfig';
 
 // ─── Configuration ──────────────────────────────────────────
 
@@ -145,11 +146,15 @@ async function extract(
             });
 
             if (!resp.ok) {
+                const error = new Error(`HTTP ${resp.status}`);
+                (error as any).status = resp.status;
+                markSecondaryApiConfigFailure(apiConfig, error);
                 console.warn(`⏰ [EventExtractor] LLM error ${resp.status}`);
                 return;
             }
 
             const data = await resp.json();
+            markSecondaryApiConfigSuccess(apiConfig);
             let content = (data.choices?.[0]?.message?.content || '').trim();
 
             // Strip <think>...</think> reasoning tags (DeepSeek-R1 / some models)
@@ -182,8 +187,10 @@ async function extract(
         }
     } catch (err: any) {
         if (err.name === 'AbortError') {
+            markSecondaryApiConfigFailure(apiConfig, err);
             console.warn(`⏰ [EventExtractor] Timed out (${EXTRACT_TIMEOUT_MS}ms)`);
         } else {
+            markSecondaryApiConfigFailure(apiConfig, err);
             console.error('⏰ [EventExtractor] Error:', err.message);
         }
     } finally {

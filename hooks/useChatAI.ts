@@ -13,7 +13,7 @@ import { loadCharacterGoals, formatGoalListStr } from '../utils/goalService';
 import { EventExtractor } from '../utils/eventExtractor';
 import { extractThinking, safeThinkingFallbackReply } from '../utils/thinkingExtractor';
 import { isDeepSeekMode } from '../utils/deepseekPrompts';
-import { getEmbeddingConfig,getSecondaryApiConfig } from '../utils/runtimeConfig';
+import { DEFAULT_CHAT_TEMPERATURE,getEmbeddingConfig,normalizeChatTemperature,selectSecondaryApiConfig } from '../utils/runtimeConfig';
 import { BackendAgentManager, buildContextSnapshot } from '../utils/autonomousAgent';
 import {
     generateAgentScheduleRevision,
@@ -140,7 +140,6 @@ export const useChatAI = ({
         reason: string | undefined,
         aiContent: string,
         currentMsgs: Message[],
-        secondaryConfig: any,
     ) => {
         if (!char || !apiConfig?.baseUrl || signal === 'none' || signal === 'soft') return;
         const sourceMessageIds = currentMsgs
@@ -160,17 +159,9 @@ export const useChatAI = ({
                         apiKey: apiConfig.apiKey || 'sk-none',
                         model: apiConfig.model,
                     };
-                    const cleanSecondary = secondaryConfig?.baseUrl && secondaryConfig?.model
-                        ? {
-                            baseUrl: secondaryConfig.baseUrl,
-                            apiKey: secondaryConfig.apiKey || 'sk-none',
-                            model: secondaryConfig.model,
-                        }
-                        : undefined;
                     const result = await generateAgentScheduleRevision(char.id, {
                         contextSnapshot,
                         mainApiConfig: cleanApiConfig,
-                        apiConfig: cleanSecondary,
                         scheduleSignal: signal,
                         scheduleReason: reason || '',
                         assistantReply: aiContent.slice(0, 2000),
@@ -204,7 +195,10 @@ export const useChatAI = ({
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` };
 
             // 0. Internal State Layer: senseBefore (和下方 buildSystemPrompt 的 embedding/rerank 并行)
-            const secondaryConfig = getSecondaryApiConfig() || apiConfig;
+            // Background assistive features must use the secondary API only.
+            // Falling back to the primary chat API makes one user message fan out
+            // into several primary /chat/completions calls.
+            const senseSecondaryConfig = selectSecondaryApiConfig();
             const limit = char.contextLimit || 500;
             let contextMsgs = currentMsgs;
             if (char.id) {
@@ -223,7 +217,7 @@ export const useChatAI = ({
                 ? [
                     ...contextMsgs,
                     {
-                        id: -1,
+                        id: Date.now(),
                         charId: char.id,
                         role: 'user',
                         type: 'text',
@@ -233,6 +227,7 @@ export const useChatAI = ({
                     },
                 ]
                 : contextMsgs;
+
             const promptContextMsgs = contextMsgsWithTransient.filter(m => {
                 const source = m.metadata?.source;
                 if (source === 'date' || source === 'theater') {
@@ -273,8 +268,8 @@ export const useChatAI = ({
             const goalListStr = formatGoalListStr(characterGoals);
 
             const [senseResult, systemPromptResult, playbackContext] = await Promise.all([
-                secondaryConfig.apiKey
-                    ? MindSnapshotExtractor.senseBefore(char, promptContextMsgs, secondaryConfig, goalListStr, characterGoals)
+                senseSecondaryConfig?.apiKey
+                    ? MindSnapshotExtractor.senseBefore(char, promptContextMsgs, senseSecondaryConfig, goalListStr, characterGoals)
                         .catch(e => { console.error('💭 [Sense] Parallel error:', e); return null; })
                     : Promise.resolve(null),
                 (async () => {
@@ -489,10 +484,11 @@ mode 可选值：
             };
             sanitizeLast();
 
+            const chatTemperature = normalizeChatTemperature(apiConfig.temperature, DEFAULT_CHAT_TEMPERATURE);
             let requestBody: Record<string, any> = {
                 model: apiConfig.model,
                 messages: fullMessages,
-                temperature: 0.85,
+                temperature: chatTemperature,
                 stream: false,
             };
 
@@ -569,7 +565,7 @@ mode 可选值：
                         retryMessages.push({ role: 'user', content: `[系统: 请直接输出角色的回复正文，不需要 <${thinkTag}> 标签。]` });
                     }
                     
-                    const retryBody = { model: apiConfig.model, messages: retryMessages, temperature: 0.85, stream: false };
+                    const retryBody = { model: apiConfig.model, messages: retryMessages, temperature: chatTemperature, stream: false };
                     const retryData = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify(retryBody)
@@ -1115,22 +1111,22 @@ mode 可选值：
             }
             void BackendAgentManager.refreshCharacterContext(char.id, char);
 
-            // ====== (secondaryConfig already built above for senseBefore) ======
-
             // ====== Vector Memory Extraction — fire-and-forget (success path only) ======
-            if (char.vectorMemoryEnabled && char.vectorMemoryAutoExtract !== false) {
+            const vectorSecondaryConfig = selectSecondaryApiConfig();
+            if (vectorSecondaryConfig?.apiKey && char.vectorMemoryEnabled && char.vectorMemoryAutoExtract !== false) {
                 const emKey = embeddingApiKey;
                 if (emKey) {
                     const charSnapshot = { ...char };
-                    VectorMemoryExtractor.maybeExtract(charSnapshot, secondaryConfig, emKey)
+                    VectorMemoryExtractor.maybeExtract(charSnapshot, vectorSecondaryConfig, emKey)
                         .catch(e => console.error('🧠 [VectorExtract] Background:', e));
                 }
             }
 
             // ====== Inner Voice / Creative Card — fire-and-forget ======
-            if (secondaryConfig?.apiKey && aiContent) {
+            const mindSecondaryConfig = selectSecondaryApiConfig();
+            if (mindSecondaryConfig?.apiKey && aiContent) {
                 const charSnapshot = { ...char };
-                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: currentMsgs, config: secondaryConfig, goalListStr };
+                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: currentMsgs, config: mindSecondaryConfig, goalListStr };
                 const statusMode = char.statusBarMode || 'classic';
                 // Skip entirely if heart voice is off
                 if (statusMode === 'off') { /* noop — bionic engine still runs */ }
@@ -1139,7 +1135,7 @@ mode 可选值：
                 setTimeout(() => {
                     if (statusMode === 'classic') {
                         // ── Classic inner voice ──
-                        MindSnapshotExtractor.generateInnerVoice(charSnapshot, aiContent, currentMsgs, secondaryConfig,
+                        MindSnapshotExtractor.generateInnerVoice(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                             true, goalListStr
                         )
@@ -1153,7 +1149,7 @@ mode 可选值：
                             .catch(e => console.error('💭 [InnerVoice] Background:', e));
                     } else if (statusMode === 'freeform') {
                         // ── Freeform HTML card ──
-                        MindSnapshotExtractor.generateFreeformCard(charSnapshot, aiContent, currentMsgs, secondaryConfig,
+                        MindSnapshotExtractor.generateFreeformCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                         )
                             .then(cardData => {
@@ -1170,7 +1166,7 @@ mode 可选值：
                             t => t.id === charSnapshot.activeCustomTemplateId,
                         ) || charSnapshot.customStatusTemplates?.[0];
                         if (template?.systemPrompt) {
-                            MindSnapshotExtractor.generateCustomCard(charSnapshot, aiContent, currentMsgs, secondaryConfig,
+                            MindSnapshotExtractor.generateCustomCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
                                 template,
                                 (reason) => addToast(reason, 'error'),
                             )
@@ -1187,7 +1183,7 @@ mode 可选值：
                         }
                     } else {
                         // ── Creative card ──
-                        MindSnapshotExtractor.generateCreativeCard(charSnapshot, aiContent, currentMsgs, secondaryConfig,
+                        MindSnapshotExtractor.generateCreativeCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                         )
                             .then(cardData => {
@@ -1204,15 +1200,16 @@ mode 可选值：
             }
 
             // ====== Event Extractor (时间事件提取) — fire-and-forget ======
-            if (secondaryConfig?.apiKey) {
+            const eventSecondaryConfig = selectSecondaryApiConfig();
+            if (eventSecondaryConfig?.apiKey) {
                 const lastUserMsg = currentMsgs.filter(m => m.role === 'user').pop();
                 if (lastUserMsg && lastUserMsg.content) {
-                    EventExtractor.extract(char.id, lastUserMsg.content, secondaryConfig)
+                    EventExtractor.extract(char.id, lastUserMsg.content, eventSecondaryConfig)
                         .catch(e => console.error('⏰ [EventExtractor] Background:', e));
                 }
             }
 
-            maybeGenerateScheduleRevision(scheduleSignal, scheduleReason, aiContent, currentMsgs, secondaryConfig);
+            maybeGenerateScheduleRevision(scheduleSignal, scheduleReason, aiContent, currentMsgs);
 
         } catch (e: any) {
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });

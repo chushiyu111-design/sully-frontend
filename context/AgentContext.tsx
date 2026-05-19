@@ -9,7 +9,7 @@ import {
 import { didCharacterContextRelevantFieldsChange } from '../utils/agentContextSnapshot';
 import { showLocalNotification } from '../utils/localNotification';
 import { disablePushSubscription,getPushDebugInfo,initPushSubscription } from '../utils/pushSubscription';
-import { getSecondaryApiConfig as getRuntimeSecondaryApiConfig } from '../utils/runtimeConfig';
+import { selectSecondaryApiConfig } from '../utils/runtimeConfig';
 import { consumeCharacterUpdateOptions,useCharacter } from './CharacterContext';
 import { useConfig } from './ConfigContext';
 import { useApp } from './AppContext';
@@ -37,7 +37,7 @@ const toAgentApiConfig = (
 };
 
 const getAgentStartApiConfig = (): SecondaryApiConfig | undefined => {
-    return toAgentApiConfig(getRuntimeSecondaryApiConfig());
+    return toAgentApiConfig(selectSecondaryApiConfig());
 };
 
 export const AgentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

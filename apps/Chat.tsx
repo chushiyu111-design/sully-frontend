@@ -465,16 +465,6 @@ const Chat: React.FC = () => {
         };
     }, [char?.id, refreshTodaySchedule]);
 
-    useEffect(() => {
-        if (!isDataLoaded || !char || messages.length === 0) return;
-        const latest = messages[messages.length - 1];
-        if (!latest || (latest.role !== 'user' && latest.role !== 'assistant')) return;
-        const timer = window.setTimeout(() => {
-            syncTodayLife(false);
-        }, 1200);
-        return () => window.clearTimeout(timer);
-    }, [char?.id, isDataLoaded, messages.length, lastMsgTimestamp, syncTodayLife]);
-
     useEffect(() => () => {
         todayLifeEnsureSeqRef.current += 1;
         clearTodayLifeTimers();

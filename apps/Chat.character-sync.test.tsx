@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Chat from './Chat';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { AGENT_MESSAGE_SAVED_EVENT_NAME } from '../utils/autonomousAgent';
+import { ensureAgentTodayLife } from '../utils/agentBackendClient';
 
 vi.mock('../context/OSContext', () => ({
     useOS: vi.fn(),
@@ -147,8 +148,30 @@ vi.mock('../utils/autonomousAgent', () => ({
     LIFE_STREAM_VISIBILITY_EVENT_NAME: 'life-stream-visibility-change',
 }));
 
+vi.mock('../utils/agentBackendClient', () => ({
+    ensureAgentTodayLife: vi.fn(() => Promise.resolve({ status: 'ready' })),
+    fetchAgentTodaySchedule: vi.fn(() => Promise.resolve({
+        charId: 'char-1',
+        localDate: '2026-05-21',
+        items: [],
+        revisions: [],
+    })),
+    saveAgentScheduleRevision: vi.fn(() => Promise.resolve({
+        charId: 'char-1',
+        localDate: '2026-05-21',
+        items: [],
+        revisions: [],
+    })),
+    TODAY_SCHEDULE_UPDATED_EVENT_NAME: 'agent-today-schedule-updated',
+}));
+
+vi.mock('../utils/lifeProfileContextSnapshot', () => ({
+    buildLifeProfileContextSnapshot: vi.fn(() => Promise.resolve({ charName: 'Sully' })),
+}));
+
 const mockedUseOS = vi.mocked(useOS);
 const mockedDB = vi.mocked(DB);
+const mockedEnsureAgentTodayLife = vi.mocked(ensureAgentTodayLife);
 
 function buildOsContext(overrides: Record<string, unknown> = {}) {
     return {
@@ -190,6 +213,7 @@ function buildOsContext(overrides: Record<string, unknown> = {}) {
 describe('Chat active character fallback', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.useRealTimers();
         localStorage.clear();
 
         mockedUseOS.mockReturnValue(buildOsContext());
@@ -416,5 +440,42 @@ describe('Chat active character fallback', () => {
 
         expect(mockedDB.getRecentMessageWindow).not.toHaveBeenCalled();
         expect(clearUnread).not.toHaveBeenCalled();
+    });
+
+    it('does not resync today life just because the chat timestamp changes', async () => {
+        const character = { id: 'char-1', name: 'Sully', avatar: 'sully.png' };
+        const apiConfig = { apiKey: 'main-key', baseUrl: 'https://main.example.com', model: 'main-model' };
+        const osContext = buildOsContext({
+            characters: [character],
+            activeCharacterId: 'char-1',
+            apiConfig,
+            lastMsgTimestamp: 1000,
+        });
+        mockedUseOS.mockImplementation(() => osContext);
+        mockedDB.getRecentMessageWindow.mockResolvedValue({
+            messages: [{
+                id: 1,
+                charId: 'char-1',
+                role: 'user',
+                type: 'text',
+                content: 'hello',
+                timestamp: 1000,
+            }],
+            hasMore: false,
+        });
+
+        const { rerender } = render(<Chat />);
+
+        await waitFor(() => expect(mockedEnsureAgentTodayLife).toHaveBeenCalledTimes(1));
+        mockedEnsureAgentTodayLife.mockClear();
+
+        osContext.lastMsgTimestamp = 2000;
+        rerender(<Chat />);
+
+        await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 1300));
+        });
+
+        expect(mockedEnsureAgentTodayLife).not.toHaveBeenCalled();
     });
 });

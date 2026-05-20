@@ -15,6 +15,7 @@ import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBri
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
 import { stripTranslationTags } from '../utils/chatParser';
+import { isDateModeContextMessage } from '../utils/mainlineMemory';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
@@ -880,7 +881,7 @@ ${exitPromptContent}
         setHasSavedOpening(false);
 
         try {
-            const msgs = (await DB.getMessagesByCharId(c.id)).filter(m => !m.metadata?.hiddenFromUser);
+            const msgs = (await DB.getMessagesByCharId(c.id)).filter(isDateModeContextMessage);
             const limit = c.contextLimit || 500;
             const peekLimit = Math.min(limit, 50);
             const lastMsg = msgs[msgs.length - 1];
@@ -959,7 +960,7 @@ ${exitPromptContent}
         setDateMessages(dateFiltered);
 
         const limit = char.contextLimit || 500;
-        const visibleHistory = allMsgs.filter(m => !m.metadata?.hiddenFromUser);
+        const visibleHistory = allMsgs.filter(isDateModeContextMessage);
 
         // Construct History for AI
         // We exclude the very last message (UserMsg we just sent) from history array 
@@ -1034,7 +1035,7 @@ ${exitPromptContent}
 
         // 2. Find the user input that triggered it
         const allMsgs = await DB.getMessagesByCharId(char.id);
-        const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id && !m.metadata?.hiddenFromUser);
+        const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id && isDateModeContextMessage(m));
         const validDateMsgs = validMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
         const lastUserMsg = [...validDateMsgs].reverse().find(m => m.role === 'user');
 

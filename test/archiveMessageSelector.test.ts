@@ -166,6 +166,50 @@ describe('archiveMessageSelector', () => {
         expect(selectIds(messages)).toEqual([1, 2]);
     });
 
+    it('drops unsynced Theater raw messages and internal summaries', () => {
+        const messages = [
+            msg({ id: 1, role: 'user', content: 'hello' }),
+            msg({ id: 2, role: 'user', content: 'theater raw user', metadata: { source: 'theater' } }),
+            msg({ id: 3, role: 'assistant', content: 'theater raw assistant', metadata: { source: 'theater' } }),
+            msg({
+                id: 4,
+                role: 'system',
+                content: 'theater internal summary',
+                metadata: {
+                    source: 'theater',
+                    hiddenFromUser: true,
+                    isSummary: true,
+                    coveredMsgIds: [2, 3],
+                    sessionStartMsgId: 2,
+                },
+            }),
+        ];
+
+        expect(selectIds(messages)).toEqual([1]);
+    });
+
+    it('keeps synced Theater summary bridge and removes covered raw messages', () => {
+        const messages = [
+            msg({ id: 1, role: 'user', content: 'theater raw user', metadata: { source: 'theater' } }),
+            msg({ id: 2, role: 'assistant', content: 'theater raw assistant', metadata: { source: 'theater' } }),
+            msg({
+                id: 3,
+                role: 'system',
+                content: 'theater summary bridge',
+                metadata: {
+                    source: 'theater',
+                    hiddenFromUser: true,
+                    isDateContextBridge: true,
+                    bridgeType: 'summary',
+                    coveredMsgIds: [1, 2],
+                    sessionStartMsgId: 1,
+                },
+            }),
+        ];
+
+        expect(selectIds(messages)).toEqual([3]);
+    });
+
     it('leaves ordinary chat and call logs unchanged', () => {
         const messages = [
             msg({ id: 1, role: 'user', content: 'hello' }),

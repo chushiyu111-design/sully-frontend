@@ -1,4 +1,5 @@
 import type { Message } from '../types';
+import { isMainlineReadableMessage } from './mainlineMemory';
 
 type ArchiveSource = 'date' | 'theater';
 
@@ -88,7 +89,7 @@ function sortArchiveOrder(left: Message, right: Message): number {
 }
 
 export function selectMessagesForMemoryArchive(messages: Message[]): Message[] {
-    const dateLikeMessages = messages.filter(message => getArchiveSource(message));
+    const dateLikeMessages = messages.filter(message => getArchiveSource(message) && isMainlineReadableMessage(message));
     const summaryBridges = dateLikeMessages.filter(isSummaryBridge).sort(sortNewestFirst);
     const internalSummaries = dateLikeMessages.filter(isInternalSummary).sort(sortArchiveOrder);
     const rawBridges = dateLikeMessages.filter(isRawBridge).sort(sortArchiveOrder);
@@ -134,6 +135,7 @@ export function selectMessagesForMemoryArchive(messages: Message[]): Message[] {
 
     return messages
         .filter(message => {
+            if (!isMainlineReadableMessage(message)) return false;
             if (!getArchiveSource(message)) return true;
             if (selectedIds.has(message.id)) return true;
             if (isCanonicalCandidate(message)) return false;

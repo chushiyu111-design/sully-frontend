@@ -1,4 +1,4 @@
-import { describe,expect,it } from 'vitest';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 import { shouldEmitVoiceCallSentence,VoiceCallLlm } from '../apps/voicecall/voiceCallLlm';
 import {
     sanitizeVoiceCallAssistantText,
@@ -6,6 +6,11 @@ import {
 } from '../apps/voicecall/voiceCallTextSanitizer';
 
 describe('voice call guardrails', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
     it('strips leaked English meta narration from assistant text', () => {
         expect(
             sanitizeVoiceCallAssistantText(
@@ -92,5 +97,104 @@ describe('voice call guardrails', () => {
         const prompt = llm.getSystemPrompt();
         expect(prompt).toContain('你现在必须用 **日本語** 说话');
         expect(prompt).toContain('[[翻译:中文翻译内容]]');
+    });
+
+    it('falls back to non-streaming chat completion when streaming is aborted by transport', async () => {
+        const fetchMock = vi.fn()
+            .mockRejectedValueOnce(new DOMException('The operation was aborted.', 'AbortError'))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                choices: [{ message: { content: '你好呀。我们继续聊。' } }],
+            }), { status: 200 }));
+
+        vi.stubGlobal('fetch', fetchMock);
+
+        const llm = new VoiceCallLlm(
+            {
+                baseUrl: 'https://example.com/v1',
+                apiKey: 'test-key',
+                model: 'test-model',
+            },
+            {
+                id: 'char-1',
+                name: '陆沉',
+                systemPrompt: '你很在意对方。',
+                worldview: '',
+                mountedWorldbooks: [],
+                refinedMemories: {},
+                memories: [],
+                activeMemoryMonths: [],
+                vectorMemoryEnabled: false,
+            } as any,
+            {
+                name: '我',
+            } as any,
+        );
+
+        const sentences: string[] = [];
+        let complete = '';
+
+        await llm.chat('喂？', {
+            onSentence: (text) => { sentences.push(text); },
+            onComplete: (text) => { complete = text; },
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).stream).toBe(true);
+        expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).stream).toBe(false);
+        expect(sentences).toEqual(['你好呀。', '我们继续聊。']);
+        expect(complete).toBe('你好呀。我们继续聊。');
+        const history = llm.getHistory();
+        expect(history[history.length - 1]).toMatchObject({
+            role: 'assistant',
+            content: '你好呀。 我们继续聊。',
+        });
+    });
+
+    it('does not fall back when the call intentionally aborts the active request', async () => {
+        let capturedSignal: AbortSignal | undefined;
+        const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+            capturedSignal = init?.signal as AbortSignal | undefined;
+            capturedSignal?.addEventListener('abort', () => {
+                reject(new DOMException('The operation was aborted.', 'AbortError'));
+            }, { once: true });
+        }));
+
+        vi.stubGlobal('fetch', fetchMock);
+
+        const llm = new VoiceCallLlm(
+            {
+                baseUrl: 'https://example.com/v1',
+                apiKey: 'test-key',
+                model: 'test-model',
+            },
+            {
+                id: 'char-1',
+                name: '陆沉',
+                systemPrompt: '你很在意对方。',
+                worldview: '',
+                mountedWorldbooks: [],
+                refinedMemories: {},
+                memories: [],
+                activeMemoryMonths: [],
+                vectorMemoryEnabled: false,
+            } as any,
+            {
+                name: '我',
+            } as any,
+        );
+
+        const onError = vi.fn();
+        const chatPromise = llm.chat('先停一下', {
+            onSentence: vi.fn(),
+            onComplete: vi.fn(),
+            onError,
+        });
+
+        expect(capturedSignal).toBeDefined();
+        llm.abort();
+        await chatPromise;
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(onError).not.toHaveBeenCalled();
     });
 });

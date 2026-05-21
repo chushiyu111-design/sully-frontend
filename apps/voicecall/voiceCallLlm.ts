@@ -178,6 +178,107 @@ class ThinkingTagFilter {
     }
 }
 
+interface VoiceCallTextEmitState {
+    thinkFilter: ThinkingTagFilter;
+    sentence: string;
+    fullText: string;
+    insideBrackets: number;
+    bracketBuf: string;
+}
+
+function createVoiceCallTextEmitState(): VoiceCallTextEmitState {
+    return {
+        thinkFilter: new ThinkingTagFilter(),
+        sentence: '',
+        fullText: '',
+        insideBrackets: 0,
+        bracketBuf: '',
+    };
+}
+
+function appendVoiceCallEmittedText(
+    text: string,
+    state: VoiceCallTextEmitState,
+    foreignLangEnabled: boolean,
+    onSentence: (text: string) => void,
+): void {
+    for (const c of text) {
+        state.fullText += c;
+        state.sentence += c;
+
+        // Track [[...]] translation blocks so foreign-mode text is not cut mid-tag.
+        state.bracketBuf += c;
+        if (state.bracketBuf.length > 2) state.bracketBuf = state.bracketBuf.slice(-2);
+        if (state.bracketBuf === '[[') { state.insideBrackets++; state.bracketBuf = ''; }
+        if (state.bracketBuf === ']]' && state.insideBrackets > 0) { state.insideBrackets--; state.bracketBuf = ''; }
+
+        const shouldBreak = shouldEmitVoiceCallSentence(
+            state.sentence,
+            c,
+            foreignLangEnabled,
+            state.insideBrackets,
+        );
+
+        if (shouldBreak && state.sentence.trim()) {
+            onSentence(state.sentence.trim());
+            state.sentence = '';
+        }
+    }
+}
+
+function consumeVoiceCallDelta(
+    delta: string,
+    state: VoiceCallTextEmitState,
+    foreignLangEnabled: boolean,
+    onSentence: (text: string) => void,
+): void {
+    for (const ch of delta) {
+        const emitted = state.thinkFilter.process(ch);
+        if (!emitted) continue;
+        appendVoiceCallEmittedText(emitted, state, foreignLangEnabled, onSentence);
+    }
+}
+
+function flushVoiceCallTextState(
+    state: VoiceCallTextEmitState,
+    foreignLangEnabled: boolean,
+    onSentence: (text: string) => void,
+): string {
+    const remaining = state.thinkFilter.flush();
+    appendVoiceCallEmittedText(remaining, state, foreignLangEnabled, onSentence);
+
+    if (state.sentence.trim()) {
+        onSentence(state.sentence.trim());
+        state.sentence = '';
+    }
+
+    return state.fullText;
+}
+
+function getLlmErrorMessage(err: any): string {
+    return `${err?.name || ''} ${err?.message || err || ''}`.trim();
+}
+
+function shouldFallbackToNonStreaming(
+    err: any,
+    controller: AbortController | null,
+    emittedSentence: boolean,
+    abortRequested: boolean,
+): boolean {
+    if (abortRequested || controller?.signal.aborted || emittedSentence) return false;
+
+    const msg = getLlmErrorMessage(err);
+    return /AbortError|operation was aborted|Failed to fetch|NetworkError|Load failed|No response body stream/i.test(msg);
+}
+
+function extractNonStreamingContent(data: any): string {
+    return (
+        data?.choices?.[0]?.message?.content ??
+        data?.choices?.[0]?.text ??
+        ''
+    );
+}
+
 // ─── 独立 Context 构建（不依赖 context.ts） ─────────────────────────
 
 /** 世界书渲染 */
@@ -1140,6 +1241,7 @@ export class VoiceCallLlm {
     private systemPrompt: string;
     private history: ChatMessage[] = [];
     private abortController: AbortController | null = null;
+    private abortRequested = false;
 
     constructor(
         config: VoiceCallLlmConfig,
@@ -1200,110 +1302,14 @@ export class VoiceCallLlm {
         const MAX_RETRIES = 1;
         const RETRY_DELAY_MS = 2000;
 
-        /** 内部执行一次 LLM 调用 */
-        const attemptChat = async (): Promise<void> => {
-            this.abortController = new AbortController();
+        const buildRequestBody = (stream: boolean): Record<string, any> => ({
+            model: this.config.model,
+            messages,
+            temperature: 0.85,
+            stream,
+        });
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.config.apiKey || 'sk-none'}`,
-                },
-                body: JSON.stringify({
-                    model: this.config.model,
-                    messages,
-                    temperature: 0.85,
-                    stream: true,
-                }),
-                signal: this.abortController.signal,
-            });
-
-            if (!response.ok) {
-                const errText = await response.text().catch(() => '');
-                throw new Error(`LLM API ${response.status}: ${errText.slice(0, 200)}`);
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('No response body stream');
-
-            const decoder = new TextDecoder();
-            let buffer = '';      // SSE 行缓冲
-            let sentence = '';    // 当前正在拼接的句子
-            let fullText = '';    // 完整回复（不含 thinking 内容）
-            const thinkFilter = new ThinkingTagFilter();
-            const foreignLangEnabled = !!this.config.foreignLang;
-            // ─── 外语模式：跟踪 [[翻译:...]] 标签内部，禁止在标签内截断 ───
-            let insideBrackets = 0;   // 嵌套 [[ 深度（0 = 正常文本）
-            let bracketBuf = '';      // 用于匹配 [[ 的 lookahead 缓冲
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-
-                // 逐行解析 SSE
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || ''; // 最后一行可能不完整
-
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const data = line.slice(6).trim();
-                    if (data === '[DONE]') continue;
-
-                    try {
-                        const json = JSON.parse(data);
-                        const delta = json.choices?.[0]?.delta?.content;
-                        if (!delta) continue;
-
-                        // 逐字符过滤 thinking 块 + 截断
-                        for (const ch of delta) {
-                            const emitted = thinkFilter.process(ch);
-                            if (!emitted) continue;
-
-                            for (const c of emitted) {
-                                fullText += c;
-                                sentence += c;
-
-                                // ─── [[ / ]] 括号追踪（防止在翻译标记内截断）───
-                                bracketBuf += c;
-                                if (bracketBuf.length > 2) bracketBuf = bracketBuf.slice(-2);
-                                if (bracketBuf === '[[') { insideBrackets++; bracketBuf = ''; }
-                                if (bracketBuf === ']]' && insideBrackets > 0) { insideBrackets--; bracketBuf = ''; }
-
-                                // 只在翻译标记外部才按标点截断
-                                const shouldBreak = shouldEmitVoiceCallSentence(
-                                    sentence,
-                                    c,
-                                    foreignLangEnabled,
-                                    insideBrackets,
-                                );
-
-                                if (shouldBreak && sentence.trim()) {
-                                    callbacks.onSentence(sentence.trim());
-                                    sentence = '';
-                                }
-                            }
-                        }
-                    } catch {
-                        // 忽略解析错误的行
-                    }
-                }
-            }
-
-            // flush thinking 过滤器的残余缓冲
-            const remaining = thinkFilter.flush();
-            for (const c of remaining) {
-                fullText += c;
-                sentence += c;
-            }
-
-            // 处理剩余文字
-            if (sentence.trim()) {
-                callbacks.onSentence(sentence.trim());
-            }
-
+        const completeAssistantResponse = (fullText: string): void => {
             // 保存助手回复到历史（剥离 [[翻译:...]] 标记，保持历史干净）
             const cleanText = sanitizeVoiceCallAssistantText(
                 fullText.replace(/\[\[翻译\s*[：:]\s*.*?\]\]/g, '').trim(),
@@ -1315,13 +1321,121 @@ export class VoiceCallLlm {
             callbacks.onComplete(fullText);
         };
 
+        /** 内部执行一次 LLM 调用 */
+        const attemptChat = async (): Promise<void> => {
+            this.abortController = new AbortController();
+            this.abortRequested = false;
+            let emittedSentence = false;
+            const emitSentence = (sentenceText: string) => {
+                emittedSentence = true;
+                callbacks.onSentence(sentenceText);
+            };
+
+            const runNonStreamingFallback = async (): Promise<void> => {
+                console.warn('[VoiceCallLlm] Streaming transport failed before output; falling back to non-streaming request');
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.config.apiKey || 'sk-none'}`,
+                    },
+                    body: JSON.stringify(buildRequestBody(false)),
+                    signal: this.abortController?.signal,
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => '');
+                    throw new Error(`LLM API ${response.status}: ${errText.slice(0, 200)}`);
+                }
+
+                const text = await response.text();
+                let data: any;
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    throw new Error(`LLM API returned invalid JSON: ${text.slice(0, 200)}`);
+                }
+
+                const content = extractNonStreamingContent(data);
+                if (!content.trim()) {
+                    throw new Error('LLM API returned empty content');
+                }
+
+                const state = createVoiceCallTextEmitState();
+                const foreignLangEnabled = !!this.config.foreignLang;
+                consumeVoiceCallDelta(content, state, foreignLangEnabled, emitSentence);
+                const fullText = flushVoiceCallTextState(state, foreignLangEnabled, emitSentence);
+                completeAssistantResponse(fullText);
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.config.apiKey || 'sk-none'}`,
+                    },
+                    body: JSON.stringify(buildRequestBody(true)),
+                    signal: this.abortController.signal,
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text().catch(() => '');
+                    throw new Error(`LLM API ${response.status}: ${errText.slice(0, 200)}`);
+                }
+
+                const reader = response.body?.getReader();
+                if (!reader) throw new Error('No response body stream');
+
+                const decoder = new TextDecoder();
+                let buffer = '';      // SSE 行缓冲
+                const state = createVoiceCallTextEmitState();
+                const foreignLangEnabled = !!this.config.foreignLang;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 逐行解析 SSE
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // 最后一行可能不完整
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6).trim();
+                        if (data === '[DONE]') continue;
+
+                        try {
+                            const json = JSON.parse(data);
+                            const delta = json.choices?.[0]?.delta?.content;
+                            if (!delta) continue;
+                            consumeVoiceCallDelta(delta, state, foreignLangEnabled, emitSentence);
+                        } catch {
+                            // 忽略解析错误的行
+                        }
+                    }
+                }
+
+                const fullText = flushVoiceCallTextState(state, foreignLangEnabled, emitSentence);
+                completeAssistantResponse(fullText);
+            } catch (err) {
+                if (shouldFallbackToNonStreaming(err, this.abortController, emittedSentence, this.abortRequested)) {
+                    await runNonStreamingFallback();
+                    return;
+                }
+                throw err;
+            }
+        };
+
         // ─── 带重试的执行 ───
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 await attemptChat();
                 return; // 成功，直接返回
             } catch (err: any) {
-                if (err.name === 'AbortError') {
+                if (err.name === 'AbortError' && (this.abortRequested || this.abortController?.signal.aborted)) {
                     console.log(`[VoiceCallLlm] Request aborted`);
                     return; // 被打断，静默返回
                 }
@@ -1331,7 +1445,7 @@ export class VoiceCallLlm {
                     callbacks.onRetrying?.();
                     await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
                     // 检查是否在等待期间被打断
-                    if (this.abortController?.signal.aborted) {
+                    if (this.abortRequested || this.abortController?.signal.aborted) {
                         console.log(`[VoiceCallLlm] Aborted during retry wait`);
                         return;
                     }
@@ -1357,6 +1471,7 @@ export class VoiceCallLlm {
     /** 打断：中止当前请求 */
     abort(): void {
         if (this.abortController) {
+            this.abortRequested = true;
             this.abortController.abort();
             this.abortController = null;
         }

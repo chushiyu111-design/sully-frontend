@@ -50,6 +50,8 @@ const SUPPRESSED_ERROR_PATTERNS: RegExp[] = [
     /NetworkError/i,
     /Load failed/i,
     /AbortError/i,                        // AbortController / signal timeouts
+    /operation was aborted/i,
+    /operation.*aborted/i,
     /signal.*timed?\s*out/i,
     /ERR_CONNECTION/i,
     /ERR_NAME_NOT_RESOLVED/i,
@@ -126,7 +128,9 @@ export function initSystemInterceptor(): void {
             }
             return response;
         } catch (err: any) {
-            const errMsg = err.message || 'Fetch Failed';
+            const errMsg = [err?.name, err?.message || 'Fetch Failed']
+                .filter(Boolean)
+                .join(': ');
 
             // Suppress non-critical / background network errors
             if (isSuppressedError(errMsg) || isSuppressedUrl(urlStr)) {

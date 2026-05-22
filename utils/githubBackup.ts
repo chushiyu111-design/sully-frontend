@@ -8,8 +8,8 @@
 export const GITHUB_BACKUP_CONFIG_KEY = 'os_github_backup_config';
 export const DEFAULT_GITHUB_BACKUP_REPO = 'sully-backup';
 
-const API_HOST = 'https://api.github.com';
-const UPLOAD_HOST = 'https://uploads.github.com';
+const API_PROXY_BASE = '/github-api';
+const UPLOAD_PROXY_BASE = '/github-upload';
 const TAG_PREFIX = 'sully-backup-';
 const RELEASE_NAME_PREFIX = 'Sully Backup ';
 const MAX_PART_SIZE = 80 * 1024 * 1024;
@@ -44,6 +44,18 @@ function normalizeRepo(repo?: string): string {
     return (repo || DEFAULT_GITHUB_BACKUP_REPO).trim() || DEFAULT_GITHUB_BACKUP_REPO;
 }
 
+function proxyUrl(base: string, path: string): string {
+    return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function githubApiUrl(path: string): string {
+    return proxyUrl(API_PROXY_BASE, path);
+}
+
+function githubUploadUrl(path: string): string {
+    return proxyUrl(UPLOAD_PROXY_BASE, path);
+}
+
 function authHeaders(token: string, extra: Record<string, string> = {}): Record<string, string> {
     return {
         Authorization: `Bearer ${token}`,
@@ -54,11 +66,11 @@ function authHeaders(token: string, extra: Record<string, string> = {}): Record<
 }
 
 async function ghRequest(
-    fullUrl: string,
+    url: string,
     method: GhMethod,
     opts: { headers?: Record<string, string>; body?: BodyInit | null } = {},
 ): Promise<GhResponse> {
-    const res = await fetch(fullUrl, {
+    const res = await fetch(url, {
         method,
         headers: opts.headers,
         body: opts.body ?? null,
@@ -105,7 +117,7 @@ export function clearGithubBackupConfig(): void {
 
 export async function verifyGithubToken(token: string): Promise<{ ok: boolean; login?: string; message: string }> {
     try {
-        const res = await ghRequest(`${API_HOST}/user`, 'GET', {
+        const res = await ghRequest(githubApiUrl('/user'), 'GET', {
             headers: authHeaders(token),
         });
         if (res.status === 200) {
@@ -127,13 +139,13 @@ export async function ensureGithubBackupRepo(
 ): Promise<{ ok: boolean; message: string }> {
     const repoName = normalizeRepo(repo);
     try {
-        const get = await ghRequest(`${API_HOST}/repos/${owner}/${repoName}`, 'GET', {
+        const get = await ghRequest(githubApiUrl(`/repos/${owner}/${repoName}`), 'GET', {
             headers: authHeaders(token),
         });
         if (get.status === 200) return { ok: true, message: '仓库已就绪' };
         if (get.status !== 404) return { ok: false, message: `检查仓库失败 (${get.status})` };
 
-        const create = await ghRequest(`${API_HOST}/user/repos`, 'POST', {
+        const create = await ghRequest(githubApiUrl('/user/repos'), 'POST', {
             headers: authHeaders(token, { 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 name: repoName,
@@ -175,6 +187,20 @@ export async function connectGithubBackup(
     return { ok: true, message: `已连接 @${verified.login} → ${repoName}`, config };
 }
 
+async function deleteReleaseAndTag(config: GitHubBackupConfig, releaseId: number, tagName?: string): Promise<void> {
+    if (!releaseId) return;
+
+    await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/releases/${releaseId}`), 'DELETE', {
+        headers: authHeaders(config.token),
+    }).catch(() => {});
+
+    if (tagName) {
+        await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/git/refs/tags/${tagName}`), 'DELETE', {
+            headers: authHeaders(config.token),
+        }).catch(() => {});
+    }
+}
+
 function uploadOneAsset(
     config: GitHubBackupConfig,
     releaseId: number,
@@ -183,7 +209,7 @@ function uploadOneAsset(
     onFraction?: (fraction: number) => void,
 ): Promise<{ ok: boolean; message: string }> {
     return new Promise((resolve) => {
-        const url = `${UPLOAD_HOST}/repos/${config.owner}/${config.repo}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
+        const url = githubUploadUrl(`/repos/${config.owner}/${config.repo}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`);
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
         xhr.setRequestHeader('Authorization', `Bearer ${config.token}`);
@@ -217,7 +243,7 @@ export async function uploadGithubBackup(
     try {
         onProgress?.(2);
         const ts = Date.now();
-        const releaseRes = await ghRequest(`${API_HOST}/repos/${config.owner}/${config.repo}/releases`, 'POST', {
+        const releaseRes = await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/releases`), 'POST', {
             headers: authHeaders(config.token, { 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 tag_name: `${TAG_PREFIX}${ts}`,
@@ -234,6 +260,7 @@ export async function uploadGithubBackup(
 
         const release = await releaseRes.json();
         const releaseId = Number(release.id);
+        const tagName = String(release.tag_name || `${TAG_PREFIX}${ts}`);
         onProgress?.(5);
 
         if (blob.size <= MAX_PART_SIZE) {
@@ -241,7 +268,10 @@ export async function uploadGithubBackup(
                 onProgress?.(5 + Math.floor(fraction * 94));
             });
             onProgress?.(100);
-            if (!result.ok) return result;
+            if (!result.ok) {
+                await deleteReleaseAndTag(config, releaseId, tagName);
+                return result;
+            }
             const nextConfig = { ...config, lastBackupTime: Date.now(), lastBackupSize: blob.size };
             writeGithubBackupConfig(nextConfig);
             return { ...result, config: nextConfig };
@@ -265,6 +295,7 @@ export async function uploadGithubBackup(
                 onProgress?.(Math.min(99, Math.floor(base + fraction * span)));
             });
             if (!result.ok) {
+                await deleteReleaseAndTag(config, releaseId, tagName);
                 return { ok: false, message: `第 ${i + 1}/${totalParts} 片失败: ${result.message}` };
             }
         }
@@ -280,7 +311,7 @@ export async function uploadGithubBackup(
 
 export async function listGithubBackups(config: GitHubBackupConfig): Promise<GitHubBackupFile[]> {
     try {
-        const res = await ghRequest(`${API_HOST}/repos/${config.owner}/${config.repo}/releases?per_page=50`, 'GET', {
+        const res = await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/releases?per_page=50`), 'GET', {
             headers: authHeaders(config.token),
         });
         if (res.status !== 200) return [];
@@ -350,7 +381,7 @@ export async function downloadGithubBackup(
         const span = 96 / assetIds.length;
         for (let i = 0; i < assetIds.length; i++) {
             const res = await ghRequest(
-                `${API_HOST}/repos/${config.owner}/${config.repo}/releases/assets/${assetIds[i]}`,
+                githubApiUrl(`/repos/${config.owner}/${config.repo}/releases/assets/${assetIds[i]}`),
                 'GET',
                 {
                     headers: authHeaders(config.token, { Accept: 'application/octet-stream' }),
@@ -374,7 +405,7 @@ export async function deleteGithubBackup(config: GitHubBackupConfig, file: GitHu
 
     try {
         let tagName = '';
-        const meta = await ghRequest(`${API_HOST}/repos/${config.owner}/${config.repo}/releases/${releaseId}`, 'GET', {
+        const meta = await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/releases/${releaseId}`), 'GET', {
             headers: authHeaders(config.token),
         });
         if (meta.status === 200) {
@@ -382,12 +413,12 @@ export async function deleteGithubBackup(config: GitHubBackupConfig, file: GitHu
             tagName = data.tag_name || '';
         }
 
-        const deleted = await ghRequest(`${API_HOST}/repos/${config.owner}/${config.repo}/releases/${releaseId}`, 'DELETE', {
+        const deleted = await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/releases/${releaseId}`), 'DELETE', {
             headers: authHeaders(config.token),
         });
         const ok = deleted.status === 204;
         if (ok && tagName) {
-            await ghRequest(`${API_HOST}/repos/${config.owner}/${config.repo}/git/refs/tags/${tagName}`, 'DELETE', {
+            await ghRequest(githubApiUrl(`/repos/${config.owner}/${config.repo}/git/refs/tags/${tagName}`), 'DELETE', {
                 headers: authHeaders(config.token),
             }).catch(() => {});
         }

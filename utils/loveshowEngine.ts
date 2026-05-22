@@ -8,11 +8,14 @@
 import {
   buildCharacterStateEvalPrompt,
   buildDirectorMissionPrompt,
+  buildDirectorBeatPrompt,
+  buildImpressionRepairPrompt,
   buildImpressionUpdatePrompt,
   buildNpcExpandPrompt,
   buildNpcGeneratorPrompt,
   buildSceneSummaryPrompt,
   buildSocialPostsPrompt,
+  type DirectorBeatCharacterBrief,
 } from './loveshowPrompts';
 import type {
   SeasonState,
@@ -25,6 +28,12 @@ import type {
   NpcProfile,
   LoveShowSocialPost,
   DirectorMission,
+  DirectorBeat,
+  DirectorBeatEndingMode,
+  DirectorBeatSceneType,
+  DirectorShotType,
+  DirectorSpeakerRole,
+  DirectorUserPosition,
 } from '../types/loveshow';
 
 // ═══════════════════════════════════════════════
@@ -83,6 +92,86 @@ function inferPeriod(phase: SeasonPhase): DayPeriod {
     default:
       return 'afternoon';
   }
+}
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
+const DIRECTOR_SCENE_TYPES = [
+  'opening_group',
+  'group_event',
+  'date',
+  'phone_time',
+  'observatory',
+  'confession_room',
+  'day_end',
+] as const satisfies readonly DirectorBeatSceneType[];
+
+const DIRECTOR_SHOT_TYPES = [
+  'close_up',
+  'reaction',
+  'two_shot',
+  'wide',
+  'cutaway',
+] as const satisfies readonly DirectorShotType[];
+
+const DIRECTOR_SPEAKER_ROLES = [
+  'lead',
+  'respond',
+  'interrupt',
+  'soft_react',
+] as const satisfies readonly DirectorSpeakerRole[];
+
+const DIRECTOR_USER_POSITIONS = [
+  'being_addressed',
+  'observing',
+  'choosing_target',
+  'private_moment',
+  'silent_pressure',
+] as const satisfies readonly DirectorUserPosition[];
+
+const DIRECTOR_ENDING_MODES = [
+  'wait_user',
+  'continue_scene',
+  'open_choice',
+  'phone_notification',
+  'scene_end',
+] as const satisfies readonly DirectorBeatEndingMode[];
+
+function inferDirectorSceneType(scene: LoveShowScene, season: SeasonState): DirectorBeatSceneType {
+  if (scene.locationId === 'observatory') return 'observatory';
+  if (scene.locationId === 'interview_room') return 'confession_room';
+  if (season.phase === 'phone_time') return 'phone_time';
+  if (season.phase === 'day_end') return 'day_end';
+  if (scene.characterIds.length <= 1 && scene.locationId !== 'living_room') return 'date';
+  return season.day === 1 && scene.locationId === 'living_room' ? 'opening_group' : 'group_event';
+}
+
+function activeSeasonCharIds(season: SeasonState): string[] {
+  return season.charIds.filter(id => !season.eliminations.includes(id));
+}
+
+function stableIndex(seed: string, length: number): number {
+  if (length <= 0) return 0;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return hash % length;
+}
+
+function findCuedCharacterId(input: DirectorBeatInput, presentCharIds: string[]): string | null {
+  let bestMatch: { id: string; index: number } | null = null;
+  for (const character of input.characters) {
+    if (!presentCharIds.includes(character.id) || !character.name) continue;
+    const index = input.recentDialogue.lastIndexOf(character.name);
+    if (index < 0) continue;
+    if (!bestMatch || index > bestMatch.index) {
+      bestMatch = { id: character.id, index };
+    }
+  }
+  return bestMatch?.id || null;
 }
 
 // ═══════════════════════════════════════════════
@@ -192,7 +281,9 @@ export function generateNextChoicePoint(
     return {
       id: `${dayPrefix}date_card`,
       type: 'date_card',
-      prompt: '💌 你收到了一张约会券！今天你想邀请谁一起外出？',
+      prompt: day === 1
+        ? '💌 节目组递来第一张约会邀请卡。破冰之后，你想邀请谁进行第一次 1v1 约会？'
+        : '💌 你收到了一张约会券！今天你想邀请谁一起外出？',
       options,
       mandatory: true,
       consequence: '获选角色获得独处约会场景',
@@ -459,6 +550,226 @@ export function selectSceneCharacters(
 }
 
 // ═══════════════════════════════════════════════
+//  4.5 导演镜头卡
+// ═══════════════════════════════════════════════
+
+export interface DirectorBeatInput {
+  season: SeasonState;
+  scene: LoveShowScene;
+  characters: DirectorBeatCharacterBrief[];
+  sceneSummaries: string[];
+  recentDialogue: string;
+  choiceContext?: string;
+}
+
+export type DirectorBeatPlanSource = 'api' | 'fallback';
+
+export interface DirectorBeatPlan {
+  beat: DirectorBeat;
+  source: DirectorBeatPlanSource;
+  issues: string[];
+}
+
+export function createFallbackDirectorBeat(input: DirectorBeatInput): DirectorBeat {
+  const availableIds = activeSeasonCharIds(input.season);
+  const sceneIds = input.scene.characterIds.filter(id => availableIds.includes(id));
+  const presentCharIds = (sceneIds.length > 0 ? sceneIds : availableIds).slice(0, 4);
+  const cuedId = findCuedCharacterId(input, presentCharIds);
+  const leadIndex = cuedId
+    ? Math.max(0, presentCharIds.indexOf(cuedId))
+    : stableIndex(
+        `${input.scene.id}|${input.sceneSummaries.length}|${input.recentDialogue.length}|${input.choiceContext || ''}`,
+        presentCharIds.length,
+      );
+  const leadId = presentCharIds[leadIndex] || input.characters[0]?.id || 'unknown';
+  const secondId = presentCharIds.length > 1
+    ? presentCharIds[(leadIndex + 1) % presentCharIds.length]
+    : undefined;
+  const speakerIds = [leadId, secondId].filter((id): id is string => Boolean(id));
+  const speakers = speakerIds.slice(0, 2).map((charId, index) => ({
+    charId,
+    role: index === 0 ? 'lead' as const : 'respond' as const,
+    intent: index === 0
+      ? (cuedId === charId ? '回应用户刚刚给出的明确 cue' : '主动接住当前气氛，把话题递给用户')
+      : '用一句克制回应补出多人现场感',
+  }));
+
+  return {
+    beatId: uid('beat'),
+    sceneType: inferDirectorSceneType(input.scene, input.season),
+    presentCharIds,
+    cameraFocus: [
+      {
+        charId: leadId,
+        shotType: cuedId ? 'close_up' : (presentCharIds.length > 2 ? 'wide' : 'close_up'),
+        reason: cuedId ? '用户刚刚 cue 到这位嘉宾，镜头顺势切过去' : '保底镜头，轮换一位嘉宾接住这一小拍',
+      },
+      ...(secondId ? [{
+        charId: secondId,
+        shotType: 'reaction' as const,
+        reason: '给第二位嘉宾一个明确的反应机会',
+      }] : []),
+    ],
+    speakers,
+    reactionOnlyCharIds: presentCharIds.filter(id => !speakers.some(speaker => speaker.charId === id)),
+    userPosition: presentCharIds.length > 1 ? 'being_addressed' : 'private_moment',
+    endingMode: 'wait_user',
+    userPromptHint: '轮到你回应镜头里的这一小拍。',
+    directorNote: '保底调度：让多人现场稳定，停在用户可以接话的位置。',
+  };
+}
+
+function fallbackDirectorBeatPlan(input: DirectorBeatInput, issue: string): DirectorBeatPlan {
+  return {
+    beat: createFallbackDirectorBeat(input),
+    source: 'fallback',
+    issues: [issue],
+  };
+}
+
+export function validateDirectorBeat(raw: Partial<DirectorBeat>, input: DirectorBeatInput): DirectorBeatPlan {
+  if (!raw || typeof raw !== 'object') {
+    return fallbackDirectorBeatPlan(input, 'DirectorBeat is not a JSON object');
+  }
+
+  const fallback = createFallbackDirectorBeat(input);
+  const activeIds = activeSeasonCharIds(input.season);
+  const sceneAllowedIds = input.scene.characterIds.filter(id => activeIds.includes(id));
+  const allowedPresentSet = new Set(sceneAllowedIds.length > 0 ? sceneAllowedIds : activeIds);
+  const issues: string[] = [];
+
+  const rawPresent = Array.isArray(raw.presentCharIds) ? raw.presentCharIds : [];
+  const presentCharIds = rawPresent
+    .filter((id): id is string => typeof id === 'string' && allowedPresentSet.has(id));
+  if (!Array.isArray(raw.presentCharIds)) {
+    return fallbackDirectorBeatPlan(input, 'presentCharIds is missing or not an array');
+  }
+  if (presentCharIds.length === 0) {
+    return fallbackDirectorBeatPlan(input, 'presentCharIds has no valid season characters');
+  }
+  if (presentCharIds.length !== rawPresent.length) {
+    issues.push('Removed presentCharIds that are not allowed in the current scene');
+  }
+
+  const safePresent = presentCharIds.slice(0, 4);
+  if (presentCharIds.length > safePresent.length) {
+    issues.push('Trimmed presentCharIds to 4 characters');
+  }
+  if (!isOneOf(raw.sceneType, DIRECTOR_SCENE_TYPES)) {
+    return fallbackDirectorBeatPlan(input, 'sceneType is invalid');
+  }
+  if (!isOneOf(raw.endingMode, DIRECTOR_ENDING_MODES)) {
+    return fallbackDirectorBeatPlan(input, 'endingMode is invalid');
+  }
+
+  const presentSet = new Set(safePresent);
+  const fallbackForPresent = createFallbackDirectorBeat({
+    ...input,
+    scene: { ...input.scene, characterIds: safePresent },
+  });
+
+  const rawFocus = Array.isArray(raw.cameraFocus) ? raw.cameraFocus : [];
+  if (!Array.isArray(raw.cameraFocus)) {
+    issues.push('cameraFocus is missing or not an array; using fallback focus');
+  }
+  const cameraFocus = rawFocus
+    .filter(item => item && typeof item === 'object')
+    .map(item => item as DirectorBeat['cameraFocus'][number])
+    .filter(item => {
+      const valid = presentSet.has(item.charId);
+      if (!valid) issues.push(`Removed cameraFocus for non-present character: ${String(item.charId)}`);
+      return valid;
+    })
+    .slice(0, 4)
+    .map(item => {
+      const shotType = isOneOf(item.shotType, DIRECTOR_SHOT_TYPES) ? item.shotType : 'reaction';
+      if (shotType !== item.shotType) {
+        issues.push(`Repaired invalid shotType for ${item.charId}`);
+      }
+      return {
+        charId: item.charId,
+        shotType,
+        reason: typeof item.reason === 'string' && item.reason.trim() ? item.reason.trim() : '镜头需要给出反应',
+      };
+    });
+
+  const rawSpeakers = Array.isArray(raw.speakers) ? raw.speakers : [];
+  if (!Array.isArray(raw.speakers)) {
+    issues.push('speakers is missing or not an array; using fallback speakers');
+  }
+  if (rawSpeakers.length > 3) {
+    issues.push('Trimmed speakers to 3 characters');
+  }
+  const speakers = rawSpeakers
+    .filter(item => item && typeof item === 'object')
+    .map(item => item as DirectorBeat['speakers'][number])
+    .filter(item => {
+      const valid = presentSet.has(item.charId);
+      if (!valid) issues.push(`Removed speaker for non-present character: ${String(item.charId)}`);
+      return valid;
+    })
+    .slice(0, 3)
+    .map(item => {
+      const role = isOneOf(item.role, DIRECTOR_SPEAKER_ROLES) ? item.role : 'respond';
+      if (role !== item.role) {
+        issues.push(`Repaired invalid speaker role for ${item.charId}`);
+      }
+      return {
+        charId: item.charId,
+        role,
+        intent: typeof item.intent === 'string' && item.intent.trim() ? item.intent.trim() : '自然回应这一小拍',
+      };
+    });
+
+  const speakerSet = new Set(speakers.map(speaker => speaker.charId));
+  const rawReactions = Array.isArray(raw.reactionOnlyCharIds) ? raw.reactionOnlyCharIds : [];
+  if (!Array.isArray(raw.reactionOnlyCharIds)) {
+    issues.push('reactionOnlyCharIds is missing or not an array; inferred reaction slots');
+  }
+  const reactionOnlyCharIds = Array.from(new Set([
+    ...rawReactions.filter((id): id is string => {
+      const valid = typeof id === 'string' && presentSet.has(id) && !speakerSet.has(id);
+      if (!valid) issues.push(`Removed invalid or speaking reactionOnly character: ${String(id)}`);
+      return valid;
+    }),
+    ...safePresent.filter(id => !speakerSet.has(id)),
+  ]));
+
+  if (cameraFocus.length === 0) {
+    issues.push('cameraFocus had no valid entries; using fallback focus');
+  }
+  if (speakers.length === 0) {
+    issues.push('speakers had no valid entries; using fallback speakers');
+  }
+
+  const userPosition = isOneOf(raw.userPosition, DIRECTOR_USER_POSITIONS)
+    ? raw.userPosition
+    : fallback.userPosition;
+  if (userPosition !== raw.userPosition) {
+    issues.push('Repaired invalid userPosition');
+  }
+
+  return {
+    beat: {
+      beatId: typeof raw.beatId === 'string' && raw.beatId.trim() ? raw.beatId.trim() : fallback.beatId,
+      sceneType: raw.sceneType,
+      presentCharIds: safePresent,
+      cameraFocus: cameraFocus.length > 0 ? cameraFocus : fallbackForPresent.cameraFocus,
+      speakers: speakers.length > 0 ? speakers : fallbackForPresent.speakers,
+      reactionOnlyCharIds,
+      userPosition,
+      endingMode: raw.endingMode,
+      userPromptHint: typeof raw.userPromptHint === 'string' ? raw.userPromptHint : fallback.userPromptHint,
+      directorNote: typeof raw.directorNote === 'string' && raw.directorNote.trim()
+        ? raw.directorNote.trim()
+        : fallback.directorNote,
+    },
+    source: 'api',
+    issues,
+  };
+}
+
+// ═══════════════════════════════════════════════
 //  5. 副模型调用封装
 // ═══════════════════════════════════════════════
 
@@ -469,6 +780,7 @@ export interface ApiConfig {
 }
 
 const SUB_MODEL_SYSTEM_PROMPT = '你是恋综副模型。严格遵守用户提示中的输出格式，不要添加解释。';
+const SUB_MODEL_TIMEOUT_MS = 60000;
 
 /**
  * 通用的 OpenAI 兼容 API 调用器。
@@ -479,29 +791,48 @@ async function callSubModel(
   systemPrompt: string,
   userPrompt: string,
   temperature = 0.7,
+  requestLabel = '副模型',
 ): Promise<string> {
   const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), SUB_MODEL_TIMEOUT_MS);
+  let resp: Response;
 
-  if (!resp.ok) {
-    throw new Error(`Sub-model API error: ${resp.status} ${resp.statusText}`);
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(`${requestLabel} 请求超时（${Math.round(SUB_MODEL_TIMEOUT_MS / 1000)} 秒）：${url}`);
+    }
+    throw new Error(`${requestLabel} 请求失败：${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 
-  const data = await resp.json();
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    const suffix = detail.trim() ? ` - ${detail.trim().slice(0, 400)}` : '';
+    throw new Error(`${requestLabel} API error: ${resp.status} ${resp.statusText}${suffix}`);
+  }
+
+  const data = await resp.json().catch((err) => {
+    throw new Error(`${requestLabel} 响应不是合法 JSON：${err instanceof Error ? err.message : String(err)}`);
+  });
   return data.choices?.[0]?.message?.content?.trim() || '';
 }
 
@@ -523,6 +854,199 @@ function safeParseJson<T>(raw: string): T {
   }
 }
 
+const IMPRESSION_RISK_TERMS = [
+  '危险',
+  '猎物',
+  '奖品',
+  '战利品',
+  '征服',
+  '驯服',
+  '拿捏',
+  '心机',
+  '难搞',
+  '不安分',
+  '很会',
+  '会玩',
+  '吊着',
+  '勾人',
+  '搅乱',
+  '争夺',
+  '变量',
+  '破坏规则',
+  '重新定义规则',
+  '让人想靠近',
+  '让人忍不住',
+  '看不透',
+  '执棋',
+  '入局',
+  '掌控感',
+  '反客为主',
+  '攻略',
+  '占有',
+  '被争夺',
+] as const;
+
+const SAFE_IMPRESSION_FALLBACKS = [
+  '她没有急着回应，但态度很稳。',
+  '她有自己的节奏，不太会被气氛推着走。',
+  '她说话不重，但能把意思讲明白。',
+  '相处起来比一开始轻松一点。',
+];
+
+function textLength(text: string): number {
+  return Array.from(text).length;
+}
+
+function truncateText(text: string, maxLength: number): string {
+  const chars = Array.from(text.trim());
+  return chars.length > maxLength ? chars.slice(0, maxLength).join('') : chars.join('');
+}
+
+function hasImpressionRisk(text: string): string | null {
+  return IMPRESSION_RISK_TERMS.find(term => text.includes(term)) || null;
+}
+
+function stringArrayFrom(value: unknown, fallback: string[], maxItems: number): string[] {
+  const source = Array.isArray(value) ? value : fallback;
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of source) {
+    if (typeof item !== 'string') continue;
+    const text = item.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+    if (result.length >= maxItems) break;
+  }
+  return result;
+}
+
+function currentTentativeReads(current: LoveShowUserImpression): string[] {
+  return current.tentativeReads?.length ? current.tentativeReads : current.misconceptions || [];
+}
+
+function normalizeImpressionPayload(
+  payload: Record<string, unknown>,
+  current: LoveShowUserImpression,
+): LoveShowUserImpression {
+  const tentativeReads = stringArrayFrom(
+    payload.tentativeReads ?? payload.misconceptions,
+    currentTentativeReads(current),
+    4,
+  );
+  const impression = typeof payload.impression === 'string' && payload.impression.trim()
+    ? payload.impression.trim()
+    : current.impression;
+
+  return {
+    ...current,
+    perceivedTraits: stringArrayFrom(payload.perceivedTraits, current.perceivedTraits || [], 4),
+    knownFacts: stringArrayFrom(payload.knownFacts, current.knownFacts || [], 4),
+    tentativeReads,
+    misconceptions: tentativeReads,
+    impression,
+  };
+}
+
+function collectImpressionIssues(candidate: LoveShowUserImpression): string[] {
+  const issues: string[] = [];
+  const checkText = (field: string, text: string) => {
+    const term = hasImpressionRisk(text);
+    if (term) issues.push(`${field} 含高风险表达「${term}」`);
+  };
+
+  candidate.perceivedTraits.forEach((trait, index) => {
+    checkText(`perceivedTraits[${index}]`, trait);
+    if (textLength(trait) > 8) issues.push(`perceivedTraits[${index}] 过长，应是 2-6 个字左右`);
+  });
+  candidate.knownFacts.forEach((fact, index) => {
+    checkText(`knownFacts[${index}]`, fact);
+    if (textLength(fact) > 18) issues.push(`knownFacts[${index}] 过长，应不超过 18 字`);
+  });
+  candidate.tentativeReads.forEach((read, index) => {
+    checkText(`tentativeReads[${index}]`, read);
+    if (textLength(read) > 36) issues.push(`tentativeReads[${index}] 过长，应具体但克制`);
+  });
+  checkText('impression', candidate.impression);
+  if (textLength(candidate.impression) > 32) issues.push('impression 过长，应不超过 32 字');
+
+  return issues;
+}
+
+function filterSafeImpressionItems(items: string[], maxItems: number, maxLength: number): string[] {
+  return items
+    .filter(item => !hasImpressionRisk(item))
+    .map(item => truncateText(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function createSafeImpressionFallback(
+  current: LoveShowUserImpression,
+  sceneSummary: string,
+): LoveShowUserImpression {
+  const perceivedTraits = filterSafeImpressionItems(current.perceivedTraits || [], 4, 8);
+  const knownFacts = filterSafeImpressionItems(current.knownFacts || [], 4, 18);
+  const tentativeReads = filterSafeImpressionItems(currentTentativeReads(current), 4, 32);
+  const fallbackIndex = stableIndex(`${current.characterId}|${sceneSummary}`, SAFE_IMPRESSION_FALLBACKS.length);
+
+  return {
+    ...current,
+    perceivedTraits: perceivedTraits.length > 0 ? perceivedTraits : ['有分寸'],
+    knownFacts: knownFacts.length > 0 ? knownFacts : ['参与了刚才的互动'],
+    tentativeReads: tentativeReads.length > 0 ? tentativeReads : ['可能还在观察气氛'],
+    misconceptions: tentativeReads.length > 0 ? tentativeReads : ['可能还在观察气氛'],
+    impression: SAFE_IMPRESSION_FALLBACKS[fallbackIndex],
+  };
+}
+
+async function repairImpressionPayload(
+  apiConfig: ApiConfig,
+  charName: string,
+  userName: string,
+  rawOutput: string,
+  issues: string[],
+  currentImpression: LoveShowUserImpression,
+): Promise<LoveShowUserImpression> {
+  const repairPrompt = buildImpressionRepairPrompt(charName, userName, rawOutput, issues);
+  const repairedRaw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, repairPrompt, 0.25, `${charName} 印象修正`);
+  const repairedParsed = safeParseJson<Record<string, unknown>>(repairedRaw);
+  return normalizeImpressionPayload(repairedParsed, currentImpression);
+}
+
+/** 生成下一小拍导演镜头卡（带校验元信息） */
+export async function generateDirectorBeatWithMeta(
+  apiConfig: ApiConfig,
+  input: DirectorBeatInput,
+): Promise<DirectorBeatPlan> {
+  const userPrompt = buildDirectorBeatPrompt(
+    input.season,
+    input.scene,
+    input.characters,
+    input.sceneSummaries,
+    input.recentDialogue,
+    input.choiceContext,
+  );
+
+  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.45, 'DirectorBeat');
+  try {
+    const parsed = safeParseJson<Partial<DirectorBeat>>(raw);
+    return validateDirectorBeat(parsed, input);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'DirectorBeat JSON parse failed';
+    return fallbackDirectorBeatPlan(input, message);
+  }
+}
+
+/** 生成下一小拍导演镜头卡 */
+export async function generateDirectorBeat(
+  apiConfig: ApiConfig,
+  input: DirectorBeatInput,
+): Promise<DirectorBeat> {
+  const plan = await generateDirectorBeatWithMeta(apiConfig, input);
+  return plan.beat;
+}
+
 /** 评估角色状态变化 */
 export async function evaluateCharacterState(
   apiConfig: ApiConfig,
@@ -533,7 +1057,7 @@ export async function evaluateCharacterState(
 ): Promise<CharacterState> {
   const userPrompt = buildCharacterStateEvalPrompt(charName, userName, sceneSummary, currentState);
 
-  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.5);
+  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.5, `${charName} 状态评估`);
   const parsed = safeParseJson<Partial<CharacterState>>(raw);
 
   return {
@@ -554,15 +1078,49 @@ export async function updateImpression(
 ): Promise<LoveShowUserImpression> {
   const userPrompt = buildImpressionUpdatePrompt(charName, userName, sceneSummary, currentImpression);
 
-  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.5);
-  const parsed = safeParseJson<Record<string, unknown>>(raw);
+  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.5, `${charName} 印象更新`);
+  let candidate: LoveShowUserImpression;
 
-  // 合并但保护 characterId 不被覆盖
-  const { characterId: _, ...updates } = parsed as Record<string, unknown> & { characterId?: string };
-  return {
-    ...currentImpression,
-    ...updates,
-  } as LoveShowUserImpression;
+  try {
+    const parsed = safeParseJson<Record<string, unknown>>(raw);
+    candidate = normalizeImpressionPayload(parsed, currentImpression);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      candidate = await repairImpressionPayload(
+        apiConfig,
+        charName,
+        userName,
+        raw,
+        [`印象卡返回内容不是合法 JSON：${message}`],
+        currentImpression,
+      );
+    } catch (repairErr) {
+      console.warn('[LoveShow] Impression JSON repair failed; using local fallback.', repairErr);
+      return createSafeImpressionFallback(currentImpression, sceneSummary);
+    }
+  }
+
+  const issues = collectImpressionIssues(candidate);
+  if (issues.length === 0) return candidate;
+
+  try {
+    const repaired = await repairImpressionPayload(
+      apiConfig,
+      charName,
+      userName,
+      JSON.stringify(candidate),
+      issues,
+      currentImpression,
+    );
+    const repairedIssues = collectImpressionIssues(repaired);
+    if (repairedIssues.length === 0) return repaired;
+    console.warn('[LoveShow] Impression repair still unsafe; using local fallback.', repairedIssues);
+  } catch (err) {
+    console.warn('[LoveShow] Impression repair failed; using local fallback.', err);
+  }
+
+  return createSafeImpressionFallback(currentImpression, sceneSummary);
 }
 
 /** 生成场景摘要 */
@@ -574,7 +1132,7 @@ export async function generateSceneSummary(
 ): Promise<string> {
   const userPrompt = buildSceneSummaryPrompt(charName, userName, rawDialogue);
 
-  return callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.4);
+  return callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.4, '场景摘要');
 }
 
 /** 批量生成社交媒体帖子 */
@@ -583,10 +1141,11 @@ export async function generateSocialPosts(
   day: number,
   seasonSummary: string,
   charNames: string[],
+  userName?: string,
 ): Promise<LoveShowSocialPost[]> {
-  const userPrompt = buildSocialPostsPrompt(day, seasonSummary, charNames);
+  const userPrompt = buildSocialPostsPrompt(day, seasonSummary, charNames, userName);
 
-  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.8);
+  const raw = await callSubModel(apiConfig, SUB_MODEL_SYSTEM_PROMPT, userPrompt, 0.8, '热搜生成');
   const parsed = safeParseJson<Record<string, unknown>[]>(raw);
 
   // 确保每条帖子有必填字段

@@ -45,7 +45,7 @@ const MENU_ITEMS: MenuItem[] = [
     {
         id: 'tts', iconBg: 'bg-pink-100/50 text-pink-500',
         icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>,
-        title: '语音合成', desc: 'MiniMax TTS · 音色 / 情绪 / 效果器',
+        title: '语音合成', desc: 'MiniMax / ElevenLabs · 通话声线',
     },
     {
         id: 'stt', iconBg: 'bg-sky-100/50 text-sky-600',
@@ -80,7 +80,9 @@ function readStatuses(): Record<string, string | undefined> {
         const apiStatus = hasPrimaryApiConfig
             ? snapshot.api.primary.model.split('/').pop()
             : '未配置';
-        const ttsStatus = snapshot.tts.apiKey ? '已配置' : '未配置';
+        const ttsStatus = snapshot.tts.voiceCallProvider === 'elevenlabs'
+            ? (snapshot.tts.elevenLabs.apiKey && snapshot.tts.elevenLabs.voiceId ? 'ElevenLabs' : '未配置')
+            : (snapshot.tts.apiKey ? 'MiniMax' : '未配置');
         const sttStatus = snapshot.stt.provider === 'siliconflow' ? '硅基' : 'Groq';
         const rtStatus = [
             snapshot.realtime.weatherEnabled && '天气',

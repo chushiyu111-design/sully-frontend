@@ -117,9 +117,11 @@ export const APP_CONFIGS: AppConfig[] = [
   { id: AppID.HalfSugar, name: '半糖主义', icon: 'HalfSugar', color: 'teal' },
 ];
 
+const isProductionBuild = import.meta.env.MODE === 'production';
+
 const HIDDEN_LAUNCHER_APPS = new Set<AppID>([
   AppID.Crosstime,
-  AppID.LoveShow,
+  ...(isProductionBuild ? [AppID.LoveShow] : []),
 ]);
 
 export const INSTALLED_APPS: AppConfig[] = APP_CONFIGS.filter(app => !HIDDEN_LAUNCHER_APPS.has(app.id));

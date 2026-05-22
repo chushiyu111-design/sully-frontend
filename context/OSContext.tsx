@@ -81,6 +81,7 @@ const defaultTheme: OSTheme = {
     wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)',
     darkMode: false,
     contentColor: '#ffffff',
+    customIconFrame: true,
 };
 
 const generateAvatar = (seed: string) => {

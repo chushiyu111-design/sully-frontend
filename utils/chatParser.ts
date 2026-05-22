@@ -352,6 +352,47 @@ export const ChatParser = {
             content = content.replace(returnTransferMatch[0], '').trim();
         }
 
+        // NEWS_CARD — char 主动把某条热点当作新闻卡片分享
+        //   [[NEWS_CARD: 来源|标题]]，来源可省略为 [[NEWS_CARD: 标题]]
+        const newsCardMatch = content.match(/\[\[NEWS_CARD\s*[:：]\s*([^\]]*?)\s*\]\]/i);
+        if (newsCardMatch) {
+            const raw = (newsCardMatch[1] || '').trim();
+            if (raw) {
+                const segments = raw.split(/[|｜]/).map(part => part.trim()).filter(Boolean);
+                let source = '';
+                let title = raw;
+                if (segments.length >= 2) {
+                    source = segments[0];
+                    title = segments.slice(1).join('|').trim();
+                }
+
+                let url: string | undefined;
+                let desc: string | undefined;
+                try {
+                    const snapshot = await DB.getLatestHotNewsSnapshot();
+                    const hit = snapshot?.items?.find(item => item.title === title)
+                        || snapshot?.items?.find(item => !!title && (item.title.includes(title) || title.includes(item.title)));
+                    if (hit) {
+                        url = hit.url;
+                        desc = hit.desc;
+                        if (!source && hit.source) source = hit.source;
+                    }
+                } catch { /* 没有快照时仍然可以生成无链接卡片 */ }
+
+                if (title) {
+                    await DB.saveMessage({
+                        charId,
+                        role: 'assistant',
+                        type: 'news_card',
+                        content: `[你分享了一个热点：「${title}」${source ? `（来源：${source}）` : ''}${desc ? `——${desc}` : ''}]`,
+                        metadata: { source, title, url, desc },
+                    });
+                    addToast(`${charName} 分享了一条热点`, 'info');
+                }
+            }
+            content = content.replace(/\[\[NEWS_CARD\s*[:：][^\]]*\]\]/gi, '').trim();
+        }
+
         // ADD_EVENT
         const eventMatch = content.match(/(?:\[{1,2}|【|\()ACTION\s*[:：]\s*ADD_EVENT\s*[|｜]\s*(.*?)\s*[|｜]\s*(.*?)(?:\]{1,2}|】|\))/i);
         if (eventMatch) {
@@ -491,7 +532,7 @@ export const ChatParser = {
             // ── Strip markdown headers ──
             .replace(/^#{1,6}\s+/gm, '')
             // ── Strip residual action/system tags ──
-            .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|CALL|WEIBO_SEARCH|XHS_SEARCH|XHS_BROWSE|XHS_POST|XHS_SHARE|XHS_COMMENT|XHS_LIKE|XHS_FAV|XHS_DETAIL|XHS_REPLY|XHS_MY_PROFILE|READ_NOTE)[:\s][\s\S]*?\]\]/g, '')
+            .replace(/\[\[(?:ACTION|NEWS_CARD|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|CALL|WEIBO_SEARCH|XHS_SEARCH|XHS_BROWSE|XHS_POST|XHS_SHARE|XHS_COMMENT|XHS_LIKE|XHS_FAV|XHS_DETAIL|XHS_REPLY|XHS_MY_PROFILE|READ_NOTE)[:\s][\s\S]*?\]\]/g, '')
             .replace(/\[\[(?:ACTION|CALL)[:\s]\w*\]\]/g, '')
             .replace(/\[schedule_message[^\]]*\]/g, '')
             .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')

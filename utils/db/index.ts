@@ -172,6 +172,12 @@ export const DB = {
     getVoiceAudio: contentStore.getVoiceAudio,
     deleteVoiceAudio: contentStore.deleteVoiceAudio,
 
+    // Hot News Snapshots
+    saveHotNewsSnapshot: contentStore.saveHotNewsSnapshot,
+    getHotNewsSnapshot: contentStore.getHotNewsSnapshot,
+    getLatestHotNewsSnapshot: contentStore.getLatestHotNewsSnapshot,
+    pruneHotNewsSnapshots: contentStore.pruneHotNewsSnapshots,
+
     // Vector Memories
     getAllVectorMemories: vectorMemoryStore.getAllVectorMemories,
     getUnsyncedVectorMemories: vectorMemoryStore.getUnsyncedVectorMemories,

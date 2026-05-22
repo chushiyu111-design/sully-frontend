@@ -50,6 +50,8 @@ const SUPPRESSED_ERROR_PATTERNS: RegExp[] = [
     /NetworkError/i,
     /Load failed/i,
     /AbortError/i,                        // AbortController / signal timeouts
+    /user.*aborted/i,
+    /request.*aborted/i,
     /operation was aborted/i,
     /operation.*aborted/i,
     /signal.*timed?\s*out/i,

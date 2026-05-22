@@ -1107,6 +1107,7 @@ ${isInitialGeneration ? `
 
         const {
             id, memories, refinedMemories, activeMemoryMonths, impression,
+            hideBeforeMessageId,
             vectorMemoryEnabled, vectorMemoryAutoExtract, vectorMemoryExtractInterval,
             vectorMemoryLastExtractAt, vectorMemoryTakeover, vectorMemoryMode,
             ...cardProps
@@ -1194,6 +1195,7 @@ ${isInitialGeneration ? `
                     memories: [],
                     refinedMemories: {},
                     activeMemoryMonths: [],
+                    hideBeforeMessageId: undefined,
                     embeddedTheme: undefined
                 } as CharacterProfile;
 
@@ -1283,6 +1285,7 @@ ${isInitialGeneration ? `
                                         <input value={formData.name} onChange={(e) => handleChange('name', e.target.value)} className="w-full bg-transparent py-1 text-xl font-medium text-slate-800 border-b border-slate-200" placeholder="名称" />
                                         <input value={formData.description} onChange={(e) => handleChange('description', e.target.value)} className="w-full bg-transparent py-1 text-sm text-slate-500 border-b border-slate-200" placeholder="描述" />
                                         <input value={formData.ttsVoiceId || ''} onChange={(e) => handleChange('ttsVoiceId', e.target.value)} className="w-full bg-transparent py-1 text-xs text-slate-500 border-b border-slate-200" placeholder="MiniMax 角色声线 Voice ID（可选）" />
+                                        <input value={formData.elevenLabsVoiceId || ''} onChange={(e) => handleChange('elevenLabsVoiceId', e.target.value)} className="w-full bg-transparent py-1 text-xs text-slate-500 border-b border-slate-200" placeholder="ElevenLabs 语音通话 Voice ID（可选）" />
                                     </div>
                                 </div>
 

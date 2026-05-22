@@ -1,10 +1,12 @@
 /**
  * Status Card Types — 创意状态栏类型定义
  *
- * 三种模式：
+ * 状态栏/心声模式：
  *   1. classic  — 经典心声（明信片卡片）
  *   2. creative — AI 创意卡片（基于对话语境选骨架 + 生成样式）
  *   3. custom   — 用户自定义模板
+ *   4. freeform — 自由 HTML 卡片
+ *   5. story_phone — 剧情查手机入口
  */
 
 /** AI 输出的统一卡片数据结构 */
@@ -92,7 +94,7 @@ export interface CustomStatusTemplate {
 }
 
 /** 状态栏模式类型 */
-export type StatusBarMode = 'off' | 'classic' | 'creative' | 'custom' | 'freeform';
+export type StatusBarMode = 'off' | 'classic' | 'creative' | 'custom' | 'freeform' | 'story_phone';
 
 /** 可用的骨架类型 ID 列表 */
 export const SKELETON_TYPES = [

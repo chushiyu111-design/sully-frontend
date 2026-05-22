@@ -22,6 +22,7 @@ import { TIME_SLOT_LABELS } from '../../types/theater';
 import {
     buildRecentForbiddenMotifs,
     buildTheaterDirectorRecentContext,
+    buildTheaterMainlineContinuityContext,
     buildTraditionalCallbackMemoryContext,
     chooseDirectorEventType,
     combineCallbackMemoryContext,
@@ -582,8 +583,11 @@ const TheaterApp: React.FC = () => {
         if (apiConfig?.baseUrl) {
             setIsAiLoading(true);
             try {
+                const allMsgs = await DB.getMessagesByCharId(char.id);
+                const continuityContext = buildTheaterMainlineContinuityContext(allMsgs, char.name, userProfile.name);
                 let systemPrompt = buildDatePreamble(char.name, userProfile.name);
                 systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+                systemPrompt += continuityContext;
 
                 if (transitionEvent) {
                     systemPrompt += buildTransitionSceneInjection(
@@ -598,7 +602,6 @@ const TheaterApp: React.FC = () => {
                 systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, updatedSession.timeSlot);
                 systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
 
-                const allMsgs = await DB.getMessagesByCharId(char.id);
                 const theaterMsgs = allMsgs
                     .filter(m => isTheaterMessage(m, tlId || undefined))
                     .sort((a, b) => a.timestamp - b.timestamp);
@@ -699,10 +702,13 @@ const TheaterApp: React.FC = () => {
         setIsAiLoading(true);
         try {
             const scenePrompt = buildInitialScenePrompt(loc, sess.timeSlot, char.name, userProfile.name);
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const continuityContext = buildTheaterMainlineContinuityContext(allMsgs, char.name, userProfile.name);
 
             // Build system prompt (reuse date mode prompts)
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+            systemPrompt += continuityContext;
             systemPrompt += `\n\n${scenePrompt}`;
 
             const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -799,14 +805,18 @@ const TheaterApp: React.FC = () => {
 
         // Refresh messages
         let allMsgs = await refreshTimelineMessages() || await DB.getMessagesByCharId(char.id);
+        const mainlineContinuityContext = buildTheaterMainlineContinuityContext(allMsgs, char.name, userProfile.name);
         const theaterMsgsForDirector = allMsgs
             .filter(m => isTheaterMessage(m, currentTimelineId || undefined))
             .sort((a, b) => a.timestamp - b.timestamp);
-        const recentDirectorContext = buildTheaterDirectorRecentContext(
+        const theaterDirectorContext = buildTheaterDirectorRecentContext(
             theaterMsgsForDirector,
             char.name,
             userProfile.name,
         );
+        const recentDirectorContext = [theaterDirectorContext, mainlineContinuityContext]
+            .filter(Boolean)
+            .join('\n\n');
         const recentForbiddenMotifs = buildRecentForbiddenMotifs(session.eventHistory);
 
         // 2. Check pity system — should we trigger a director event?
@@ -906,6 +916,7 @@ const TheaterApp: React.FC = () => {
         try {
             let systemPrompt = buildDatePreamble(char.name, userProfile.name);
             systemPrompt += ContextBuilder.buildCoreContext(char, userProfile);
+            systemPrompt += mainlineContinuityContext;
             systemPrompt += buildTheaterSummaryMemoryPrompt(
                 getTimelineRawMessagesForSummaryLookup(allMsgs, char.id, currentTimelineId),
             );

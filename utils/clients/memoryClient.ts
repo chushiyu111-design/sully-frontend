@@ -113,6 +113,18 @@ function normalizeSource(value: unknown): VectorMemory['source'] {
         : 'sync';
 }
 
+function isAbortOrTimeoutError(err: unknown): boolean {
+    const name = typeof (err as { name?: unknown })?.name === 'string'
+        ? (err as { name: string }).name
+        : '';
+    const message = err instanceof Error ? err.message : String(err);
+    const lower = `${name} ${message}`.toLowerCase();
+    return lower.includes('abort')
+        || lower.includes('aborted')
+        || lower.includes('timeout')
+        || lower.includes('timed out');
+}
+
 function normalizeCloudMemory(memory: unknown, fallbackCharId: string): VectorMemory | null {
     if (!memory || typeof memory !== 'object') return null;
 
@@ -235,6 +247,10 @@ export async function pullMemories(charId: string, options: CloudMemoryListOptio
         console.log(`☁️ [CloudSync] Pull success: ${memories.length} memories for ${charId}`);
         return memories;
     } catch (err: any) {
+        if (isAbortOrTimeoutError(err)) {
+            return null;
+        }
+
         console.error('☁️ [CloudSync] Pull failed:', err.message);
         clearBackendHealthCache();
         return null;

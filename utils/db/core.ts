@@ -1,7 +1,7 @@
 
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 42; // Bumped for per-character message windows
+const DB_VERSION = 44; // Bumped for chat context mirrors
 
 export const STORE_CHARACTERS = 'characters';
 export const STORE_MESSAGES = 'messages';
@@ -33,6 +33,8 @@ export const STORE_VOICE_AUDIO = 'voice_audio';
 export const STORE_VECTOR_MEMORIES = 'vector_memories';
 export const STORE_MEMORY_RECORDS = 'memory_records';
 export const STORE_MEMORY_RECORD_AUDIO = 'memory_record_audio';
+export const STORE_HOT_NEWS_SNAPSHOTS = 'hot_news_snapshots';
+export const STORE_CHAT_CONTEXT_MIRRORS = 'chat_context_mirrors';
 
 export interface ScheduledMessage {
     id: string;
@@ -218,6 +220,9 @@ export const openDB = (): Promise<IDBDatabase> => {
                 const audioStore = db.createObjectStore(STORE_MEMORY_RECORD_AUDIO, { keyPath: 'id' });
                 audioStore.createIndex('recordId', 'recordId', { unique: false });
             }
+
+            createStore(STORE_HOT_NEWS_SNAPSHOTS, { keyPath: 'id' });
+            createStore(STORE_CHAT_CONTEXT_MIRRORS, { keyPath: 'charId' });
         };
     });
 };

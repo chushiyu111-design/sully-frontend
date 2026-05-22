@@ -13,7 +13,13 @@ import type {
   LoveShowUserImpression,
   LoveShowScene,
   NpcProfile,
+  DirectorBeat,
 } from '../types/loveshow';
+
+function getTentativeReads(impression: LoveShowUserImpression): string[] {
+  const legacyReads = impression.misconceptions || [];
+  return impression.tentativeReads?.length ? impression.tentativeReads : legacyReads;
+}
 
 // ═══════════════════════════════════════════
 //  1. buildLoveShowPreamble — 主模型 system prompt 前置段
@@ -60,14 +66,15 @@ export function buildLoveShowPreamble(
     const facts = impression.knownFacts.length > 0
       ? impression.knownFacts.join('；')
       : '暂时不多';
-    const miscon = impression.misconceptions.length > 0
-      ? impression.misconceptions.join('；')
+    const tentativeReads = getTentativeReads(impression);
+    const readsText = tentativeReads.length > 0
+      ? tentativeReads.join('；')
       : '暂时没有';
 
     parts.push(
       `你觉得${userName}是这样的人：${traits}。` +
       `你了解到：${facts}。` +
-      `你有一些可能不准确的判断：${miscon}。`,
+      `你对她有一些暂时理解：${readsText}。这些理解可以随着互动被修正。`,
     );
   }
 
@@ -108,6 +115,170 @@ export function buildSceneContext(
   }
 
   return parts.join('\n\n');
+}
+
+// ═══════════════════════════════════════════
+//  2.5 DirectorBeat — 多人镜头调度
+// ═══════════════════════════════════════════
+
+export interface DirectorBeatCharacterBrief {
+  id: string;
+  name: string;
+  profile?: string;
+  worldview?: string;
+  state?: CharacterState | null;
+  impression?: LoveShowUserImpression | null;
+}
+
+function formatCharacterBrief(character: DirectorBeatCharacterBrief): string {
+  const state = character.state;
+  const impression = character.impression;
+  return [
+    `- ${character.name} (${character.id})`,
+    character.profile ? `  核心人设：${character.profile.slice(0, 700)}` : '',
+    character.worldview ? `  世界观补充：${character.worldview.slice(0, 500)}` : '',
+    state
+      ? `  状态：好感 ${state.affection}/100，心情 ${state.mood}，策略 ${state.strategy}，想法「${state.innerThought || '暂未显露'}」`
+      : '  状态：初次入场，节目组还没有观察记录',
+    impression?.impression
+      ? `  对用户印象：${impression.impression}`
+      : '  对用户印象：初印象阶段',
+  ].filter(Boolean).join('\n');
+}
+
+export function buildMultiCastLoveShowPreamble(
+  userName: string,
+  seasonState: SeasonState,
+  characters: DirectorBeatCharacterBrief[],
+  userBio?: string,
+): string {
+  return `你是 LoveShow 的场景演出模型，正在写一档 AI 恋爱综艺的即时片段。
+
+核心规则：
+- 所有嘉宾都是正式嘉宾，没有背景嘉宾、陪衬嘉宾、次要嘉宾。
+- 镜头焦点只代表这一小拍拍谁更多，不代表谁是主角。
+- 恋爱主轴是用户与嘉宾；嘉宾之间可以竞争、观察、误解、助攻，但不要成为彼此恋爱主线。
+- 嘉宾会互相观察、反应、竞争、误解或助攻，但不要替用户做选择。
+- 每次只演当前这一小拍，不要一次推进一整天。
+- 本轮只能重点表现导演镜头卡安排的发言人和镜头焦点，不要让未安排嘉宾突然大段开麦。
+- 用星号包裹动作和环境描写，角色对话用「角色名：对话」格式。像写小说一样自然书写。
+
+当前进度：第${seasonState.day}天，阶段 ${seasonState.phase}。
+用户：${userName}${userBio ? `，设定/备注：${userBio}` : ''}。
+
+正式嘉宾：
+${characters.map(formatCharacterBrief).join('\n')}`;
+}
+
+export function buildDirectorBeatPerformanceContext(
+  beat: DirectorBeat,
+  characters: DirectorBeatCharacterBrief[],
+): string {
+  const nameById = new Map(characters.map(character => [character.id, character.name]));
+  const nameOf = (id: string) => nameById.get(id) || id;
+
+  const focus = beat.cameraFocus.length > 0
+    ? beat.cameraFocus
+        .map(item => `${nameOf(item.charId)} / ${item.shotType} / ${item.reason}`)
+        .join('\n')
+    : '无明确焦点，使用全景镜头。';
+  const speakers = beat.speakers.length > 0
+    ? beat.speakers
+        .map(item => `${nameOf(item.charId)} / ${item.role} / ${item.intent}`)
+        .join('\n')
+    : '这一小拍可以只写动作和气氛，不强制台词。';
+  const reactions = beat.reactionOnlyCharIds.length > 0
+    ? beat.reactionOnlyCharIds.map(nameOf).join('、')
+    : '无';
+
+  return `### 当前导演镜头卡
+beatId：${beat.beatId}
+sceneType：${beat.sceneType}
+在场嘉宾：${beat.presentCharIds.map(nameOf).join('、') || '节目现场'}
+镜头焦点：
+${focus}
+
+明显发言安排：
+${speakers}
+
+只做动作/表情反应：${reactions}
+用户位置：${beat.userPosition}
+停顿方式：${beat.endingMode}
+导演备注：${beat.directorNote}
+
+演出要求：
+- 严格按镜头卡写这一小拍。
+- 本轮只能重点表现 DirectorBeat 中安排的 speakers 和 cameraFocus，不要自行新增大段发言人。
+- 最多让 1-3 位嘉宾明显发言；reactionOnly 只能写表情、动作、停顿、视线。
+- 不要让没有安排的嘉宾突然抢话。
+- 不要替用户说话，不要替用户决定下一步。
+- 结尾按 endingMode 停住：wait_user 要把空间留给用户，open_choice/phone_notification/scene_end 不要擅自展开后续。`;
+}
+
+export function buildDirectorBeatPrompt(
+  seasonState: SeasonState,
+  scene: LoveShowScene,
+  characters: DirectorBeatCharacterBrief[],
+  sceneSummaries: string[],
+  recentDialogue: string,
+  choiceContext?: string,
+): string {
+  const recentSummaries = sceneSummaries.slice(-4);
+  return `你是 LoveShow 的导演与镜头剪辑师。
+你不负责写完整剧情，也不生成正式台词。
+你只负责为下一小拍生成镜头调度卡 DirectorBeat。
+
+规则：
+- 所有嘉宾都是正式嘉宾，没有背景嘉宾。
+- 用户是本季恋爱主轴。嘉宾之间的镜头张力应该服务于竞争、观察、误解或助攻，不要把嘉宾互相恋爱当成主线。
+- cameraFocus 只代表这一小拍镜头更多给谁，不代表谁更重要。
+- 每一小拍最多安排 1-3 位嘉宾明显发言。
+- 如果用户上一句明确点名、回应或靠近某位嘉宾，优先让该嘉宾进入 cameraFocus 或 speakers。
+- 如果用户没有明确 cue，主动轮换镜头，避免连续多拍让同一位嘉宾承担 lead。
+- 没有发言的嘉宾也可以被安排为 reactionOnly。
+- 不要替用户做选择。
+- 不要生成正式台词。
+- 不要一次推进太远。
+- 输出 JSON，不要添加解释，不要 code fence。
+
+当前赛季：
+- seasonId：${seasonState.seasonId}
+- day：${seasonState.day}
+- phase：${seasonState.phase}
+
+当前场景：
+- sceneId：${scene.id}
+- 地点：${scene.locationName}
+- 氛围：${scene.atmosphere}
+- 目前在场：${scene.characterIds.join('、') || '待导演决定'}
+${choiceContext ? `- 刚发生的选择：${choiceContext}` : ''}
+
+正式嘉宾状态：
+${characters.map(formatCharacterBrief).join('\n')}
+
+最近摘要：
+${recentSummaries.length > 0 ? recentSummaries.map((item, index) => `${index + 1}. ${item}`).join('\n') : '暂无'}
+
+最近对话：
+${recentDialogue || '暂无'}
+
+请输出一个 DirectorBeat JSON：
+{
+  "beatId": "beat_xxx",
+  "sceneType": "opening_group | group_event | date | phone_time | observatory | confession_room | day_end",
+  "presentCharIds": ["角色ID"],
+  "cameraFocus": [
+    {"charId": "角色ID", "shotType": "close_up | reaction | two_shot | wide | cutaway", "reason": "为什么给这个镜头"}
+  ],
+  "speakers": [
+    {"charId": "角色ID", "role": "lead | respond | interrupt | soft_react", "intent": "这一小拍他的表达意图，不是台词"}
+  ],
+  "reactionOnlyCharIds": ["角色ID"],
+  "userPosition": "being_addressed | observing | choosing_target | private_moment | silent_pressure",
+  "endingMode": "wait_user | continue_scene | open_choice | phone_notification | scene_end",
+  "userPromptHint": "可选，给用户输入框/下一步的提示",
+  "directorNote": "一句话说明这一小拍要制造什么张力"
+}`;
 }
 
 // ═══════════════════════════════════════════
@@ -166,9 +337,17 @@ export function buildImpressionUpdatePrompt(
   sceneSummary: string,
   currentImpression: LoveShowUserImpression,
 ): string {
-  return `你是恋爱综艺节目的心理观察员。你的任务是以「${charName}」的视角，更新他对「${userName}」的印象卡。
+  const tentativeReads = getTentativeReads(currentImpression);
+  return `你是恋爱综艺的幕后印象记录员。
+你的任务不是做心理分析，不是写人物鉴定，也不是替嘉宾审判任何人。
+你的任务是站在「${charName}」的视角，根据刚才的互动，小幅更新他对「${userName}」的印象卡。
 
-重要：同一个人在不同人眼里是完全不同的形象。你现在只站在${charName}的角度，用他的性格和价值观去理解${userName}。
+重要：同一个人在不同嘉宾眼里会是完全不同的人。
+你只能使用「${charName}」的性格、价值观、关系距离和刚才看到/经历到的互动，去理解「${userName}」。
+不要站在上帝视角判断${userName}真实是什么样的人。
+不要替${userName}下最终定义。
+不要把一次互动拔高成命运、规则、危险变量、奖品、猎物、征服对象。
+不要用攻略女性、审判女性、物化女性的口吻。
 
 ### 刚才发生的事
 ${sceneSummary}
@@ -176,19 +355,81 @@ ${sceneSummary}
 ### ${charName}目前对${userName}的印象
 - 感知到的特质：${currentImpression.perceivedTraits.join('、') || '还不了解'}
 - 已知事实：${currentImpression.knownFacts.join('；') || '暂无'}
-- 可能不准确的判断：${currentImpression.misconceptions.join('；') || '暂无'}
+- 暂时理解：${tentativeReads.join('；') || '暂无'}
 - 整体印象：${currentImpression.impression || '初印象阶段'}
 
-### 你的任务
-根据场景中的互动，更新印象卡。注意：
-- perceivedTraits 是${charName}「觉得」${userName}是什么样的人，不一定准确
-- knownFacts 是${charName}在互动中确实了解到的客观信息
-- misconceptions 是${charName}基于有限信息做出的可能不准确的推断
-- impression 是一句话总结${charName}此刻对${userName}的整体感觉
+### 允许的角色张力
+嘉宾可以心动、犹豫、吃醋、防备、嘴硬、误会、产生距离感。
+但必须保留基本尊重，只描述自己感受到的互动，不评价${userName}的人格高低，不道德审判她的社交方式、亲密选择或魅力。
+
+### 禁止方向
+- 不要写心理鉴定、小说旁白、霸总判词、修罗场金句
+- 不要把${userName}写成奖品、猎物、危险变量、被攻略对象、被争夺对象
+- 不要把女性的主动写成轻浮，把边界感写成装，把魅力写成心机
+- 避免这些表达方向：她让我意识到、不能只按我的节奏靠近、她打乱了局面、她让所有人都、她很危险、她很会拿捏、她不是……而是……、我想征服/看穿/靠近她、她让我忍不住
+
+### 字段要求
+perceivedTraits：
+- 写${charName}主观感知到的特质
+- 每条 2-6 个字，最多 4 条
+- 要具体、日常、可感知
+- 例如：会接话、有分寸、反应快、慢热、直接、观察很细、有自己的节奏
+
+knownFacts：
+- 只能写互动中明确出现、${charName}可以确认的客观信息
+- 不要写推测
+- 每条不超过 18 字
+
+tentativeReads：
+- 写${charName}基于有限互动产生的暂时理解
+- 可以不完全准确，但必须温和、具体、可修正
+- 不要写成偏见、审判或人格定罪
+- 例如：可能还没完全放松、好像不喜欢被催着表态、似乎会先观察气氛、对不熟的人会留一点距离
+
+impression：
+- 一句自然短评，不超过 32 字
+- 像嘉宾心里留下的印象，不像旁白金句
+- 禁止攻略口吻、征服口吻、审判口吻、男凝修罗场口吻
+
+### 更希望的 impression 方向
+- 她回得很稳，没被气氛带着走。
+- 她有自己的节奏，不太会被催着表态。
+- 她没有急着回应，但态度不算冷。
+- 相处起来比一开始轻松一点。
+- 她边界感挺清楚，反而让人安心。
+- 她说话不重，但能把意思讲明白。
 
 ### 输出格式
 直接输出 JSON，不要添加任何其他内容，不要用 code fence 包裹：
-{"perceivedTraits": ["开朗", "有点小迷糊"], "knownFacts": ["喜欢喝美式", "大学学的设计"], "misconceptions": ["可能对所有人都这么温柔"], "impression": "挺有意思的一个人，但还看不透"}`;
+{"perceivedTraits": ["有分寸", "反应快"], "knownFacts": ["参与了破冰环节"], "tentativeReads": ["可能不喜欢被催着表态"], "impression": "她有自己的节奏，不太会被气氛推着走。"}`;
+}
+
+export function buildImpressionRepairPrompt(
+  charName: string,
+  userName: string,
+  rawOutput: string,
+  issues: string[],
+): string {
+  return `你是 LoveShow 的印象卡修正器。
+下面这份「${charName}」对「${userName}」的印象卡存在审判、攻略、物化、霸总修罗场或过度拔高的问题。
+你的任务是把它改写成「具体互动观察」，保留角色感和暧昧张力，但整体尊重、自然、克制。
+
+### 发现的问题
+${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}
+
+### 待修正 JSON
+${rawOutput}
+
+### 修正规则
+- 不要用危险、猎物、奖品、战利品、征服、驯服、拿捏、心机、难搞、不安分、会玩、吊着、勾人、搅乱、争夺、变量、破坏规则、重新定义规则、让人想靠近、让人忍不住、看不透等表达
+- 把“审判/攻略女性”的句子改成“刚才互动里可观察到的具体感受”
+- 不要把${userName}写成被评估、被攻略、被争夺的对象
+- tentativeReads 必须温和、具体、可修正
+- impression 不超过 32 字，像自然短评，不像金句
+
+### 输出格式
+直接输出 JSON，不要添加任何其他内容，不要用 code fence 包裹：
+{"perceivedTraits": ["有分寸", "反应快"], "knownFacts": ["参与了破冰环节"], "tentativeReads": ["可能还没完全放松"], "impression": "她没有急着回应，但态度很稳。"}`;
 }
 
 // ═══════════════════════════════════════════
@@ -302,26 +543,34 @@ export function buildSocialPostsPrompt(
   day: number,
   seasonSummary: string,
   charNames: string[],
+  userName = '用户',
 ): string {
   return `你是一个社交媒体内容模拟器。你的任务是为一档恋爱综艺节目生成观众的社交媒体反应。
 
 ### 节目信息
 - 当前进度：第${day}天
+- 用户参赛者：${userName}
 - 嘉宾：${charNames.join('、')}
 - 今天发生的事：${seasonSummary}
+
+### 关系主轴
+本节目的恋爱主轴是「${userName} × 嘉宾」。
+嘉宾之间默认是竞争者、观察者、助攻者、误解制造者，不是彼此恋爱对象。
+可以写网友误读两位嘉宾之间的火药味、比较、试探或助攻，但必须落回他们都在围绕${userName}产生反应。
+不要生成「嘉宾 × 嘉宾」CP 锁定、互相心动、互相恋爱主线的内容。
 
 ### 你的任务
 生成 4-6 条来自不同平台、不同用户的帖子。要求：
 - 平台只能是 weibo 或 xhs
 - 每个用户名要有网感（像真实的社交媒体昵称）
-- 帖子要有不同立场：有站不同 CP 的、有理性分析的、有纯吃瓜看热闹的
+- 帖子要有不同立场：有站「${userName} × 某位嘉宾」的、有理性分析的、有纯吃瓜看热闹的
 - 分析可能是对的，也可能是完全错误的解读——观众永远只能看到表面
 - xhs 帖子可以附带点赞数
 - 语气要像真的网友在讨论，不要太书面
 
 ### 输出格式
 直接输出 JSON 数组，不要添加任何其他内容，不要用 code fence 包裹：
-[{"platform": "weibo", "username": "甜甜圈少女", "content": "阿昊做早餐那段也太苏了 #恋综第三季#"}, {"platform": "xhs", "username": "嗑糖日记", "content": "Day${day} 名场面！！看完这段我直接原地升天", "likes": 2341}]`;
+[{"platform": "weibo", "username": "甜甜圈少女", "content": "${userName}和阿昊做早餐那段也太苏了 #恋综第三季#"}, {"platform": "xhs", "username": "嗑糖日记", "content": "Day${day} 名场面！！小野看${userName}那个眼神我先嗑为敬", "likes": 2341}]`;
 }
 
 // ═══════════════════════════════════════════

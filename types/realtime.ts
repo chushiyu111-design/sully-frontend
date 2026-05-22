@@ -12,6 +12,7 @@ export interface RealtimeConfig {
     // 新闻配置
     newsEnabled: boolean;
     newsApiKey?: string;
+    newsPlatforms?: string[];
 
     // 热搜配置
     hotSearchEnabled: boolean;
@@ -38,4 +39,21 @@ export interface RealtimeConfig {
 
     // 缓存配置
     cacheMinutes: number;
+}
+
+export interface HotNewsItem {
+    title: string;
+    source?: string;
+    url?: string;
+    desc?: string;
+}
+
+export interface HotNewsSnapshot {
+    id: string;
+    date: string;
+    slot: number;
+    slotLabel: string;
+    items: HotNewsItem[];
+    platforms: string[];
+    fetchedAt: number;
 }

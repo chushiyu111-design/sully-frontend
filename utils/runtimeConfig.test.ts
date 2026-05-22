@@ -16,11 +16,13 @@ import {
     SECONDARY_API_POOL_KEY,
     SECONDARY_API_POOL_STATE_KEY,
     STT_CONFIG_KEY,
+    TTS_CONFIG_KEY,
     getEmbeddingConfig,
     getRealtimeConfig,
     getSecondaryApiConfig,
     getSecondaryApiPool,
     getSttConfig,
+    getTtsConfig,
     hasCloudSyncTarget,
     markSecondaryApiConfigFailure,
     normalizeChatTemperature,
@@ -188,6 +190,38 @@ describe('runtimeConfig', () => {
             provider: 'siliconflow',
             groqApiKey: '',
             siliconflowApiKey: 'silicon-key',
+        });
+    });
+
+    it('normalizes ElevenLabs voice-call TTS config onto safe defaults', () => {
+        localStorage.setItem(TTS_CONFIG_KEY, JSON.stringify({
+            voiceCallProvider: 'elevenlabs',
+            elevenLabs: {
+                apiKey: ' eleven-key ',
+                voiceId: ' eleven-voice ',
+                modelId: 'eleven_v3',
+                languageCode: ' en ',
+                stability: 2,
+                similarityBoost: '-1',
+                style: '2',
+                speed: '2',
+                useSpeakerBoost: true,
+            },
+        }));
+
+        expect(getTtsConfig()).toMatchObject({
+            voiceCallProvider: 'elevenlabs',
+            elevenLabs: {
+                apiKey: 'eleven-key',
+                voiceId: 'eleven-voice',
+                modelId: 'eleven_flash_v2_5',
+                languageCode: 'en',
+                stability: 1,
+                similarityBoost: 0,
+                style: 1,
+                speed: 1.2,
+                useSpeakerBoost: true,
+            },
         });
     });
 

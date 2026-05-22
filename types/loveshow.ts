@@ -53,6 +53,75 @@ export interface ChoicePoint {
 }
 
 // ═══════════════════════════════════
+//  导演镜头调度卡
+// ═══════════════════════════════════
+
+// Phase 2A DirectorBeat Stable:
+// This structure is the frozen contract between the director sub-model and the
+// scene performer. Prefer small validation/prompt fixes over reshaping it.
+
+export type DirectorBeatSceneType =
+  | 'opening_group'
+  | 'group_event'
+  | 'date'
+  | 'phone_time'
+  | 'observatory'
+  | 'confession_room'
+  | 'day_end';
+
+export type DirectorShotType =
+  | 'close_up'
+  | 'reaction'
+  | 'two_shot'
+  | 'wide'
+  | 'cutaway';
+
+export interface CameraPlan {
+  charId: string;
+  shotType: DirectorShotType;
+  reason: string;
+}
+
+export type DirectorSpeakerRole =
+  | 'lead'
+  | 'respond'
+  | 'interrupt'
+  | 'soft_react';
+
+export interface DirectorBeatSpeaker {
+  charId: string;
+  role: DirectorSpeakerRole;
+  intent: string;
+}
+
+export type DirectorUserPosition =
+  | 'being_addressed'
+  | 'observing'
+  | 'choosing_target'
+  | 'private_moment'
+  | 'silent_pressure';
+
+export type DirectorBeatEndingMode =
+  | 'wait_user'
+  | 'continue_scene'
+  | 'open_choice'
+  | 'phone_notification'
+  | 'scene_end';
+
+export interface DirectorBeat {
+  beatId: string;
+  sceneType: DirectorBeatSceneType;
+  presentCharIds: string[];
+  cameraFocus: CameraPlan[];
+  speakers: DirectorBeatSpeaker[];
+  reactionOnlyCharIds: string[];
+  userPosition: DirectorUserPosition;
+  endingMode: DirectorBeatEndingMode;
+  userPromptHint?: string;
+  directorNote: string;
+}
+
+// ═══════════════════════════════════
 //  角色状态卡（副 API 评估）
 // ═══════════════════════════════════
 
@@ -90,7 +159,9 @@ export interface LoveShowUserImpression {
   characterId: string;
   perceivedTraits: string[];
   knownFacts: string[];
-  misconceptions: string[];
+  tentativeReads: string[];
+  /** @deprecated Use tentativeReads. Kept for old local saves and UI compatibility. */
+  misconceptions?: string[];
   impression: string;
   history: ImpressionSnapshot[];
 }

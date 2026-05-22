@@ -26,6 +26,7 @@ interface LoveShowSceneProps {
     inputValue: string;
     isSending: boolean;
     isClosingScene: boolean;
+    closingStatus: string | null;
     error: string | null;
     canRetry: boolean;
     onInputChange: (value: string) => void;
@@ -105,6 +106,7 @@ const LoveShowScene: React.FC<LoveShowSceneProps> = ({
     inputValue,
     isSending,
     isClosingScene,
+    closingStatus,
     error,
     canRetry,
     onInputChange,
@@ -176,6 +178,12 @@ const LoveShowScene: React.FC<LoveShowSceneProps> = ({
                 </div>
             )}
 
+            {isClosingScene && closingStatus && (
+                <div className="ls-closing-status" role="status">
+                    {closingStatus}
+                </div>
+            )}
+
             <form className="ls-input-bar" onSubmit={handleSubmit}>
                 <textarea
                     value={inputValue}
@@ -204,11 +212,12 @@ const LoveShowScene: React.FC<LoveShowSceneProps> = ({
                     type="button"
                     className="ls-round-btn ls-finish-btn"
                     onClick={onCompleteScene}
-                    disabled={isClosingScene || turns.length === 0}
+                    disabled={isClosingScene}
                     aria-label="收场"
                     title="收场"
                 >
                     <CheckCircle size={20} weight="bold" />
+                    <span>{isClosingScene ? '收场中' : '收场'}</span>
                 </button>
             </form>
         </section>

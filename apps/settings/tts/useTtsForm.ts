@@ -7,6 +7,7 @@ import { DEFAULT_TTS_PREPROCESS_PROMPT } from '../../../types/tts';
 // ─── Form State ─────────────────────────────────────────────────────────
 
 export interface TtsFormState {
+    voiceCallProvider: TtsConfig['voiceCallProvider'];
     baseUrl: string;
     apiKey: string;
     groupId: string;
@@ -31,6 +32,15 @@ export interface TtsFormState {
     preprocessApiBase: string;
     preprocessApiKey: string;
     preprocessModel: string;
+    elevenLabsApiKey: string;
+    elevenLabsVoiceId: string;
+    elevenLabsModelId: string;
+    elevenLabsLanguageCode: string;
+    elevenLabsStability: number;
+    elevenLabsSimilarityBoost: number;
+    elevenLabsStyle: number;
+    elevenLabsSpeed: number;
+    elevenLabsUseSpeakerBoost: boolean;
 }
 
 // ─── Reducer ────────────────────────────────────────────────────────────
@@ -48,6 +58,7 @@ function reducer(state: TtsFormState, action: TtsAction): TtsFormState {
 
 function initFromConfig(cfg: TtsConfig): TtsFormState {
     return {
+        voiceCallProvider: cfg.voiceCallProvider || 'minimax',
         baseUrl: cfg.baseUrl || '/minimax-api',
         apiKey: cfg.apiKey,
         groupId: cfg.groupId || '',
@@ -72,6 +83,15 @@ function initFromConfig(cfg: TtsConfig): TtsFormState {
         preprocessApiBase: cfg.preprocessConfig.apiBase || '',
         preprocessApiKey: cfg.preprocessConfig.apiKey || '',
         preprocessModel: cfg.preprocessConfig.model || '',
+        elevenLabsApiKey: cfg.elevenLabs.apiKey || '',
+        elevenLabsVoiceId: cfg.elevenLabs.voiceId || '',
+        elevenLabsModelId: cfg.elevenLabs.modelId || 'eleven_flash_v2_5',
+        elevenLabsLanguageCode: cfg.elevenLabs.languageCode || '',
+        elevenLabsStability: cfg.elevenLabs.stability ?? 0.5,
+        elevenLabsSimilarityBoost: cfg.elevenLabs.similarityBoost ?? 0.8,
+        elevenLabsStyle: cfg.elevenLabs.style ?? 0,
+        elevenLabsSpeed: cfg.elevenLabs.speed ?? 1,
+        elevenLabsUseSpeakerBoost: cfg.elevenLabs.useSpeakerBoost === true,
     };
 }
 
@@ -94,6 +114,7 @@ export function useTtsForm() {
     /** Convert form state → TtsConfig and persist */
     const save = useCallback(() => {
         updateTtsConfig({
+            voiceCallProvider: form.voiceCallProvider,
             baseUrl: form.baseUrl,
             apiKey: form.apiKey,
             groupId: form.groupId,
@@ -125,6 +146,17 @@ export function useTtsForm() {
                 apiKey: form.preprocessApiKey,
                 model: form.preprocessModel,
             },
+            elevenLabs: {
+                apiKey: form.elevenLabsApiKey,
+                voiceId: form.elevenLabsVoiceId,
+                modelId: form.elevenLabsModelId,
+                languageCode: form.elevenLabsLanguageCode,
+                stability: form.elevenLabsStability,
+                similarityBoost: form.elevenLabsSimilarityBoost,
+                style: form.elevenLabsStyle,
+                speed: form.elevenLabsSpeed,
+                useSpeakerBoost: form.elevenLabsUseSpeakerBoost,
+            },
         });
         addToast('语音合成配置已保存', 'success');
     }, [form, updateTtsConfig, addToast]);
@@ -136,6 +168,7 @@ export function useTtsForm() {
 
     /** Build a TtsConfig from current form (for test synthesis) */
     const buildTestConfig = useCallback((): TtsConfig => ({
+        voiceCallProvider: form.voiceCallProvider,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
         groupId: form.groupId,
@@ -147,6 +180,17 @@ export function useTtsForm() {
             : undefined,
         languageBoost: form.langBoost || undefined,
         preprocessConfig: { enabled: false, prompt: '', apiBase: '', apiKey: '', model: '' },
+        elevenLabs: {
+            apiKey: form.elevenLabsApiKey,
+            voiceId: form.elevenLabsVoiceId,
+            modelId: form.elevenLabsModelId,
+            languageCode: form.elevenLabsLanguageCode,
+            stability: form.elevenLabsStability,
+            similarityBoost: form.elevenLabsSimilarityBoost,
+            style: form.elevenLabsStyle,
+            speed: form.elevenLabsSpeed,
+            useSpeakerBoost: form.elevenLabsUseSpeakerBoost,
+        },
     }), [form]);
 
     return { form, set, merge, save, resetPreprocessPrompt, buildTestConfig, ttsConfig, addToast };

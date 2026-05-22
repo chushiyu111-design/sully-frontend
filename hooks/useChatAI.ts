@@ -40,6 +40,7 @@ import {
 import { shouldInjectPlaybackContextFromState } from '../utils/playbackContextRuntime';
 import { showLocalNotification } from '../utils/localNotification';
 import { getChatBackgroundNotificationsEnabled } from '../utils/chatBackgroundNotifications';
+import { saveChatContextMirror } from '../utils/chatContextMirror';
 
 interface UseChatAIProps {
     char: CharacterProfile | undefined;
@@ -420,7 +421,11 @@ mode 可选值：
                 return { ...msg, content: c };
             });
 
-            const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
+            const contextMirrorMessages = [
+                { role: 'system', content: systemPrompt },
+                ...cleanedApiMessages.map((msg: any) => ({ ...msg })),
+            ];
+            const fullMessages = contextMirrorMessages.map((msg: any) => ({ ...msg }));
 
             // Find the true last user message to attach strict instructions to
             const lastUserIdx = fullMessages.map(m => m.role).lastIndexOf('user');
@@ -707,6 +712,19 @@ mode 可选值：
             if (!aiContent.trim() && hadSecondPassFallbackTrigger) {
                 aiContent = '嗯...';
             }
+
+            await saveChatContextMirror({
+                charId: char.id,
+                contextLimit: limit,
+                historyMsgCount,
+                model: apiConfig.model,
+                messages: contextMirrorMessages,
+                assistantReply: aiContent,
+                thinking: thinkingContent,
+            }).catch(error => {
+                console.warn('[ChatContextMirror] save skipped:', error instanceof Error ? error.message : error);
+            });
+
             if (aiContent) {
 
                 // Check for <翻译> XML tags (new bilingual format)
@@ -1126,16 +1144,16 @@ mode 可选值：
             const mindSecondaryConfig = selectSecondaryApiConfig();
             if (mindSecondaryConfig?.apiKey && aiContent) {
                 const charSnapshot = { ...char };
-                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: currentMsgs, config: mindSecondaryConfig, goalListStr };
+                lastMindSnapshotCtx.current = { char: charSnapshot, aiContent, msgs: promptContextMsgs, config: mindSecondaryConfig, goalListStr };
                 const statusMode = char.statusBarMode || 'classic';
-                // Skip entirely if heart voice is off
-                if (statusMode === 'off') { /* noop — bionic engine still runs */ }
+                // Skip card generation for modes that do not need a background status task.
+                if (statusMode === 'off' || statusMode === 'story_phone') { /* noop — bionic engine still runs */ }
                 else {
                 // Delay 2s to reduce resource contention on mobile
                 setTimeout(() => {
                     if (statusMode === 'classic') {
                         // ── Classic inner voice ──
-                        MindSnapshotExtractor.generateInnerVoice(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
+                        MindSnapshotExtractor.generateInnerVoice(charSnapshot, aiContent, promptContextMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                             true, goalListStr
                         )
@@ -1149,7 +1167,7 @@ mode 可选值：
                             .catch(e => console.error('💭 [InnerVoice] Background:', e));
                     } else if (statusMode === 'freeform') {
                         // ── Freeform HTML card ──
-                        MindSnapshotExtractor.generateFreeformCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
+                        MindSnapshotExtractor.generateFreeformCard(charSnapshot, aiContent, promptContextMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                         )
                             .then(cardData => {
@@ -1166,7 +1184,7 @@ mode 可选值：
                             t => t.id === charSnapshot.activeCustomTemplateId,
                         ) || charSnapshot.customStatusTemplates?.[0];
                         if (template?.systemPrompt) {
-                            MindSnapshotExtractor.generateCustomCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
+                            MindSnapshotExtractor.generateCustomCard(charSnapshot, aiContent, promptContextMsgs, mindSecondaryConfig,
                                 template,
                                 (reason) => addToast(reason, 'error'),
                             )
@@ -1183,7 +1201,7 @@ mode 可选值：
                         }
                     } else {
                         // ── Creative card ──
-                        MindSnapshotExtractor.generateCreativeCard(charSnapshot, aiContent, currentMsgs, mindSecondaryConfig,
+                        MindSnapshotExtractor.generateCreativeCard(charSnapshot, aiContent, promptContextMsgs, mindSecondaryConfig,
                             (reason) => addToast(reason, 'error'),
                         )
                             .then(cardData => {
@@ -1196,7 +1214,7 @@ mode 可选值：
                             .catch(e => console.error('🎴 [CreativeCard] Background:', e));
                     }
                 }, 2000);
-                } // end else (statusMode !== 'off')
+                } // end else (statusMode needs background generation)
             }
 
             // ====== Event Extractor (时间事件提取) — fire-and-forget ======
@@ -1230,6 +1248,10 @@ mode 可选值：
         console.log(`💭 [InnerVoice] Manual retry triggered (mode: ${statusMode})`);
         if (statusMode === 'off') {
             addToast('心声已关闭，请先选择一个模式', 'info');
+            return;
+        }
+        if (statusMode === 'story_phone') {
+            addToast('查手机模式不需要重试心声，点头像旁的小手机进入', 'info');
             return;
         }
         if (statusMode === 'classic') {

@@ -862,18 +862,40 @@ const Appearance: React.FC = () => {
                 </section>
             </>
         ) : activeTab === 'icons' ? (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-4">
+                <section className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100">
+                    <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest">自定义图标外框</h2>
+                        <div className="flex shrink-0 rounded-xl bg-slate-100 p-1">
+                            <button
+                                onClick={() => updateTheme({ customIconFrame: true })}
+                                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${theme.customIconFrame !== false ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
+                            >
+                                玻璃底
+                            </button>
+                            <button
+                                onClick={() => updateTheme({ customIconFrame: false })}
+                                className={`px-3 py-1.5 text-[10px] font-bold rounded-lg transition-all ${theme.customIconFrame === false ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}
+                            >
+                                无外框
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <div className="grid grid-cols-3 gap-4">
                 {INSTALLED_APPS.map(app => {
                     const Icon = Icons[app.icon];
                     const customUrl = customIcons[app.id];
+                    const iconKeepsFrame = theme.customIconFrame !== false;
                     return (
                         <div key={app.id} className="flex flex-col items-center gap-2">
                              <div 
-                                className="w-16 h-16 rounded-2xl shadow-sm bg-slate-200 overflow-hidden relative group cursor-pointer"
+                                className={`w-16 h-16 rounded-2xl overflow-hidden relative group cursor-pointer ${customUrl && !iconKeepsFrame ? 'bg-transparent shadow-none' : 'bg-slate-200 shadow-sm'}`}
                                 onClick={() => { setSelectedAppId(app.id); iconInputRef.current?.click(); }}
                              >
                                  {customUrl ? (
-                                     <img src={customUrl} className="w-full h-full object-cover" />
+                                     <img src={customUrl} className={iconKeepsFrame ? 'w-full h-full object-cover' : 'w-full h-full object-contain drop-shadow-sm'} />
                                  ) : (
                                      <div className={`w-full h-full ${app.color} flex items-center justify-center text-white`}>
                                          <Icon className="w-8 h-8" />
@@ -891,6 +913,7 @@ const Appearance: React.FC = () => {
                     );
                 })}
                 <input type="file" ref={iconInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleIconUpload(e.target.files[0])} />
+                </div>
             </div>
         ) : (
             <PresetManager

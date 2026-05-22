@@ -116,6 +116,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 voiceSetting: { ...prev.voiceSetting, ...(updates.voiceSetting || {}) },
                 audioSetting: { ...prev.audioSetting, ...(updates.audioSetting || {}) },
                 preprocessConfig: { ...prev.preprocessConfig, ...(updates.preprocessConfig || {}) },
+                elevenLabs: { ...prev.elevenLabs, ...(updates.elevenLabs || {}) },
             };
 
             if (updates.voiceModify !== undefined) {

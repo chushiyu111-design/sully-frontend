@@ -1,11 +1,17 @@
 import { describe,expect,it } from 'vitest';
 import { DEFAULT_TTS_CONFIG,type CharacterProfile,type TtsConfig } from '../types';
-import { resolveCharacterVoiceId,withCharacterTtsVoice } from '../utils/characterTts';
+import {
+    resolveCharacterElevenLabsVoiceId,
+    resolveCharacterVoiceId,
+    withCharacterTtsVoice,
+    withCharacterVoiceCallTtsConfig,
+} from '../utils/characterTts';
 import {
     buildVoiceCallQueuedSentence,
     buildVoiceCallTtsConfig,
     getVoiceCallPlaybackSentence,
 } from '../apps/voicecall/useVoiceCallEngine';
+import { isVoiceCallTtsConfigured } from '../utils/voiceCallTtsClient';
 
 function buildTtsConfig(voiceId = 'global-voice'): TtsConfig {
     return {
@@ -17,7 +23,7 @@ function buildTtsConfig(voiceId = 'global-voice'): TtsConfig {
     };
 }
 
-function buildChar(ttsVoiceId?: string): CharacterProfile {
+function buildChar(ttsVoiceId?: string, elevenLabsVoiceId?: string): CharacterProfile {
     return {
         id: 'char-test',
         name: 'Test',
@@ -26,6 +32,7 @@ function buildChar(ttsVoiceId?: string): CharacterProfile {
         systemPrompt: '',
         memories: [],
         ttsVoiceId,
+        elevenLabsVoiceId,
     } as CharacterProfile;
 }
 
@@ -52,6 +59,36 @@ describe('character TTS voice binding', () => {
         expect(merged).not.toBe(config);
         expect(merged.voiceSetting).not.toBe(config.voiceSetting);
         expect(config.voiceSetting.voice_id).toBe('global-voice');
+    });
+
+    it('uses ElevenLabs character voice id only for voice-call config', () => {
+        const config: TtsConfig = {
+            ...buildTtsConfig('global-minimax'),
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                voiceId: 'global-eleven',
+            },
+        };
+        const char = buildChar('character-minimax', '  character-eleven  ');
+        const merged = withCharacterVoiceCallTtsConfig(config, char);
+
+        expect(resolveCharacterElevenLabsVoiceId(char, config)).toBe('character-eleven');
+        expect(merged.voiceSetting.voice_id).toBe('character-minimax');
+        expect(merged.elevenLabs.voiceId).toBe('character-eleven');
+        expect(config.elevenLabs.voiceId).toBe('global-eleven');
+    });
+
+    it('falls back to global ElevenLabs voice id when the character has none', () => {
+        const config: TtsConfig = {
+            ...buildTtsConfig('global-minimax'),
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                voiceId: '  global-eleven  ',
+            },
+        };
+
+        expect(resolveCharacterElevenLabsVoiceId(buildChar(), config)).toBe('global-eleven');
+        expect(resolveCharacterElevenLabsVoiceId(buildChar(undefined, '   '), config)).toBe('global-eleven');
     });
 
     it('keeps the character voice id when preparing voice-call PCM config', () => {
@@ -87,5 +124,30 @@ describe('character TTS voice binding', () => {
         const queue = [first!, second!];
         expect(getVoiceCallPlaybackSentence(queue, 0)?.translationText).toBe('你好。');
         expect(getVoiceCallPlaybackSentence(queue, 1)?.translationText).toBe('今天在做什么呀？');
+    });
+
+    it('checks required TTS credentials by voice-call provider', () => {
+        const minimaxConfig: TtsConfig = {
+            ...buildTtsConfig(),
+            apiKey: 'mini-key',
+            groupId: 'group-id',
+            voiceCallProvider: 'minimax',
+        };
+        const elevenLabsConfig: TtsConfig = {
+            ...buildTtsConfig(),
+            apiKey: '',
+            groupId: '',
+            voiceCallProvider: 'elevenlabs',
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                apiKey: 'eleven-key',
+                voiceId: 'eleven-voice',
+            },
+        };
+
+        expect(isVoiceCallTtsConfigured(minimaxConfig)).toBe(true);
+        expect(isVoiceCallTtsConfigured({ ...minimaxConfig, groupId: '' })).toBe(false);
+        expect(isVoiceCallTtsConfigured(elevenLabsConfig)).toBe(true);
+        expect(isVoiceCallTtsConfigured({ ...elevenLabsConfig, elevenLabs: { ...elevenLabsConfig.elevenLabs, voiceId: '' } })).toBe(false);
     });
 });

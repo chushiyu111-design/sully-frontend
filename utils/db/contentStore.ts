@@ -1,8 +1,8 @@
-import { ChatTheme,Emoji,EmojiCategory,UserProfile,GalleryImage,XhsStockImage,XhsActivityRecord } from '../../types';
+import { ChatTheme,Emoji,EmojiCategory,UserProfile,GalleryImage,XhsStockImage,XhsActivityRecord,HotNewsSnapshot } from '../../types';
 import {
   openDB,STORE_THEMES,STORE_EMOJIS,STORE_EMOJI_CATEGORIES,STORE_ASSETS,
   STORE_USER,STORE_GALLERY,STORE_JOURNAL_STICKERS,
-  STORE_XHS_STOCK,STORE_XHS_ACTIVITIES,STORE_VOICE_AUDIO,
+  STORE_XHS_STOCK,STORE_XHS_ACTIVITIES,STORE_VOICE_AUDIO,STORE_HOT_NEWS_SNAPSHOTS,
   SULLY_CATEGORY_ID,SULLY_PRESET_EMOJIS
 } from './core';
 
@@ -223,4 +223,57 @@ export const getVoiceAudio = async (msgId: number | string): Promise<Blob | null
 export const deleteVoiceAudio = async (msgId: number | string): Promise<void> => {
     const db = await openDB();
     db.transaction(STORE_VOICE_AUDIO, 'readwrite').objectStore(STORE_VOICE_AUDIO).delete(msgId);
+};
+
+// --- Hot News Snapshots ---
+export const saveHotNewsSnapshot = async (snapshot: HotNewsSnapshot): Promise<void> => {
+    const db = await openDB();
+    db.transaction(STORE_HOT_NEWS_SNAPSHOTS, 'readwrite').objectStore(STORE_HOT_NEWS_SNAPSHOTS).put(snapshot);
+};
+
+export const getHotNewsSnapshot = async (id: string): Promise<HotNewsSnapshot | null> => {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_HOT_NEWS_SNAPSHOTS)) return null;
+    return new Promise((resolve, reject) => {
+        const request = db.transaction(STORE_HOT_NEWS_SNAPSHOTS, 'readonly').objectStore(STORE_HOT_NEWS_SNAPSHOTS).get(id);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error);
+    });
+};
+
+export const getLatestHotNewsSnapshot = async (): Promise<HotNewsSnapshot | null> => {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_HOT_NEWS_SNAPSHOTS)) return null;
+    return new Promise((resolve, reject) => {
+        const request = db.transaction(STORE_HOT_NEWS_SNAPSHOTS, 'readonly').objectStore(STORE_HOT_NEWS_SNAPSHOTS).getAll();
+        request.onsuccess = () => {
+            const snapshots = (request.result || []) as HotNewsSnapshot[];
+            snapshots.sort((a, b) => (b.fetchedAt || 0) - (a.fetchedAt || 0));
+            resolve(snapshots[0] || null);
+        };
+        request.onerror = () => reject(request.error);
+    });
+};
+
+export const pruneHotNewsSnapshots = async (keep = 12): Promise<void> => {
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_HOT_NEWS_SNAPSHOTS)) return;
+    const tx = db.transaction(STORE_HOT_NEWS_SNAPSHOTS, 'readwrite');
+    const store = tx.objectStore(STORE_HOT_NEWS_SNAPSHOTS);
+    const request = store.getAll();
+    await new Promise<void>((resolve, reject) => {
+        request.onsuccess = () => {
+            const snapshots = (request.result || []) as HotNewsSnapshot[];
+            snapshots
+                .sort((a, b) => (b.fetchedAt || 0) - (a.fetchedAt || 0))
+                .slice(Math.max(0, keep))
+                .forEach(snapshot => store.delete(snapshot.id));
+            resolve();
+        };
+        request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
 };

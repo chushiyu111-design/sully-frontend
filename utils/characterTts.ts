@@ -1,6 +1,6 @@
 import type { CharacterProfile,TtsConfig } from '../types';
 
-type CharacterVoiceSource = Pick<CharacterProfile, 'ttsVoiceId'> | null | undefined;
+type CharacterVoiceSource = Pick<CharacterProfile, 'ttsVoiceId' | 'elevenLabsVoiceId'> | null | undefined;
 
 export function resolveCharacterVoiceId(char: CharacterVoiceSource, config: TtsConfig): string {
     const characterVoiceId = char?.ttsVoiceId?.trim();
@@ -14,6 +14,29 @@ export function withCharacterTtsVoice(config: TtsConfig, char: CharacterVoiceSou
         voiceSetting: {
             ...config.voiceSetting,
             voice_id: resolveCharacterVoiceId(char, config),
+        },
+    };
+}
+
+export function resolveCharacterElevenLabsVoiceId(char: CharacterVoiceSource, config: TtsConfig): string {
+    const characterVoiceId = char?.elevenLabsVoiceId?.trim();
+    if (characterVoiceId) return characterVoiceId;
+    return config.elevenLabs.voiceId?.trim() || '';
+}
+
+export function withCharacterVoiceCallTtsConfig(config: TtsConfig, char: CharacterVoiceSource): TtsConfig {
+    const minimaxVoiceId = resolveCharacterVoiceId(char, config);
+    const elevenLabsVoiceId = resolveCharacterElevenLabsVoiceId(char, config);
+
+    return {
+        ...config,
+        voiceSetting: {
+            ...config.voiceSetting,
+            voice_id: minimaxVoiceId,
+        },
+        elevenLabs: {
+            ...config.elevenLabs,
+            voiceId: elevenLabsVoiceId,
         },
     };
 }

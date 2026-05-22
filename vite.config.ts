@@ -97,6 +97,20 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/minimax-music-api/, ''),
         },
+        '/elevenlabs-token': {
+          target: 'https://api.elevenlabs.io',
+          changeOrigin: true,
+          rewrite: () => '/v1/single-use-token/tts_websocket',
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq, req) => {
+              const apiKey = req.headers['x-elevenlabs-key'];
+              if (typeof apiKey === 'string' && apiKey.trim()) {
+                proxyReq.setHeader('xi-api-key', apiKey.trim());
+              }
+              proxyReq.removeHeader('x-elevenlabs-key');
+            });
+          },
+        },
         // XHS Bridge 模式 (xiaohongshu-skills REST server)
         '/xhs-api': {
           target: 'http://localhost:18061',

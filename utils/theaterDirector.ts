@@ -5,6 +5,8 @@
  */
 
 import type { CharacterProfile, EventType, Message, PityCounter, TimeSlot, TheaterLocation, DirectorEvent } from '../types';
+import { isDateContextBridgeMessage } from './mainlineMemory';
+import { formatMessageForContext } from './messageContext';
 
 // ── Base Weights ──
 
@@ -152,6 +154,69 @@ function compactText(text: string, max = 220): string {
         .replace(/\s+/g, ' ')
         .trim();
     return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+function formatContinuityTimestamp(timestamp?: number): string {
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return '未知时间';
+    const d = new Date(timestamp);
+    if (Number.isNaN(d.getTime())) return '未知时间';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function isTheaterContinuityCandidate(message: Message): boolean {
+    const source = String(message.metadata?.source || '');
+    if (source === 'theater') return isDateContextBridgeMessage(message);
+    if (message.metadata?.hiddenFromUser) return isDateContextBridgeMessage(message);
+    return true;
+}
+
+function formatBridgeForTheaterContinuity(message: Message): string {
+    const source = String(message.metadata?.source || '');
+    const sourceLabel = source === 'theater' ? '约会剧场' : '线下见面';
+    const typeLabel = message.metadata?.bridgeType === 'raw' ? '原始记录' : '总结';
+    return `[${formatContinuityTimestamp(message.timestamp)}] [${sourceLabel}${typeLabel}] ${compactText(message.content || '', 520)}`;
+}
+
+/**
+ * Build a compact continuity block from main chat, story-phone, Date, and synced Theater records.
+ * Raw Theater messages are excluded because each Theater timeline owns its own branch.
+ */
+export function buildTheaterMainlineContinuityContext(
+    messages: Message[],
+    charName: string,
+    userName: string,
+    limit = 14,
+): string {
+    const lines = [...messages]
+        .filter(isTheaterContinuityCandidate)
+        .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id)
+        .map(message => {
+            if (isDateContextBridgeMessage(message)) return formatBridgeForTheaterContinuity(message);
+            const formatted = formatMessageForContext(message, {
+                surface: 'secondaryModel',
+                charName,
+                userName,
+                includeTimestamp: true,
+                includeSpeaker: true,
+                compact: true,
+                maxContentChars: 520,
+                timestampFormatter: formatContinuityTimestamp,
+            });
+            return formatted ? compactText(formatted, 680) : null;
+        })
+        .filter((line): line is string => !!line?.trim())
+        .slice(-limit);
+
+    if (lines.length === 0) return '';
+
+    return `
+### 【入场前主线近况】
+以下是同一角色在主聊天、剧情手机、见面模式或已同步约会记录里已经发生过的最近事实，用来校准约会剧场的当前关系状态。
+如果旧记忆、旧世界线、旧开场与这里冲突，以这里最新记录为准；已经解决的矛盾不要当作仍在发生。
+重点对齐：分手/和好、道歉、称呼变化、约定、正在执行的计划、手机线索。
+
+${lines.join('\n')}
+`;
 }
 
 export function buildTheaterDirectorRecentContext(

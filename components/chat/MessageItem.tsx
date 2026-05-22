@@ -3,6 +3,7 @@
 
 import React,{ useEffect,useRef,useState } from 'react';
 import ReactDOM from 'react-dom';
+import { DeviceMobileCamera } from '@phosphor-icons/react';
 import { Message,ChatTheme } from '../../types';
 import { StatusCardData } from '../../types/statusCard';
 import { haptic } from '../../utils/haptics';
@@ -14,6 +15,7 @@ import XhsCard from './cards/XhsCard';
 import SocialCard from './cards/SocialCard';
 import SystemNoticeCard from './cards/SystemNoticeCard';
 import PhoneEvidenceCard from './cards/PhoneEvidenceCard';
+import StoryPhoneEvidenceCard from './cards/StoryPhoneEvidenceCard';
 import RoomPlanCard from './cards/RoomPlanCard';
 import RoomNoteCard from './cards/RoomNoteCard';
 import FurnitureInteractionCard from './cards/FurnitureInteractionCard';
@@ -82,6 +84,7 @@ interface MessageItemProps {
     innerVoice?: string;
     statusCardData?: StatusCardData;
     onRetryInnerVoice?: () => void;
+    onOpenStoryPhone?: () => void;
     // Thinking chain visibility
     showThinking?: boolean;
 }
@@ -113,6 +116,7 @@ const MessageItem = React.memo(({
     innerVoice,
     statusCardData,
     onRetryInnerVoice,
+    onOpenStoryPhone,
     showThinking,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -262,6 +266,20 @@ const MessageItem = React.memo(({
                     }
                 </div>
             )}
+            {isCharAvatar && onOpenStoryPhone && !selectionMode && (
+                <button
+                    type="button"
+                    className="absolute -bottom-1 -right-1 z-20 flex h-4 w-4 items-center justify-center rounded-full border border-white bg-red-500 text-white shadow-sm active:scale-90"
+                    aria-label={`查看${charName}的手机`}
+                    title={`查看${charName}的手机`}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenStoryPhone();
+                    }}
+                >
+                    <DeviceMobileCamera className="h-2.5 w-2.5" weight="bold" />
+                </button>
+            )}
             {/* Retry indicator when inner voice failed/missing */}
             {isCharAvatar && !hasAnyVoice && onRetryInnerVoice && !showInnerVoice && (
                 <div
@@ -285,9 +303,11 @@ const MessageItem = React.memo(({
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
 
         // Route to structured card if metadata.source is available
-        // Priority: PhoneEvidenceCard > RoomPlanCard (todo) > RoomNoteCard (notebook) > SystemNoticeCard > Legacy pill
+        // Priority: StoryPhoneEvidenceCard > PhoneEvidenceCard > RoomPlanCard (todo) > RoomNoteCard (notebook) > SystemNoticeCard > Legacy pill
         let noticeCard: React.ReactNode = null;
-        if (m.metadata?.source === 'phone' && m.metadata?.phoneTitle) {
+        if (m.metadata?.source === 'story_phone') {
+            noticeCard = <StoryPhoneEvidenceCard message={m} />;
+        } else if (m.metadata?.source === 'phone' && m.metadata?.phoneTitle) {
             // Phone evidence with structured data → render as app-simulation card
             noticeCard = <PhoneEvidenceCard message={m} />;
         } else if (m.metadata?.source === 'room' && m.metadata?.roomEvent === 'todo') {
@@ -677,6 +697,61 @@ const MessageItem = React.memo(({
         );
     }
 
+    if (m.type === 'news_card') {
+        const md: any = m.metadata || {};
+        const title: string = md.title || '热点';
+        const source: string = md.source || '热点';
+        const url: string | undefined = md.url;
+        const desc: string | undefined = md.desc && md.desc !== title ? md.desc : undefined;
+        const dateStr = new Date(m.timestamp).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+        return commonLayout(
+            <div
+                className="w-60 cursor-pointer active:scale-[0.98] transition-transform"
+                onClick={() => { if (url) window.open(url, '_blank', 'noopener,noreferrer'); }}
+                style={{ fontFamily: "'Noto Serif','Songti SC','Georgia',serif" }}
+            >
+                <div
+                    className="rounded-lg overflow-hidden border border-stone-400/70 shadow-[0_3px_12px_rgba(60,50,30,0.18)]"
+                    style={{ background: 'linear-gradient(170deg,#faf6ec 0%,#f3ecdb 100%)' }}
+                >
+                    <div className="px-3 pt-2 pb-1.5 border-b-2 border-double border-stone-500/60">
+                        <div className="flex items-center justify-between text-stone-500">
+                            <span className="text-[8.5px] tracking-[0.3em] uppercase font-bold">SullyOS Daily</span>
+                            <span className="text-[8.5px] tracking-wide">{dateStr} · 号外</span>
+                        </div>
+                    </div>
+                    <div className="px-3 pt-2.5">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-red-700 px-1.5 py-[1px] tracking-wide shadow-sm">
+                            <span className="text-[8px]">|</span>{source}
+                        </span>
+                    </div>
+                    <div className="px-3 pt-1.5 pb-2">
+                        <p
+                            className="text-[15px] leading-[1.35] font-black text-stone-900"
+                            style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                        >
+                            {title}
+                        </p>
+                        {desc && (
+                            <p
+                                className="text-[11px] leading-snug text-stone-600 mt-1"
+                                style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                            >
+                                {desc}
+                            </p>
+                        )}
+                    </div>
+                    <div className="px-3 py-1.5 flex items-center justify-between border-t border-stone-400/50">
+                        <span className="text-[9px] text-stone-500 italic">{charName || 'Ta'} 转给你看</span>
+                        {url
+                            ? <span className="text-[10px] text-red-700 font-bold tracking-wide">查看原文</span>
+                            : <span className="text-[9px] text-stone-400">热点速读</span>}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     // --- Song Share Card: detect metadata.type === 'song_card' ---
     if (m.type === 'text' && m.metadata?.type === 'song_card') {
         return commonLayout(
@@ -828,6 +903,7 @@ const MessageItem = React.memo(({
         prev.innerVoice === next.innerVoice &&
         prev.statusCardData === next.statusCardData &&
         prev.onRetryInnerVoice === next.onRetryInnerVoice &&
+        prev.onOpenStoryPhone === next.onOpenStoryPhone &&
         prev.showThinking === next.showThinking &&
         prev.msg.metadata?.thinking === next.msg.metadata?.thinking &&
         prev.msg.metadata?.source === next.msg.metadata?.source;

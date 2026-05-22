@@ -129,6 +129,8 @@ export interface CharacterProfile {
     writerPersona?: string;
     writerPersonaGeneratedAt?: number;
     ttsVoiceId?: string;
+    /** ElevenLabs 语音通话专用 Voice ID；MiniMax 仍使用 ttsVoiceId */
+    elevenLabsVoiceId?: string;
 
     mountedWorldbooks?: { id: string; title: string; content: string; category?: string; position?: 'top' | 'after_worldview' | 'after_impression' | 'bottom'; vectorized?: boolean }[];
 
@@ -210,13 +212,13 @@ export interface CharacterProfile {
     moodState?: InternalState | MoodState;     // Current internal state (or legacy MoodState for migration)
 
     // Creative Status Bar (创意状态栏)
-    statusBarMode?: StatusBarMode;             // 'classic' | 'creative' | 'custom' (default: 'classic')
+    statusBarMode?: StatusBarMode;             // Heart/status/phone mode (default: 'classic')
     customStatusTemplates?: CustomStatusTemplate[];  // User-defined templates for 'custom' mode
     activeCustomTemplateId?: string;          // 当前活跃的自定义模板 ID
     lastStatusCard?: StatusCardData;           // Last generated creative card data
 }
 
-export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression' | 'vectorMemoryEnabled' | 'vectorMemoryAutoExtract' | 'vectorMemoryExtractInterval' | 'vectorMemoryLastExtractAt' | 'vectorMemoryTakeover' | 'vectorMemoryMode' | 'moodState'> {
+export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression' | 'hideBeforeMessageId' | 'vectorMemoryEnabled' | 'vectorMemoryAutoExtract' | 'vectorMemoryExtractInterval' | 'vectorMemoryLastExtractAt' | 'vectorMemoryTakeover' | 'vectorMemoryMode' | 'moodState'> {
     version: number;
     type: 'sully_character_card';
     embeddedTheme?: ChatTheme;

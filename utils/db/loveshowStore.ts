@@ -328,6 +328,7 @@ export function createInitialImpression(charId: string): LoveShowUserImpression 
         characterId: charId,
         perceivedTraits: [],
         knownFacts: [],
+        tentativeReads: [],
         misconceptions: [],
         impression: '',
         history: [],

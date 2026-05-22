@@ -132,6 +132,28 @@ describe('backendClient', () => {
         expect(listCallsTo(fetchMock, '/api/memories/char-1')).toHaveLength(1);
     });
 
+    it('silences aborted cloud pull failures without clearing health cache', async () => {
+        vi.useFakeTimers();
+        const abortError = new DOMException('The user aborted a request.', 'AbortError');
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+            .mockRejectedValueOnce(abortError)
+            .mockRejectedValueOnce(abortError)
+            .mockRejectedValueOnce(abortError);
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        vi.stubGlobal('fetch', fetchMock);
+
+        const resultPromise = pullMemories('char-1');
+        await vi.runAllTimersAsync();
+
+        await expect(resultPromise).resolves.toBeNull();
+        expect(listCallsTo(fetchMock, '/api/memories/char-1')).toHaveLength(3);
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(localStorage.getItem(HEALTH_CACHE_KEY)).toContain('"alive":true');
+    });
+
     it('does not retry createHormoneBackfillJob on a network failure', async () => {
         const fetchMock = vi.fn()
             .mockResolvedValueOnce(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))

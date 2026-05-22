@@ -7,6 +7,7 @@ vi.mock('../utils/db', () => ({
         saveMessage: vi.fn(),
         saveScheduledMessage: vi.fn(),
         updateMessageMetadata: vi.fn(),
+        getLatestHotNewsSnapshot: vi.fn(),
     },
 }));
 
@@ -108,6 +109,40 @@ describe('ChatParser', () => {
                 songId: 0,
             },
         });
+    });
+
+    it('turns NEWS_CARD tags into dedicated news card messages', async () => {
+        const { ChatParser } = chatParserModule;
+        const dbModule = await import('../utils/db');
+        const saveMessage = dbModule.DB.saveMessage as any;
+        const getLatestHotNewsSnapshot = dbModule.DB.getLatestHotNewsSnapshot as any;
+
+        getLatestHotNewsSnapshot.mockResolvedValue({
+            items: [
+                { title: '测试热点标题', source: '微博', url: 'https://example.com/news', desc: '测试简介' },
+            ],
+        });
+        saveMessage.mockClear();
+
+        const cleaned = await ChatParser.parseAndExecuteActions(
+            '我刚看到这个。[[NEWS_CARD: 微博|测试热点标题]] 你怎么看？',
+            'char-1',
+            '糯米',
+            vi.fn(),
+        );
+
+        expect(cleaned).toBe('我刚看到这个。 你怎么看？');
+        expect(saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+            charId: 'char-1',
+            role: 'assistant',
+            type: 'news_card',
+            metadata: expect.objectContaining({
+                source: '微博',
+                title: '测试热点标题',
+                url: 'https://example.com/news',
+                desc: '测试简介',
+            }),
+        }));
     });
 
     it('normalises JSON-wrapped replies and escaped newlines before saving', () => {

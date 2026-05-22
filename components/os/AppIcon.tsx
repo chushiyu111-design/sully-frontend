@@ -19,6 +19,8 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, onLongPress,
   const IconComponent = Icons[app.icon] || Icons.Settings;
   const customIconUrl = customIcons[app.id];
   const contentColor = theme.contentColor || '#ffffff';
+  const showCustomIconFrame = theme.customIconFrame !== false;
+  const showIconFrame = !customIconUrl || showCustomIconFrame;
 
   // Long-press detection
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,19 +77,27 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, onLongPress,
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
       {/* Container: Glass Prism with internal glow */}
-      <div className={`${sizeClasses} relative flex items-center justify-center 
-        bg-white/10 backdrop-blur-xl rounded-[1.2rem]
-        border-t border-l border-white/40 border-b border-r border-white/10
-        shadow-[0_8px_16px_rgba(0,0,0,0.2)]
-        transition-all duration-300
-        group-hover:bg-white/20 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:border-white/60
-      `}>
+      <div className={`${sizeClasses} relative flex items-center justify-center transition-all duration-300 ${
+        showIconFrame
+          ? `bg-white/10 backdrop-blur-xl rounded-[1.2rem]
+            border-t border-l border-white/40 border-b border-r border-white/10
+            shadow-[0_8px_16px_rgba(0,0,0,0.2)]
+            group-hover:bg-white/20 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:border-white/60`
+          : ''
+      }`}>
 
         {/* Shine effect */}
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent rounded-[1.2rem] opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        {showIconFrame && (
+          <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent rounded-[1.2rem] opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        )}
 
         {customIconUrl ? (
-          <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} loading="lazy" />
+          <img
+            src={customIconUrl}
+            className={showCustomIconFrame ? 'w-full h-full object-cover rounded-[1.2rem]' : 'w-full h-full object-contain drop-shadow-[0_6px_12px_rgba(15,23,42,0.2)]'}
+            alt={app.name}
+            loading="lazy"
+          />
         ) : (
           <div
             className="w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90"

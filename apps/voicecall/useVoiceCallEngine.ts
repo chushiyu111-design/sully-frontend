@@ -8,13 +8,13 @@
  *   1. Silero VAD 检测用户说话 → onSpeechEnd 拿到音频切片
  *   2. 硅基流动 STT 高速识别（~0.5s）
  *   3. LLM 流式输出 + 标点截断 → 每句话立刻送 TTS
- *   4. MiniMax WebSocket TTS 流式返回 PCM → ring-buffer 连续播放
+ *   4. TTS WebSocket 流式返回 PCM → ring-buffer 连续播放
  *   5. 打断 (Barge-in)：VAD 检测到用户说话 → 停播 + 中止 LLM/TTS
  *
  * 依赖：
  *   - @ricky0123/vad-web (MicVAD)
  *   - utils/cloudStt.ts (CloudStt.transcribe)
- *   - utils/minimaxTtsWs.ts (MinimaxTtsWs)
+ *   - utils/voiceCallTtsClient.ts (MiniMax / ElevenLabs TTS WSS adapter)
  *   - voiceCallLlm.ts (VoiceCallLlm)
  *   - voiceCallAudioPlayer.ts (VoiceCallAudioPlayer) — PCM 版
  */
@@ -24,7 +24,12 @@ import type { SttConfig } from '../../types/stt';
 import type { TtsConfig } from '../../types/tts';
 import type { CharacterProfile,UserProfile,Message } from '../../types';
 import { CloudStt } from '../../utils/cloudStt';
-import { MinimaxTtsWs } from '../../utils/minimaxTtsWs';
+import {
+    createVoiceCallTtsClient,
+    getVoiceCallTtsProviderName,
+    isVoiceCallTtsConfigured,
+    type VoiceCallTtsClient,
+} from '../../utils/voiceCallTtsClient';
 import { VoiceCallLlm,VoiceCallLlmConfig } from './voiceCallLlm';
 import { VoiceCallAudioPlayer } from './voiceCallAudioPlayer';
 import {
@@ -52,6 +57,8 @@ import {
 export type EngineState = 'idle' | 'listening' | 'processing' | 'speaking';
 type VoiceCallTranscriptSource = 'voice' | 'text';
 type VoiceCallForeignLangConfig = { sourceLang: string; targetLang: string };
+
+const ELEVENLABS_TTS_STALL_MS = 15000;
 
 export interface VoiceCallSubtitleEntry {
     id: number;
@@ -310,10 +317,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
     const streamRef = useRef<MediaStream | null>(null);
     const vadRef = useRef<any>(null);
     const llmRef = useRef<VoiceCallLlm | null>(null);
-    const ttsWsRef = useRef<MinimaxTtsWs | null>(null);
+    const ttsWsRef = useRef<VoiceCallTtsClient | null>(null);
     const playerRef = useRef<VoiceCallAudioPlayer | null>(null);
     const engineActiveRef = useRef(false);
-    // TTS 是否可用（apiKey + groupId 都配置了才可用，否则纯文字降级模式）
+    // TTS 是否可用（当前 provider 必填项已配置才可用，否则纯文字降级模式）
     const ttsAvailableRef = useRef(true);
 
     // 用 ref 跟踪最新 options 值（在 VAD 回调中使用）
@@ -533,10 +540,21 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             let ttsTaskFinished = false;
             let llmComplete = false;
             let isFinalCount = 0;
+            let firstAudioReceived = false;
+            let ttsStallTimer: ReturnType<typeof setTimeout> | null = null;
+            const usingElevenLabs = vcTtsConfig.voiceCallProvider === 'elevenlabs';
+
+            const clearTtsStallTimer = () => {
+                if (ttsStallTimer) {
+                    clearTimeout(ttsStallTimer);
+                    ttsStallTimer = null;
+                }
+            };
 
             const tryMarkTtsFinished = () => {
                 if (gen !== generationRef.current) return;
                 if (llmComplete && isFinalCount >= sentenceQueue.length && ttsTaskFinished) {
+                    clearTtsStallTimer();
                     playerRef.current?.markTtsFinished();
                 }
             };
@@ -560,6 +578,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             const handleAudioChunk = (chunk: { audio: Uint8Array; isFinal: boolean }) => {
                 if (gen !== generationRef.current) return;
                 if (chunk.audio.length > 0) {
+                    firstAudioReceived = true;
+                    clearTtsStallTimer();
                     playerRef.current?.enqueue(chunk.audio);
                     // ── 收集原始 PCM 用于通话录音缓存 ──
                     if (runtimeProfileRef.current.persistAssistantAudio) {
@@ -575,7 +595,14 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
             /** 降级剩余句子为纯文字（重连失败或首次连接失败时共用） */
             const degradeRemainingToText = () => {
+                if (ttsConnectFailed) return;
                 ttsConnectFailed = true;
+                clearTtsStallTimer();
+                try {
+                    ttsWsRef.current?.close();
+                } catch {
+                    // Best effort only; the text fallback must still continue.
+                }
                 setTtsDegraded(true);
                 opts.onAISpeakingChange(false);
                 setEngineState('processing');
@@ -586,6 +613,27 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }
             };
 
+            const armElevenLabsStallFallback = () => {
+                if (!usingElevenLabs || ttsConnectFailed || firstAudioReceived || ttsStallTimer) return;
+                if (sentenceQueue.length === 0 && pendingSentences.length === 0) return;
+
+                ttsStallTimer = setTimeout(() => {
+                    if (gen !== generationRef.current || ttsConnectFailed || firstAudioReceived) return;
+                    console.warn(`[Engine] ElevenLabs TTS produced no audio within ${ELEVENLABS_TTS_STALL_MS}ms; falling back to text for this turn`);
+                    degradeRemainingToText();
+                }, ELEVENLABS_TTS_STALL_MS);
+            };
+
+            const handleTtsError = (errMsg: string) => {
+                if (gen !== generationRef.current) return;
+                console.error('[Engine] TTS error:', errMsg);
+                if (usingElevenLabs) {
+                    degradeRemainingToText();
+                    return;
+                }
+                opts.onError?.(errMsg);
+            };
+
             /** 尝试 TTS mid-turn 重连（最多 1 次） */
             const attemptTtsReconnect = async () => {
                 console.log(`[Engine] TTS mid-turn disconnect (${isFinalCount}/${sentSentCount} done). Attempting reconnection...`);
@@ -593,9 +641,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 ttsTaskFinished = false;
 
                 try {
-                    const newWs = new MinimaxTtsWs({
+                    const newWs = createVoiceCallTtsClient(vcTtsConfig, {
                         onAudioChunk: handleAudioChunk,
                         onTaskFinished: handleTtsTaskFinished,
+                        onError: handleTtsError,
                     });
                     ttsWs = newWs;
                     ttsWsRef.current = newWs;
@@ -611,11 +660,13 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     for (let i = isFinalCount; i < sentenceQueue.length; i++) {
                         newWs.sendText(sentenceQueue[i].spokenText);
                         sentSentCount++;
+                        armElevenLabsStallFallback();
                     }
                     // 刷空重连期间到达的新句子
                     for (const s of pendingSentences) {
                         newWs.sendText(s.spokenText);
                         sentSentCount++;
+                        armElevenLabsStallFallback();
                     }
                     pendingSentences.length = 0;
 
@@ -634,6 +685,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
             const handleTtsTaskFinished = () => {
                 if (gen !== generationRef.current) return;
+                if (ttsConnectFailed) return;
                 ttsTaskFinished = true;
 
                 // 检查是否有未完成的句子 → mid-turn 断连
@@ -691,9 +743,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 return;
             }
 
-            let ttsWs = new MinimaxTtsWs({
+            let ttsWs = createVoiceCallTtsClient(vcTtsConfig, {
                 onAudioChunk: handleAudioChunk,
                 onTaskFinished: handleTtsTaskFinished,
+                onError: handleTtsError,
             });
             ttsWsRef.current = ttsWs;
 
@@ -712,6 +765,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     for (const s of pendingSentences) {
                         ttsWs.sendText(s.spokenText);
                         sentSentCount++;
+                        armElevenLabsStallFallback();
                     }
                     pendingSentences.length = 0;
 
@@ -753,9 +807,11 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         try { ttsWs.sendText(queuedSentence.spokenText); sentSentCount++; } catch (err) {
                             console.error('[Engine] TTS sendText error:', err);
                         }
+                        armElevenLabsStallFallback();
                     } else {
                         // 预连接尚未完成 → 缓冲，连接成功后自动 flush
                         pendingSentences.push(queuedSentence);
+                        armElevenLabsStallFallback();
                     }
                 },
                 onComplete: (full) => {
@@ -774,6 +830,15 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         }
                     } else {
                         // TTS 连接中但 LLM 已完成（极端情况）
+                        if (usingElevenLabs) {
+                            if (sentenceQueue.length === 0 && pendingSentences.length === 0 && engineActiveRef.current) {
+                                opts.onAISpeakingChange(false);
+                                setEngineState('listening');
+                                engineStateRef.current = 'listening';
+                            }
+                            armElevenLabsStallFallback();
+                            return;
+                        }
                         player.markTtsFinished();
                         if (!player.isPlaying && engineActiveRef.current) {
                             opts.onAISpeakingChange(false);
@@ -932,10 +997,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         const opts = optionsRef.current;
 
         // 检查配置：TTS 不可用时进入纯文字降级模式（不阻断引擎启动）
-        const ttsAvailable = !!(opts.ttsConfig.apiKey?.trim() && opts.ttsConfig.groupId?.trim());
+        const ttsAvailable = isVoiceCallTtsConfigured(opts.ttsConfig);
         ttsAvailableRef.current = ttsAvailable;
         if (!ttsAvailable) {
-            console.log('[Engine] TTS not configured — starting in text-only degraded mode');
+            console.log(`[Engine] ${getVoiceCallTtsProviderName(opts.ttsConfig)} TTS not configured — starting in text-only degraded mode`);
         }
         if (!opts.apiConfig.baseUrl) {
             opts.onError?.('LLM API 未配置，请在设置中配置');

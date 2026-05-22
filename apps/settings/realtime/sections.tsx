@@ -3,6 +3,17 @@ import React,{ useState } from 'react';
 import { buildBackendUrl } from '../../../utils/backendClient';
 import { getGuardedInputProps } from '../../../utils/inputGuards';
 
+const HOT_NEWS_PLATFORM_OPTIONS = [
+    { key: 'weibo', label: '微博' },
+    { key: 'zhihu', label: '知乎' },
+    { key: 'baidu', label: '百度' },
+    { key: 'bilibili', label: 'B站' },
+    { key: 'douyin', label: '抖音' },
+    { key: 'jinritoutiao', label: '今日头条' },
+    { key: 'douban', label: '豆瓣' },
+    { key: 'github', label: 'GitHub' },
+];
+
 interface WeatherProps {
     enabled: boolean; apiKey: string; city: string;
     set: (field: string, value: any) => void;
@@ -43,9 +54,18 @@ export const WeatherSection = React.memo<WeatherProps>(({ enabled, apiKey, city,
     );
 });
 
-interface NewsProps { enabled: boolean; apiKey: string; set: (field: string, value: any) => void; }
+interface NewsProps { enabled: boolean; apiKey: string; platforms: string[]; set: (field: string, value: any) => void; }
 
-export const NewsSection = React.memo<NewsProps>(({ enabled, apiKey, set }) => (
+export const NewsSection = React.memo<NewsProps>(({ enabled, apiKey, platforms, set }) => {
+    const selected = platforms && platforms.length > 0 ? platforms : ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'];
+    const togglePlatform = (key: string) => {
+        const next = selected.includes(key)
+            ? selected.filter(item => item !== key)
+            : [...selected, key];
+        set('newsPlatforms', next.length > 0 ? next : ['weibo']);
+    };
+
+    return (
     <div className="bg-blue-50/50 p-4 rounded-2xl space-y-3">
         <div className="flex items-center justify-between">
             <div className="flex items-center gap-2"><span className="text-lg">📰</span><span className="text-sm font-bold text-blue-700">新闻热点</span></div>
@@ -56,14 +76,28 @@ export const NewsSection = React.memo<NewsProps>(({ enabled, apiKey, set }) => (
         </div>
         {enabled && (
             <div className="space-y-2">
-                <p className="text-xs text-blue-600/70">默认使用 Hacker News（英文科技新闻）。配置 Brave API 可获取中文新闻。</p>
-                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Brave Search API Key (推荐)</label>
+                <p className="text-xs text-blue-600/70">默认使用中文多平台热榜，按每天 6 个时段缓存。Brave 只作为热榜失败时的回落源。</p>
+                <div className="grid grid-cols-2 gap-2">
+                    {HOT_NEWS_PLATFORM_OPTIONS.map(option => (
+                        <label key={option.key} className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 text-xs font-semibold transition-colors ${selected.includes(option.key) ? 'bg-white border-blue-200 text-blue-700' : 'bg-white/45 border-transparent text-slate-400'}`}>
+                            <input
+                                type="checkbox"
+                                checked={selected.includes(option.key)}
+                                onChange={() => togglePlatform(option.key)}
+                                className="h-3.5 w-3.5 accent-blue-500"
+                            />
+                            {option.label}
+                        </label>
+                    ))}
+                </div>
+                <div><label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Brave Search API Key (可选回落)</label>
                     <input type="text" value={apiKey} onChange={e => set('newsApiKey', e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: brave.com/search/api" {...getGuardedInputProps({ kind: 'secret', field: 'news-api-key' })} /></div>
-                <p className="text-[10px] text-blue-500/70">免费2000次/月，支持中文新闻。<br />不配置则用 Hacker News（英文科技新闻）。</p>
+                <p className="text-[10px] text-blue-500/70">Brave 可留空；只有中文热榜拉不到时才会尝试 Brave，最后再兜底 Hacker News。</p>
             </div>
         )}
     </div>
-));
+    );
+});
 
 interface HotSearchProps { enabled: boolean; set: (field: string, value: any) => void; }
 

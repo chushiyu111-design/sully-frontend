@@ -21,6 +21,7 @@ import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { CloudStt,SttNotConfiguredError } from '../utils/cloudStt';
 import { haptic } from '../utils/haptics';
 import { withCharacterTtsVoice } from '../utils/characterTts';
+import { getEffectiveHistoryStartMessageId,isAfterHistoryStart } from '../utils/historyStart';
 import {
   BackendAgentManager,
   AGENT_MESSAGE_SAVED_EVENT_NAME,
@@ -58,6 +59,29 @@ function isMainChatVisibleMessage(message: Message): boolean {
     if (message.metadata?.hiddenFromUser) return false;
     const source = message.metadata?.source;
     return source !== 'date' && source !== 'theater';
+}
+
+const CHAT_HISTORY_RAW_WINDOW_MAX = 1500;
+
+function getDisplayableMainChatMessages(
+    messages: Message[],
+    options: {
+        hideBeforeMessageId?: number;
+        hideSystemLogs?: boolean;
+        lifeStreamVisibleInChat: boolean;
+    },
+): Message[] {
+    const historyStartMessageId = getEffectiveHistoryStartMessageId(messages, options.hideBeforeMessageId);
+    return messages
+        .filter(isMainChatVisibleMessage)
+        .filter(m => (m.type as string) !== 'health_signal')
+        .filter(m => options.lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
+        .filter(m => isAfterHistoryStart(m, historyStartMessageId))
+        .filter(m => {
+            if (m.metadata?.source === 'story_phone') return true;
+            if (options.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false;
+            return true;
+        });
 }
 
 type ScopedAgentTodayScheduleState = AgentTodayScheduleState & {
@@ -232,6 +256,10 @@ const Chat: React.FC = () => {
         () => ttsConfig && char ? withCharacterTtsVoice(ttsConfig, char) : ttsConfig,
         [ttsConfig, char?.id, char?.ttsVoiceId],
     );
+    const handleOpenStoryPhone = useCallback(() => {
+        if (!char?.id) return;
+        openApp(AppID.StoryPhone, { targetCharId: char.id, returnApp: AppID.Chat });
+    }, [char?.id, openApp]);
 
     const clearTodayLifeTimers = useCallback(() => {
         if (todayLifeSlowTimerRef.current !== null) {
@@ -596,14 +624,42 @@ const Chat: React.FC = () => {
 
         const charIdAtStart = activeCharacterId;
         try {
-            const { messages: recentMsgs, hasMore } = await DB.getRecentMessageWindow(activeCharacterId, requestedVisibleCount);
+            setIsHistoryLoading(true);
+            let rawLimit = Math.max(requestedVisibleCount, LOAD_BATCH_SIZE);
+            let recentWindow = await DB.getRecentMessageWindow(activeCharacterId, rawLimit);
+            let visibleCandidateCount = getDisplayableMainChatMessages(recentWindow.messages, {
+                hideBeforeMessageId: char?.hideBeforeMessageId,
+                hideSystemLogs: char?.hideSystemLogs,
+                lifeStreamVisibleInChat,
+            }).length;
+
+            while (
+                recentWindow.hasMore
+                && visibleCandidateCount < requestedVisibleCount
+                && rawLimit < CHAT_HISTORY_RAW_WINDOW_MAX
+            ) {
+                rawLimit = Math.min(CHAT_HISTORY_RAW_WINDOW_MAX, Math.max(rawLimit + LOAD_BATCH_SIZE, rawLimit * 2));
+                recentWindow = await DB.getRecentMessageWindow(activeCharacterId, rawLimit);
+                visibleCandidateCount = getDisplayableMainChatMessages(recentWindow.messages, {
+                    hideBeforeMessageId: char?.hideBeforeMessageId,
+                    hideSystemLogs: char?.hideSystemLogs,
+                    lifeStreamVisibleInChat,
+                }).length;
+            }
+
+            if (recentWindow.hasMore && visibleCandidateCount < requestedVisibleCount) {
+                recentWindow = {
+                    messages: await DB.getMessagesByCharId(activeCharacterId),
+                    hasMore: false,
+                };
+            }
 
             // Guard against stale async results: if the user switched characters
             // while the DB query was in flight, discard this result.
             if (activeCharIdRef.current !== charIdAtStart) return;
 
-            setHasMoreHistory(hasMore);
-            setMessages(recentMsgs);
+            setHasMoreHistory(recentWindow.hasMore);
+            setMessages(recentWindow.messages);
         } catch (error) {
             if (activeCharIdRef.current !== charIdAtStart) return;
             console.error('[Chat] Failed to load recent messages:', error);
@@ -614,7 +670,7 @@ const Chat: React.FC = () => {
                 setIsHistoryLoading(false);
             }
         }
-    }, [activeCharacterId]);
+    }, [activeCharacterId, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat]);
 
     useEffect(() => {
         const rawTargetMessageId = appParams?.targetMessageId;
@@ -1349,9 +1405,10 @@ const Chat: React.FC = () => {
             return;
         }
         const allMessages = selectMessagesForMemoryArchive(await DB.getMessagesByCharId(char.id));
+        const historyStartMessageId = getEffectiveHistoryStartMessageId(allMessages, char.hideBeforeMessageId);
         const msgsByDate: Record<string, Message[]> = {};
         allMessages
-            .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
+            .filter(m => isAfterHistoryStart(m, historyStartMessageId))
             .forEach(m => {
                 const d = new Date(m.timestamp);
                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1763,17 +1820,13 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
-    const displayMessages = useMemo(() => messages
-        .filter(isMainChatVisibleMessage)
-        .filter(m => (m.type as string) !== 'health_signal')  // 半糖健康感知：永远不在聊天UI显示
-        .filter(m => lifeStreamVisibleInChat || (m.type as string) !== 'lifestream')
-        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => {
-            if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'call_log') return false;
-            return true;
-        })
-        .slice(-visibleCount),
-        [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
+    const displayMessages = useMemo(() => {
+        return getDisplayableMainChatMessages(messages, {
+            hideBeforeMessageId: char?.hideBeforeMessageId,
+            hideSystemLogs: char?.hideSystemLogs,
+            lifeStreamVisibleInChat,
+        }).slice(-visibleCount);
+    }, [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, lifeStreamVisibleInChat, visibleCount]);
 
     useEffect(() => {
         if (!highlightedMessageId) return;
@@ -2180,6 +2233,8 @@ const Chat: React.FC = () => {
                     const showTs = effectiveShowTimestamp && (!prevMsg || (m.timestamp - prevMsg.timestamp) >= timestampInterval);
                     // Inner voice: only show on the last assistant message
                     const isLastAssistant = m.role === 'assistant' && m.id === lastAssistantId;
+                    const statusMode = char.statusBarMode || 'classic';
+                    const hasStatusCardMode = statusMode === 'creative' || statusMode === 'custom' || statusMode === 'freeform';
                     return (
                         <div
                             key={m.id || i}
@@ -2216,9 +2271,10 @@ const Chat: React.FC = () => {
                                 loadingMsgIds={loadingMsgIds}
                                 isVoiceTextExpanded={expandedVoiceTextIds.has(m.id)}
                                 onToggleVoiceText={toggleVoiceText}
-                                innerVoice={isLastAssistant ? (char.moodState as any)?.innerVoice : undefined}
-                                statusCardData={isLastAssistant && (char.statusBarMode === 'creative' || char.statusBarMode === 'custom' || char.statusBarMode === 'freeform') ? char.lastStatusCard : undefined}
-                                onRetryInnerVoice={isLastAssistant ? retryMindSnapshot : undefined}
+                                innerVoice={isLastAssistant && statusMode === 'classic' ? (char.moodState as any)?.innerVoice : undefined}
+                                statusCardData={isLastAssistant && hasStatusCardMode ? char.lastStatusCard : undefined}
+                                onRetryInnerVoice={isLastAssistant && statusMode !== 'off' && statusMode !== 'story_phone' ? retryMindSnapshot : undefined}
+                                onOpenStoryPhone={isLastAssistant && statusMode === 'story_phone' ? handleOpenStoryPhone : undefined}
                                 showThinking={char.showThinking !== false}
                             />
                         </div>

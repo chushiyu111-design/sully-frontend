@@ -29,6 +29,7 @@ const JournalApp = React.lazy(() => import('../apps/JournalApp'));
 const ScheduleApp = React.lazy(() => import('../apps/ScheduleApp'));
 const RoomApp = React.lazy(() => import('../apps/RoomApp'));
 const CheckPhone = React.lazy(() => import('../apps/CheckPhone'));
+const StoryPhoneApp = React.lazy(() => import('../apps/StoryPhoneApp'));
 const SocialApp = React.lazy(() => import('../apps/SocialApp'));
 const StudyApp = React.lazy(() => import('../apps/StudyApp'));
 const FAQApp = React.lazy(() => import('../apps/FAQApp'));
@@ -290,6 +291,7 @@ function renderActiveApp(activeApp: AppID) {
     case AppID.Schedule: return <ScheduleApp />;
     case AppID.Room: return <RoomApp />;
     case AppID.CheckPhone: return <CheckPhone />;
+    case AppID.StoryPhone: return <StoryPhoneApp />;
     case AppID.Social: return <SocialApp />;
     case AppID.Study: return <StudyApp />;
     case AppID.FAQ: return <FAQApp />;

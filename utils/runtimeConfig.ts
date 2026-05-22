@@ -60,6 +60,7 @@ export const DEFAULT_RUNTIME_REALTIME_CONFIG: RealtimeConfig = {
     weatherCity: 'Beijing',
     newsEnabled: false,
     newsApiKey: '',
+    newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
     hotSearchEnabled: false,
     aihotEnabled: false,
     notionEnabled: false,
@@ -236,6 +237,7 @@ function normalizeRealtimeConfig(value: Partial<RealtimeConfig> | null | undefin
     const normalizedXhsServerUrl = legacyUntouchedMcpDefault
         ? 'http://localhost:18061/api'
         : rawXhsServerUrl || DEFAULT_RUNTIME_REALTIME_CONFIG.xhsMcpConfig?.serverUrl || 'http://localhost:18061/api';
+    const normalizedNewsPlatforms = normalizeStringArray(value?.newsPlatforms);
 
     return {
         ...DEFAULT_RUNTIME_REALTIME_CONFIG,
@@ -243,6 +245,9 @@ function normalizeRealtimeConfig(value: Partial<RealtimeConfig> | null | undefin
         weatherApiKey: normalizeString(value?.weatherApiKey),
         weatherCity: normalizeString(value?.weatherCity) || DEFAULT_RUNTIME_REALTIME_CONFIG.weatherCity,
         newsApiKey: normalizeString(value?.newsApiKey),
+        newsPlatforms: normalizedNewsPlatforms.length > 0
+            ? normalizedNewsPlatforms
+            : DEFAULT_RUNTIME_REALTIME_CONFIG.newsPlatforms,
         notionApiKey: normalizeString(value?.notionApiKey),
         notionDatabaseId: normalizeString(value?.notionDatabaseId),
         notionNotesDatabaseId: normalizeString(value?.notionNotesDatabaseId) || undefined,
@@ -263,10 +268,27 @@ function normalizeRealtimeConfig(value: Partial<RealtimeConfig> | null | undefin
     };
 }
 
+function normalizeTtsNumber(value: unknown, fallback: number, min: number, max: number): number {
+    const numeric = typeof value === 'number'
+        ? value
+        : (typeof value === 'string' && value.trim() ? Number(value) : NaN);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(min, Math.min(max, numeric));
+}
+
+function normalizeElevenLabsModelId(value: unknown): string {
+    const modelId = normalizeString(value);
+    if (!modelId || modelId === 'eleven_v3') {
+        return DEFAULT_TTS_CONFIG.elevenLabs.modelId;
+    }
+    return modelId;
+}
+
 function normalizeTtsConfig(value: Partial<TtsConfig> | null | undefined): TtsConfig {
     return {
         ...DEFAULT_TTS_CONFIG,
         ...(value || {}),
+        voiceCallProvider: value?.voiceCallProvider === 'elevenlabs' ? 'elevenlabs' : DEFAULT_TTS_CONFIG.voiceCallProvider,
         baseUrl: normalizeString(value?.baseUrl) || DEFAULT_TTS_CONFIG.baseUrl,
         apiKey: normalizeString(value?.apiKey),
         groupId: normalizeString(value?.groupId),
@@ -282,6 +304,39 @@ function normalizeTtsConfig(value: Partial<TtsConfig> | null | undefined): TtsCo
         preprocessConfig: {
             ...DEFAULT_TTS_CONFIG.preprocessConfig,
             ...(value?.preprocessConfig || {}),
+        },
+        elevenLabs: {
+            ...DEFAULT_TTS_CONFIG.elevenLabs,
+            ...(value?.elevenLabs || {}),
+            apiKey: normalizeString(value?.elevenLabs?.apiKey),
+            voiceId: normalizeString(value?.elevenLabs?.voiceId),
+            modelId: normalizeElevenLabsModelId(value?.elevenLabs?.modelId),
+            languageCode: normalizeString(value?.elevenLabs?.languageCode),
+            stability: normalizeTtsNumber(
+                value?.elevenLabs?.stability,
+                DEFAULT_TTS_CONFIG.elevenLabs.stability,
+                0,
+                1,
+            ),
+            similarityBoost: normalizeTtsNumber(
+                value?.elevenLabs?.similarityBoost,
+                DEFAULT_TTS_CONFIG.elevenLabs.similarityBoost,
+                0,
+                1,
+            ),
+            style: normalizeTtsNumber(
+                value?.elevenLabs?.style,
+                DEFAULT_TTS_CONFIG.elevenLabs.style,
+                0,
+                1,
+            ),
+            speed: normalizeTtsNumber(
+                value?.elevenLabs?.speed,
+                DEFAULT_TTS_CONFIG.elevenLabs.speed,
+                0.7,
+                1.2,
+            ),
+            useSpeakerBoost: value?.elevenLabs?.useSpeakerBoost === true,
         },
         voiceModify: value?.voiceModify === null
             ? undefined

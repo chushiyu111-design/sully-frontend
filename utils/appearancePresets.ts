@@ -28,6 +28,7 @@ export function sanitizeAppearanceTheme(theme: OSTheme): OSTheme {
     next.darkMode = next.darkMode === true;
     if (next.contentColor !== undefined && typeof next.contentColor !== 'string') next.contentColor = undefined;
     if (next.customFont !== undefined && typeof next.customFont !== 'string') next.customFont = undefined;
+    if (next.customIconFrame !== undefined && typeof next.customIconFrame !== 'boolean') next.customIconFrame = undefined;
 
     if (next.launcherWidgets && typeof next.launcherWidgets === 'object') {
         const cleanWidgets: Record<string, string> = {};

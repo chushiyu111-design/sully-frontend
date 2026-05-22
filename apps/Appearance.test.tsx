@@ -112,4 +112,19 @@ describe('Appearance presets UI', () => {
         fireEvent.change(input, { target: { files: [file] } });
         await waitFor(() => expect(context.importAppearancePreset).toHaveBeenCalledWith(file));
     });
+
+    it('updates the custom icon frame setting', () => {
+        const updateTheme = vi.fn();
+        const context = buildContext({ updateTheme, theme: { ...theme, customIconFrame: true } });
+        mockedUseOS.mockReturnValue(context as any);
+
+        render(<Appearance />);
+        fireEvent.click(screen.getByText('应用图标'));
+
+        fireEvent.click(screen.getByText('无外框'));
+        expect(updateTheme).toHaveBeenCalledWith({ customIconFrame: false });
+
+        fireEvent.click(screen.getByText('玻璃底'));
+        expect(updateTheme).toHaveBeenCalledWith({ customIconFrame: true });
+    });
 });

@@ -9,7 +9,7 @@ import {
     reviseMemoryRecordLyrics,
     shouldGenerateMemoryRecordMonologue,
 } from '../utils/memoryRecordService';
-import type { APIConfig, CharacterProfile, MemoryRecord, MemoryRecordMode, TtsConfig, UserProfile } from '../types';
+import { DEFAULT_TTS_CONFIG,type APIConfig,type CharacterProfile,type MemoryRecord,type MemoryRecordMode,type TtsConfig,type UserProfile } from '../types';
 
 const mocks = vi.hoisted(() => ({
     synthesizeSync: vi.fn(),
@@ -67,6 +67,7 @@ function openAiResponse(content: string, finishReason = 'stop'): Response {
 }
 
 const ttsConfig: TtsConfig = {
+    ...DEFAULT_TTS_CONFIG,
     baseUrl: '/minimax-api',
     apiKey: 'mini-key',
     groupId: 'group-id',

@@ -16,6 +16,7 @@ export enum AppID {
     Schedule = 'schedule',
     Room = 'room',
     CheckPhone = 'check_phone',
+    StoryPhone = 'story_phone',
     Social = 'social',
     Study = 'study',
     FAQ = 'faq',
@@ -81,6 +82,7 @@ export interface OSTheme {
     desktopDecorations?: DesktopDecoration[];
     customFont?: string;
     hideStatusBar?: boolean;
+    customIconFrame?: boolean;
 }
 
 export interface AppearancePreset {

@@ -13,6 +13,7 @@ const RealtimeSettings: React.FC = () => {
         weatherCity: realtimeConfig.weatherCity,
         newsEnabled: realtimeConfig.newsEnabled,
         newsApiKey: realtimeConfig.newsApiKey || '',
+        newsPlatforms: realtimeConfig.newsPlatforms || ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
         hotSearchEnabled: realtimeConfig.hotSearchEnabled ?? false,
         aihotEnabled: realtimeConfig.aihotEnabled ?? false,
         notionEnabled: realtimeConfig.notionEnabled,
@@ -39,7 +40,7 @@ const RealtimeSettings: React.FC = () => {
     const handleSave = () => {
         updateRealtimeConfig({
             weatherEnabled: rt.weatherEnabled, weatherApiKey: rt.weatherApiKey, weatherCity: rt.weatherCity,
-            newsEnabled: rt.newsEnabled, newsApiKey: rt.newsApiKey, hotSearchEnabled: rt.hotSearchEnabled,
+            newsEnabled: rt.newsEnabled, newsApiKey: rt.newsApiKey, newsPlatforms: rt.newsPlatforms, hotSearchEnabled: rt.hotSearchEnabled,
             aihotEnabled: rt.aihotEnabled,
             notionEnabled: rt.notionEnabled, notionApiKey: rt.notionApiKey, notionDatabaseId: rt.notionDbId,
             notionNotesDatabaseId: rt.notionNotesDbId || undefined,
@@ -113,7 +114,7 @@ const RealtimeSettings: React.FC = () => {
                 footer={<button onClick={handleSave} className="w-full py-3 bg-violet-500 text-white font-bold rounded-2xl shadow-lg">保存配置</button>}>
                 <div className="space-y-5 max-h-[60vh] overflow-y-auto no-scrollbar">
                     <WeatherSection enabled={rt.weatherEnabled} apiKey={rt.weatherApiKey} city={rt.weatherCity} set={set} onTestStatus={setTestStatus} />
-                    <NewsSection enabled={rt.newsEnabled} apiKey={rt.newsApiKey} set={set} />
+                    <NewsSection enabled={rt.newsEnabled} apiKey={rt.newsApiKey} platforms={rt.newsPlatforms} set={set} />
                     <HotSearchSection enabled={rt.hotSearchEnabled} set={set} />
                     <AiHotSection enabled={rt.aihotEnabled} set={set} />
                     <NotionSection enabled={rt.notionEnabled} apiKey={rt.notionApiKey} dbId={rt.notionDbId} notesDbId={rt.notionNotesDbId} set={set} onTestStatus={setTestStatus} />

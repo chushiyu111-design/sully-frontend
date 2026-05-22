@@ -346,6 +346,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 { id: 'creative', title: '创意卡片', desc: '从 8 种预设骨架中择一生成' },
                                 { id: 'freeform', title: '自由创作', desc: '即兴生成独一无二的 HTML 碎片' },
                                 { id: 'custom', title: '自定义模板', desc: '自己写提示词和正则，完全自由' },
+                                { id: 'story_phone', title: '查手机', desc: '头像旁出现手机入口，按剧情随机查看一个 App' },
                             ].map(opt => {
                                 const isActive = (statusBarMode || 'classic') === opt.id;
                                 return (

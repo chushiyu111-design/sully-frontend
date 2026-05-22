@@ -28,7 +28,7 @@ import type { CharacterProfile,UserProfile } from '../../types';
 import type { VoiceCallMode } from './voiceCallTypes';
 import type { MessageType } from '../../types';
 import { getEmbeddingConfig,getSecondaryApiConfig } from '../../utils/runtimeConfig';
-import { withCharacterTtsVoice } from '../../utils/characterTts';
+import { withCharacterVoiceCallTtsConfig } from '../../utils/characterTts';
 import {
     buildPersistedCallAudioEntries,
     buildPersistedCallConversation,
@@ -57,8 +57,8 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
     ttsConfig, sttConfig, apiConfig, addToast, incomingMode, callReason,
 }) => {
     const characterTtsConfig = useMemo(
-        () => withCharacterTtsVoice(ttsConfig, char),
-        [ttsConfig, char.id, char.ttsVoiceId],
+        () => withCharacterVoiceCallTtsConfig(ttsConfig, char),
+        [ttsConfig, char.id, char.ttsVoiceId, char.elevenLabsVoiceId],
     );
 
     const {
@@ -115,7 +115,7 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
         if (raw.includes('timeout') || raw.includes('Timeout')) return '请求超时，网络可能不稳定';
         if (raw.includes('network') || raw.includes('fetch')) return '网络连接失败';
         if (raw.includes('语音识别')) return '语音识别出现问题';
-        if (raw.includes('TTS') || raw.includes('MiniMax')) return '语音合成服务异常';
+        if (raw.includes('TTS') || raw.includes('MiniMax') || raw.includes('ElevenLabs')) return '语音合成服务异常';
         if (raw.includes('未配置')) return raw; // 已经是友好描述
         return 'AI 暂时无法回应';
     };

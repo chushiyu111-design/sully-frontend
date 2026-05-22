@@ -7,6 +7,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { AGENT_MESSAGE_SAVED_EVENT_NAME } from '../utils/autonomousAgent';
 import { ensureAgentTodayLife } from '../utils/agentBackendClient';
+import type { Message } from '../types';
 
 vi.mock('../context/OSContext', () => ({
     useOS: vi.fn(),
@@ -283,7 +284,7 @@ describe('Chat active character fallback', () => {
     });
 
     it('loads additional history through the lightweight message window', async () => {
-        const makeMessages = (count: number) => Array.from({ length: count }, (_, index) => ({
+        const makeMessages = (count: number): Message[] => Array.from({ length: count }, (_, index) => ({
             id: index + 1,
             charId: 'char-1',
             role: index % 2 === 0 ? 'user' : 'assistant',
@@ -302,11 +303,91 @@ describe('Chat active character fallback', () => {
 
         render(<Chat />);
 
-        const loadMore = await screen.findByRole('button', { name: '加载历史消息' });
+        await waitFor(() => {
+            expect(screen.getByText('加载历史消息')).toBeInTheDocument();
+        });
+        const loadMore = screen.getByText('加载历史消息');
         fireEvent.click(loadMore);
 
         await waitFor(() => {
             expect(mockedDB.getRecentMessageWindow).toHaveBeenCalledWith('char-1', 60);
+        });
+    });
+
+    it('keeps loading older windows when recent date messages are hidden from the main chat', async () => {
+        const hiddenDateMessages = Array.from({ length: 30 }, (_, index): Message => ({
+            id: index + 31,
+            charId: 'char-1',
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            type: 'text',
+            content: `date-${index + 1}`,
+            timestamp: 2000 + index,
+            metadata: { source: 'date' },
+        }));
+        const visibleMessages = Array.from({ length: 30 }, (_, index): Message => ({
+            id: index + 1,
+            charId: 'char-1',
+            role: index % 2 === 0 ? 'user' : 'assistant',
+            type: 'text',
+            content: `chat-${index + 1}`,
+            timestamp: 1000 + index,
+        }));
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{ id: 'char-1', name: 'Sully', avatar: 'sully.png' }],
+            activeCharacterId: 'char-1',
+        }));
+        mockedDB.getRecentMessageWindow.mockImplementation((_charId: string, limit: number) => Promise.resolve({
+            messages: limit <= 30 ? hiddenDateMessages : [...visibleMessages, ...hiddenDateMessages],
+            hasMore: limit <= 30,
+        }));
+
+        render(<Chat />);
+
+        await waitFor(() => {
+            expect(mockedDB.getRecentMessageWindow).toHaveBeenCalledWith('char-1', 60);
+            expect(screen.getByTestId('message-item-30')).toHaveTextContent('chat-30');
+        });
+        expect(screen.queryByText('date-1')).not.toBeInTheDocument();
+    });
+
+    it('ignores a stale imported history breakpoint so new chat messages stay visible', async () => {
+        const messages: Message[] = [
+            {
+                id: 1,
+                charId: 'char-1',
+                role: 'user',
+                type: 'text',
+                content: '新导入角色后的第一条消息',
+                timestamp: 1000,
+            },
+            {
+                id: 2,
+                charId: 'char-1',
+                role: 'assistant',
+                type: 'text',
+                content: '我能正常显示回复',
+                timestamp: 2000,
+            },
+        ];
+        mockedUseOS.mockReturnValue(buildOsContext({
+            characters: [{
+                id: 'char-1',
+                name: 'Sully',
+                avatar: 'sully.png',
+                hideBeforeMessageId: 999999,
+            }],
+            activeCharacterId: 'char-1',
+        }));
+        mockedDB.getRecentMessageWindow.mockResolvedValue({
+            messages,
+            hasMore: false,
+        });
+
+        render(<Chat />);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('message-item-1')).toHaveTextContent('新导入角色后的第一条消息');
+            expect(screen.getByTestId('message-item-2')).toHaveTextContent('我能正常显示回复');
         });
     });
 
@@ -328,7 +409,7 @@ describe('Chat active character fallback', () => {
     });
 
     it('clears the selected message after choosing reply and allows another quote target', async () => {
-        const messages = [
+        const messages: Message[] = [
             {
                 id: 1,
                 charId: 'char-1',

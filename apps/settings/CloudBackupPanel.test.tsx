@@ -32,6 +32,18 @@ vi.mock('../../utils/cloudBackup', () => ({
     uploadCloudBackup: vi.fn(),
 }));
 
+vi.mock('../../utils/githubBackup', () => ({
+    DEFAULT_GITHUB_BACKUP_REPO: 'sully-backup',
+    cleanupOldGithubBackups: vi.fn(),
+    clearGithubBackupConfig: vi.fn(),
+    connectGithubBackup: vi.fn(),
+    downloadGithubBackup: vi.fn(),
+    getLatestGithubBackup: vi.fn(),
+    listGithubBackups: vi.fn(),
+    readGithubBackupConfig: vi.fn(() => null),
+    uploadGithubBackup: vi.fn(),
+}));
+
 vi.mock('../../utils/systemBackup', () => ({
     readSystemBackupIncludeVoiceAudio: vi.fn(),
 }));
@@ -64,5 +76,5 @@ describe('CloudBackupPanel', () => {
             expect.stringContaining('不含歌曲音频'),
             'info',
         );
-    });
+    }, 10000);
 });

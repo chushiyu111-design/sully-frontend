@@ -19,6 +19,7 @@ import { isDateModeContextMessage } from '../utils/mainlineMemory';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
+const DATE_FORK_CONTEXT_KEEP_COUNT = 80;
 export type DateHistorySession = { date: string, msgs: Message[], rawMsgs: Message[], startMsgId: number, summaries: Message[], bridges: Message[] };
 type SummaryDraft = {
     content: string;
@@ -45,7 +46,15 @@ const isDateDialogueMessage = (m: Message) => (
     isDateRawDialogueMessage(m)
     && !m.metadata?.hiddenFromUser
 );
-const getBridgeTypeLabel = (m: Message) => m.metadata?.bridgeType === 'raw' ? '原始记录' : '总结';
+const isDateForkBridge = (m: Message) => m.metadata?.bridgeType === 'fork';
+const getBridgeTypeLabel = (m: Message) => {
+    if (m.metadata?.bridgeType === 'raw') return '原始记录';
+    if (isDateForkBridge(m)) return '复刻背景';
+    return '总结';
+};
+const getBridgeStatusLabel = (bridges: Message[]) => (
+    bridges.every(isDateForkBridge) ? '已带入旧见面背景' : '已同步到主聊天'
+);
 
 const getCurrentSessionMessages = (msgs: Message[]) => {
     const dateMsgs = msgs.filter(isDateRawDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
@@ -145,6 +154,45 @@ export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     });
 };
 
+export const buildDateForkOpeningText = ({
+    charName,
+    userName,
+}: {
+    charName: string;
+    userName: string;
+}): string => [
+    '[normal] 像是某一天被轻轻翻回，空气里还留着那场见面的余温。',
+    `[normal] ${charName}站在熟悉的光影里，抬眼看向${userName}，这条没有被走完的岔路又安静地展开。`,
+].join('\n');
+
+export const buildDateForkBridgeContent = ({
+    session,
+    charName,
+    userName,
+}: {
+    session: DateHistorySession;
+    charName: string;
+    userName: string;
+}): string => {
+    const keptRawMessages = session.rawMsgs.slice(-DATE_FORK_CONTEXT_KEEP_COUNT);
+    const omittedCount = Math.max(0, session.rawMsgs.length - keptRawMessages.length);
+    const summaryBlock = session.summaries.length > 0
+        ? session.summaries.map((summary, index) => {
+            const label = summary.metadata?.summaryType === 'auto' ? '自动总结' : '手动总结';
+            return `### 已有总结 ${index + 1}（${label}）\n${summary.content}`;
+        }).join('\n\n')
+        : '';
+    const rawBlock = formatDateMessagesForBridge(keptRawMessages, charName, userName);
+
+    return [
+        '【旧见面分岔背景】',
+        `这是从 ${session.date} 的见面记录复制出来的新见面。旧记录不应被改写；下面内容只作为已经发生过的背景和情绪余温。`,
+        summaryBlock ? `\n【旧记录总结】\n${summaryBlock}` : '',
+        rawBlock ? `\n【旧记录原始片段${omittedCount > 0 ? `（已省略更早 ${omittedCount} 条）` : ''}】\n${rawBlock}` : '',
+        '\n请不要把这条背景当成正在发生的新动作；新的互动从下一条用户消息开始。',
+    ].filter(Boolean).join('\n');
+};
+
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, userProfile } = useOS();
     const virtualTime = useVirtualTime();
@@ -168,6 +216,7 @@ const DateApp: React.FC = () => {
     // --- NEW: Editing State lifted to here for DB sync ---
     const [dateMessages, setDateMessages] = useState<Message[]>([]);
     const [hasSavedOpening, setHasSavedOpening] = useState(false);
+    const [forceFreshSession, setForceFreshSession] = useState(false);
 
     // Edit Modal State
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -683,6 +732,7 @@ ${exitPromptContent}
         const sessionStartMsgId = sessionMessages[0].id;
         const bridges = allMsgs.filter(m =>
             m.metadata?.source === 'date' && m.metadata?.isDateContextBridge === true
+            && !isDateForkBridge(m)
             && (m.metadata?.sessionStartMsgId === sessionStartMsgId
                 || (Array.isArray(m.metadata?.coveredMsgIds) && m.metadata.coveredMsgIds.some((id: unknown) => typeof id === 'number' && sessionMsgIds.has(id as number))))
         );
@@ -833,6 +883,7 @@ ${exitPromptContent}
     const handleResumeSession = () => {
         if (!pendingSessionChar) return;
         setActiveCharacterId(pendingSessionChar.id);
+        setForceFreshSession(false);
         setMode('session');
         setPendingSessionChar(null);
         addToast('已恢复上次进度', 'success');
@@ -841,6 +892,7 @@ ${exitPromptContent}
     const handleStartNewSession = () => {
         if (!pendingSessionChar) return;
         updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
+        setForceFreshSession(true);
         startPeek(pendingSessionChar);
         setPendingSessionChar(null);
     };
@@ -875,6 +927,7 @@ ${exitPromptContent}
     // --- Peek (Generation) Logic ---
     const startPeek = async (c: CharacterProfile) => {
         setActiveCharacterId(c.id);
+        setForceFreshSession(true);
         setMode('peek');
         setPeekLoading(true);
         setPeekStatus('');
@@ -1128,6 +1181,64 @@ ${exitPromptContent}
         addToast('已删除本次见面记录', 'success');
     };
 
+    const handleForkHistorySession = async (session: DateHistorySession) => {
+        if (!char) return;
+        if (char.savedDateState) {
+            const confirmed = window.confirm('当前有未结束的见面进度。复制旧记录会放弃这份未结束进度，并开启一条新的见面；已有历史记录不受影响。要继续吗？');
+            if (!confirmed) return;
+        }
+
+        const forkedAt = Date.now();
+        const openingContent = buildDateForkOpeningText({
+            charName: char.name,
+            userName: userProfile.name,
+        });
+        const openingId = await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content: openingContent,
+            timestamp: forkedAt,
+            metadata: {
+                source: 'date',
+                isOpening: true,
+                forkedFromSessionStartMsgId: session.startMsgId,
+                forkedAt,
+            },
+        });
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'system',
+            type: 'text',
+            content: buildDateForkBridgeContent({
+                session,
+                charName: char.name,
+                userName: userProfile.name,
+            }),
+            timestamp: forkedAt + 1,
+            metadata: {
+                source: 'date',
+                hiddenFromUser: true,
+                isDateContextBridge: true,
+                bridgeType: 'fork',
+                sessionStartMsgId: openingId,
+                forkedFromSessionStartMsgId: session.startMsgId,
+                forkedFromMessageIds: session.rawMsgs.map(m => m.id),
+            },
+        });
+
+        updateCharacter(char.id, { savedDateState: undefined });
+        setForceFreshSession(true);
+        setPeekStatus(openingContent);
+        setPeekThinking('');
+        setHasSavedOpening(true);
+        setPendingAutoSummary(null);
+        setActiveSummaryDraft(null);
+        await loadDateMessages();
+        setMode('session');
+        addToast('已复制为新的见面', 'success');
+    };
+
     const onExitSession = async (finalState: DateState, syncMode: DateExitSyncMode) => {
         if (!char) return;
         if (syncMode === 'none') {
@@ -1200,7 +1311,13 @@ ${exitPromptContent}
                         <div key={idx} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                             <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex justify-between items-center"><span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{session.date}</span><span className="text-[10px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{session.msgs.length} 句</span></div>
                             <div className="p-4 space-y-4">
-                                <div className="flex justify-end">
+                                <div className="flex justify-end gap-2">
+                                    <button
+                                        onClick={() => handleForkHistorySession(session)}
+                                        className="px-2.5 py-1 text-[11px] font-medium text-pink-500 bg-pink-50 rounded-full hover:bg-pink-100 transition-colors"
+                                    >
+                                        复制为新见面
+                                    </button>
                                     <button
                                         onClick={() => handleDeleteHistorySession(session)}
                                         className="px-2.5 py-1 text-[11px] font-medium text-red-500 bg-red-50 rounded-full hover:bg-red-100 transition-colors"
@@ -1234,7 +1351,7 @@ ${exitPromptContent}
                                 })}
                                 {session.bridges.length > 0 && (
                                     <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
-                                        <span className="font-bold text-emerald-700">已同步到主聊天</span>
+                                        <span className="font-bold text-emerald-700">{getBridgeStatusLabel(session.bridges)}</span>
                                         <span className="text-[11px] text-emerald-500">
                                             {Array.from(new Set(session.bridges.map(getBridgeTypeLabel))).join(' / ')}
                                         </span>
@@ -1319,7 +1436,7 @@ ${exitPromptContent}
                     userProfile={userProfile}
                     messages={dateMessages}
                     peekStatus={peekStatus}
-                    initialState={char.savedDateState}
+                    initialState={forceFreshSession ? undefined : char.savedDateState}
                     onSendMessage={handleSendMessage}
                     onReroll={handleReroll}
                     onExit={onExitSession}

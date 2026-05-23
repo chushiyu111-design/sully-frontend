@@ -196,7 +196,7 @@ const StoryPhoneScreen: React.FC<StoryPhoneScreenProps> = ({
                     {activeAppId === 'home' ? (
                         <div className="flex min-h-0 flex-1 flex-col">
                             <div className={compact ? 'px-4 pb-2 pt-2' : 'px-5 pb-2 pt-2'}>
-                                <div className={`relative overflow-hidden border border-[rgba(120,120,120,0.18)] bg-white/70 text-[#3e4245] shadow-[0_14px_30px_rgba(64,69,71,0.08),inset_0_1px_0_rgba(255,255,255,0.82)] ${compact ? 'rounded-2xl px-3 py-2.5' : 'rounded-[1.55rem] px-4 py-2.5'}`}>
+                                <div className={`relative border border-[rgba(120,120,120,0.18)] bg-white/70 text-[#3e4245] shadow-[0_14px_30px_rgba(64,69,71,0.08),inset_0_1px_0_rgba(255,255,255,0.82)] ${compact ? 'rounded-2xl px-3 py-2.5' : 'rounded-[1.55rem] px-4 py-2.5'}`}>
                                     <div className="pointer-events-none absolute -right-3 -top-2 h-8 w-16 rotate-6 bg-[#d8d2c6]/45 shadow-[inset_0_0_0_1px_rgba(120,120,120,0.08)]" />
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="min-w-0">
@@ -231,7 +231,7 @@ const StoryPhoneScreen: React.FC<StoryPhoneScreenProps> = ({
 
                                 <button
                                     onClick={() => onGenerateApp?.(spotlightApp)}
-                                    className={`group relative overflow-hidden border border-[rgba(120,120,120,0.18)] bg-white/72 text-left text-[#3e4245] shadow-[0_14px_28px_rgba(64,69,71,0.09),inset_0_1px_0_rgba(255,255,255,0.82)] active:scale-[0.985] ${compact ? 'rounded-2xl p-3' : 'rounded-[1.35rem] p-3'}`}
+                                    className={`group relative border border-[rgba(120,120,120,0.18)] bg-white/72 text-left text-[#3e4245] shadow-[0_14px_28px_rgba(64,69,71,0.09),inset_0_1px_0_rgba(255,255,255,0.82)] active:scale-[0.985] ${compact ? 'rounded-2xl p-3' : 'rounded-[1.35rem] p-3'}`}
                                     aria-label={`读取 ${spotlightApp.name}`}
                                 >
                                     <div className="pointer-events-none absolute right-2 top-2 h-7 w-10 rotate-12 bg-[#ded8cb]/45 shadow-[inset_0_0_0_1px_rgba(120,120,120,0.08)]" />
@@ -269,7 +269,7 @@ const StoryPhoneScreen: React.FC<StoryPhoneScreenProps> = ({
                                                 aria-label={active ? `读取 ${app.name}` : `打开 ${app.name}`}
                                             >
                                                 <span
-                                                        className={`relative flex ${compact ? 'h-10 w-10 rounded-xl' : 'h-12 w-12 rounded-[1.05rem]'} items-center justify-center overflow-hidden border border-[rgba(120,120,120,0.15)] bg-white/76 text-[#62676b] shadow-[0_8px_18px_rgba(64,69,71,0.08),inset_0_1px_0_rgba(255,255,255,0.9)]`}
+                                                        className={`relative flex ${compact ? 'h-10 w-10 rounded-xl' : 'h-12 w-12 rounded-[1.05rem]'} items-center justify-center border border-[rgba(120,120,120,0.15)] bg-white/76 text-[#62676b] shadow-[0_8px_18px_rgba(64,69,71,0.08),inset_0_1px_0_rgba(255,255,255,0.9)]`}
                                                     >
                                                         {renderAppGlyph(app, compact ? 'relative z-10 h-5 w-5 text-[#62676b]' : 'relative z-10 h-6 w-6 text-[#62676b]')}
                                                         {active && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[#a76666] shadow-[0_0_0_2px_rgba(255,255,255,0.82)]" />}
@@ -310,7 +310,7 @@ const StoryPhoneScreen: React.FC<StoryPhoneScreenProps> = ({
                                                 aria-label={`打开 ${app.name}`}
                                             >
                                                 <span
-                                                    className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-[1.05rem] border border-[rgba(120,120,120,0.14)] bg-white/76 text-[#62676b] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
+                                                    className="relative flex h-11 w-11 items-center justify-center rounded-[1.05rem] border border-[rgba(120,120,120,0.14)] bg-white/76 text-[#62676b] shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
                                                 >
                                                     {renderAppGlyph(app, 'relative z-10 h-5 w-5 text-[#62676b]')}
                                                     {app.id === spotlightApp.id && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[#a76666] shadow-[0_0_0_2px_rgba(255,255,255,0.82)]" />}

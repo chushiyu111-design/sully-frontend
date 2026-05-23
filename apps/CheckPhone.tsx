@@ -4,7 +4,7 @@ import { DB } from '../utils/db';
 import { CharacterProfile,PhoneEvidence,PhoneCustomApp } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
-import { safeResponseJson } from '../utils/safeApi';
+import { extractContent, extractJson, safeResponseJson } from '../utils/safeApi';
 // === [Deprecated] 高德地图 POI 搜索已因额度耗尽停用，外卖商家改由大模型生成 ===
 // import { searchNearbyRestaurants } from '../utils/mapService';
 import MeituanTakeoutCard from '../components/chat/cards/phone/MeituanTakeoutCard';
@@ -18,6 +18,111 @@ const MOMENTS_BG_POOL = [
     'https://i.postimg.cc/prhY1Crw/Camera-XHS-17719479279871040g2sg30ttugsjr4m605ojdbvn8d1ctvlghth8.jpg',
     'https://i.postimg.cc/rs0CYjzK/mmexport1771947836221.jpg',
 ];
+
+export const MAX_PHONE_RECORDS_PER_APP = 80;
+export const MAX_PHONE_RECORDS_TOTAL = 640;
+export const MAX_PHONE_VISIBLE_RECORDS = 60;
+export const MAX_PHONE_TITLE_CHARS = 96;
+export const MAX_PHONE_DETAIL_CHARS = 2400;
+export const MAX_PHONE_CHAT_DETAIL_CHARS = 6000;
+const MAX_PHONE_META_CHARS = 160;
+const MAX_CHAT_DETAIL_LINES_RENDERED = 120;
+
+const limitPhoneText = (value: string, maxChars: number): string => {
+    if (value.length <= maxChars) return value;
+    return `${value.slice(0, maxChars).trimEnd()}...`;
+};
+
+const normalizePhoneText = (value: unknown, fallback = '', maxChars = MAX_PHONE_DETAIL_CHARS): string => {
+    let normalized = fallback;
+
+    if (value == null) return fallback;
+    if (typeof value === 'string') normalized = value.trim() || fallback;
+    else if (typeof value === 'number' || typeof value === 'boolean') normalized = String(value);
+
+    else if (Array.isArray(value)) {
+        const parts = value.map(item => normalizePhoneText(item, '')).filter(Boolean);
+        normalized = parts.join('; ') || fallback;
+    }
+
+    else if (typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const candidate = record.text ?? record.content ?? record.name ?? record.label ?? record.title ?? record.detail ?? record.status ?? record.amount ?? record.value ?? record.shop;
+        if (candidate !== undefined && candidate !== value) {
+            const normalized = normalizePhoneText(candidate, '');
+            if (normalized) return limitPhoneText(normalized, maxChars);
+        }
+
+        try {
+            normalized = JSON.stringify(value);
+        } catch {
+            normalized = fallback;
+        }
+    }
+
+    return limitPhoneText(normalized, maxChars);
+};
+
+const normalizeOptionalPhoneText = (value: unknown, maxChars = MAX_PHONE_META_CHARS): string | undefined => {
+    const normalized = normalizePhoneText(value, '', maxChars);
+    return normalized || undefined;
+};
+
+const normalizeTimestamp = (value: unknown): number => {
+    const timestamp = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+};
+
+export const normalizeGeneratedPhoneItem = (item: unknown): Pick<PhoneEvidence, 'title' | 'detail' | 'value' | 'shop'> => {
+    const source = item && typeof item === 'object' ? item as Record<string, unknown> : { detail: item };
+    return {
+        title: normalizePhoneText(source.title ?? source.name ?? source.label, 'Unknown', MAX_PHONE_TITLE_CHARS),
+        detail: normalizePhoneText(source.detail ?? source.content ?? source.text ?? source.items, '...', MAX_PHONE_DETAIL_CHARS),
+        value: normalizeOptionalPhoneText(source.value ?? source.amount ?? source.price),
+        shop: normalizeOptionalPhoneText(source.shop ?? source.store ?? source.status)
+    };
+};
+
+export const normalizeStoredPhoneRecord = (record: PhoneEvidence): PhoneEvidence => {
+    const unsafeRecord = record as unknown as Record<string, unknown>;
+    const type = normalizePhoneText(unsafeRecord.type, 'generic', MAX_PHONE_META_CHARS);
+    const detailLimit = type === 'chat' ? MAX_PHONE_CHAT_DETAIL_CHARS : MAX_PHONE_DETAIL_CHARS;
+
+    return {
+        ...record,
+        id: normalizePhoneText(unsafeRecord.id, `rec-${normalizeTimestamp(unsafeRecord.timestamp) || 'unknown'}`, MAX_PHONE_META_CHARS),
+        type,
+        title: normalizePhoneText(unsafeRecord.title, 'Unknown', MAX_PHONE_TITLE_CHARS),
+        detail: normalizePhoneText(unsafeRecord.detail, '...', detailLimit),
+        timestamp: normalizeTimestamp(unsafeRecord.timestamp),
+        systemMessageId: typeof unsafeRecord.systemMessageId === 'number' ? unsafeRecord.systemMessageId : undefined,
+        value: normalizeOptionalPhoneText(unsafeRecord.value),
+        shop: normalizeOptionalPhoneText(unsafeRecord.shop)
+    };
+};
+
+export const prunePhoneRecords = (records: PhoneEvidence[]): PhoneEvidence[] => {
+    const normalized = records
+        .map((record, index) => ({ record: normalizeStoredPhoneRecord(record), index }))
+        .sort((a, b) => (b.record.timestamp - a.record.timestamp) || (b.index - a.index));
+
+    const countByType = new Map<string, number>();
+    const kept: Array<{ record: PhoneEvidence; index: number }> = [];
+
+    for (const item of normalized) {
+        const typeCount = countByType.get(item.record.type) || 0;
+        if (typeCount >= MAX_PHONE_RECORDS_PER_APP) continue;
+
+        countByType.set(item.record.type, typeCount + 1);
+        kept.push(item);
+
+        if (kept.length >= MAX_PHONE_RECORDS_TOTAL) break;
+    }
+
+    return kept
+        .sort((a, b) => (a.record.timestamp - b.record.timestamp) || (a.index - b.index))
+        .map(item => item.record);
+};
 
 // --- Debug Component ---
 const LayoutInspector: React.FC = () => {
@@ -80,8 +185,16 @@ const CheckPhone: React.FC = () => {
     const [showDebug, setShowDebug] = useState(false);
 
     // Derived state for evidence records
-    const records = targetChar?.phoneState?.records || [];
+    const records = useMemo(
+        () => prunePhoneRecords(targetChar?.phoneState?.records || []),
+        [targetChar?.phoneState?.records]
+    );
     const customApps = targetChar?.phoneState?.customApps || [];
+    const getRecentRecordsByType = (type: string) =>
+        records
+            .filter(r => r.type === type)
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, MAX_PHONE_VISIBLE_RECORDS);
 
     useEffect(() => {
         if (targetChar) {
@@ -92,7 +205,7 @@ const CheckPhone: React.FC = () => {
                 // Update selected record ref if open
                 if (selectedChatRecord) {
                     const freshRecord = updated.phoneState?.records?.find(r => r.id === selectedChatRecord.id);
-                    if (freshRecord) setSelectedChatRecord(freshRecord);
+                    if (freshRecord) setSelectedChatRecord(normalizeStoredPhoneRecord(freshRecord));
                 }
             }
         }
@@ -333,21 +446,20 @@ ${cityContext}
 
             if (!response.ok) throw new Error('API Error');
             const data = await safeResponseJson(response);
-            let content = data.choices[0].message.content;
-            content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            const firstBracket = content.indexOf('[');
-            const lastBracket = content.lastIndexOf(']');
-            if (firstBracket > -1 && lastBracket > -1) content = content.substring(firstBracket, lastBracket + 1);
+            const content = extractContent(data);
+            if (!content) throw new Error('API 未返回可用内容');
 
-            let json = [];
-            try { json = JSON.parse(content); } catch (e) { json = []; }
+            const parsed = extractJson(content);
+            const json = Array.isArray(parsed) ? parsed : [];
+            if (json.length === 0) throw new Error('未解析出有效手机记录');
 
             const newRecordsToAdd: PhoneEvidence[] = [];
 
             if (Array.isArray(json)) {
                 for (const item of json) {
-                    const recordTitle = item.title || 'Unknown';
-                    const recordDetail = item.detail || '...';
+                    const normalizedItem = normalizeGeneratedPhoneItem(item);
+                    const recordTitle = normalizedItem.title;
+                    const recordDetail = normalizedItem.detail;
 
                     let sysMsgContent = "";
                     if (type === 'chat') {
@@ -367,8 +479,8 @@ ${cityContext}
                             phoneLabel: logPrefix || type,
                             phoneTitle: recordTitle,
                             phoneDetail: recordDetail,
-                            phoneValue: item.value || null,
-                            phoneShop: item.shop || null,
+                            phoneValue: normalizedItem.value || null,
+                            phoneShop: normalizedItem.shop || null,
                             charName: targetChar.name,
                             charAvatar: targetChar.avatar
                         }
@@ -382,8 +494,8 @@ ${cityContext}
                         type: type,
                         title: recordTitle,
                         detail: recordDetail,
-                        value: item.value,
-                        shop: item.shop,
+                        value: normalizedItem.value,
+                        shop: normalizedItem.shop,
                         timestamp: Date.now(),
                         systemMessageId: savedMsg?.id
                     });
@@ -393,11 +505,18 @@ ${cityContext}
             }
 
             const existingRecords = targetChar.phoneState?.records || [];
+            const nextRecords = prunePhoneRecords([...existingRecords, ...newRecordsToAdd]);
+            const prunedCount = existingRecords.length + newRecordsToAdd.length - nextRecords.length;
             updateCharacter(targetChar.id, {
-                phoneState: { ...targetChar.phoneState, records: [...existingRecords, ...newRecordsToAdd] }
+                phoneState: { ...targetChar.phoneState, records: nextRecords }
             });
 
-            addToast(`已刷新 ${newRecordsToAdd.length} 条数据`, 'success');
+            addToast(
+                prunedCount > 0
+                    ? `已刷新 ${newRecordsToAdd.length} 条数据，整理了 ${prunedCount} 条旧记录`
+                    : `已刷新 ${newRecordsToAdd.length} 条数据`,
+                'success'
+            );
 
         } catch (e: any) {
             console.error(e);
@@ -444,21 +563,23 @@ Format:
 
             if (response.ok) {
                 const data = await safeResponseJson(response);
-                let newLines = data.choices[0].message.content.trim();
+                const content = extractContent(data);
+                let newLines = normalizePhoneText(content, '', MAX_PHONE_CHAT_DETAIL_CHARS);
+                if (!newLines) throw new Error('API 未返回可用续写内容');
 
                 // Clean up any markdown
                 newLines = newLines.replace(/```/g, '');
 
                 // Append to existing record
-                const updatedDetail = `${selectedChatRecord.detail}\n${newLines}`;
+                const updatedDetail = limitPhoneText(`${selectedChatRecord.detail}\n${newLines}`, MAX_PHONE_CHAT_DETAIL_CHARS);
 
                 // Update Local State
-                const updatedRecord = { ...selectedChatRecord, detail: updatedDetail };
+                const updatedRecord = normalizeStoredPhoneRecord({ ...selectedChatRecord, detail: updatedDetail, timestamp: Date.now() });
                 setSelectedChatRecord(updatedRecord);
 
                 // Update Character Profile
                 const allRecords = targetChar.phoneState?.records || [];
-                const updatedRecords = allRecords.map(r => r.id === updatedRecord.id ? updatedRecord : r);
+                const updatedRecords = prunePhoneRecords(allRecords.map(r => r.id === updatedRecord.id ? updatedRecord : r));
                 updateCharacter(targetChar.id, {
                     phoneState: { ...targetChar.phoneState, records: updatedRecords }
                 });
@@ -513,7 +634,7 @@ Format:
     );
 
     const renderChatList = () => {
-        const list = records.filter(r => r.type === 'chat').sort((a, b) => b.timestamp - a.timestamp);
+        const list = getRecentRecordsByType('chat');
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader('Message', () => setActiveAppId('home'))}
@@ -556,7 +677,7 @@ Format:
         if (!selectedChatRecord || !targetChar) return null;
 
         // Parse logic: look for "Me:" or "我:" vs others
-        const lines = selectedChatRecord.detail.split('\n').filter(l => l.trim());
+        const lines = selectedChatRecord.detail.split('\n').filter(l => l.trim()).slice(-MAX_CHAT_DETAIL_LINES_RENDERED);
         const parsedLines = lines.map(line => {
             const isMe = line.startsWith('我') || line.startsWith('Me') || line.startsWith('Me:') || line.startsWith('我:');
             const content = line.replace(/^(我|Me|对方|Them|[\w\u4e00-\u9fa5]+)[:：]\s*/, '');
@@ -616,7 +737,7 @@ Format:
 
     // ─── Taobao App List (仿淘宝订单列表) ─────────────────────────
     const renderTaobaoList = () => {
-        const list = records.filter(r => r.type === 'order').sort((a, b) => b.timestamp - a.timestamp);
+        const list = getRecentRecordsByType('order');
 
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f5f5f5] z-10">
@@ -724,7 +845,7 @@ Format:
 
     // ─── Meituan Waimai App List (仿美团外卖订单列表) ─────────────────────
     const renderMeituanList = () => {
-        const list = records.filter(r => r.type === 'delivery').sort((a, b) => b.timestamp - a.timestamp);
+        const list = getRecentRecordsByType('delivery');
 
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f5f5f5] z-10">
@@ -780,7 +901,7 @@ Format:
     };
 
     const renderGenericList = (appId: string, appName: string, customPrompt?: string) => {
-        const list = records.filter(r => r.type === appId).sort((a, b) => b.timestamp - a.timestamp);
+        const list = getRecentRecordsByType(appId);
 
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
@@ -822,7 +943,7 @@ Format:
     };
 
     const renderMomentsList = () => {
-        const list = records.filter(r => r.type === 'social').sort((a, b) => b.timestamp - a.timestamp);
+        const list = getRecentRecordsByType('social');
 
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-white z-10">

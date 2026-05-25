@@ -547,13 +547,6 @@
   --safe-bottom: 0px !important;
 }
 
-html,
-#root {
-  height: 100%;
-  min-height: 100%;
-  background-color: #0f1115;
-}
-
 body {
   background-color: #0f1115;
   margin: 0;
@@ -569,15 +562,6 @@ body {
   /* iOS Fix */
   width: 100vw;
   font-family: var(--app-font);
-}
-
-@supports (height: 100dvh) {
-  html,
-  body,
-  #root {
-    height: 100dvh;
-    min-height: 100dvh;
-  }
 }
 
 /* Global scroll behavior fix */

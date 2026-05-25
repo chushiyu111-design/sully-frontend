@@ -19,6 +19,7 @@ import type {
   TtsCreateTaskResponse,
   TtsQueryTaskResponse,
 } from '../types/tts';
+import { trackedApiRequest,type ApiRequestTraceMeta } from './apiRequestLedger';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -189,10 +190,19 @@ async function preprocessTextChunk(
     chunk: string,
     config: TtsPreprocessRequestConfig,
     baseUrl: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    trace?: ApiRequestTraceMeta,
 ): Promise<string> {
     try {
-        const response = await fetch(`${baseUrl}/chat/completions`, {
+        const url = `${baseUrl}/chat/completions`;
+        const response = await trackedApiRequest({
+            ...trace,
+            feature: 'tts',
+            reason: 'TTS 语气预处理',
+            model: config.model,
+            userInitiated: trace?.userInitiated === true,
+            url,
+        }, () => fetch(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${config.apiKey}`,
@@ -208,7 +218,7 @@ async function preprocessTextChunk(
                 max_tokens: buildPreprocessMaxTokens(chunk.length),
             }),
             signal,
-        });
+        }));
 
         if (!response.ok) {
             console.warn('[TTS Preprocess] AI 预处理失败，使用当前分段原文');
@@ -400,7 +410,8 @@ export const MinimaxTts = {
         text: string,
         config: TtsConfig,
         onStatus?: (status: TtsSynthesisStatus, message: string) => void,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        trace?: ApiRequestTraceMeta,
     ): Promise<TtsSynthesisResult> {
         const notify = (s: TtsSynthesisStatus, m: string) => {
             onStatus?.(s, m);
@@ -416,7 +427,7 @@ export const MinimaxTts = {
         if (pre?.enabled && pre.apiBase && pre.apiKey && pre.model) {
             notify('preprocessing', '正在用 AI 添加语气词...');
             try {
-                textToSynthesize = await this.preprocessText(text, pre, signal);
+                textToSynthesize = await this.preprocessText(text, pre, signal, trace);
                 console.log('[TTS Sync] 预处理完成，原文长度:', text.length, '→ 处理后:', textToSynthesize.length);
             } catch (e) {
                 if (isAbortError(e)) throw e;
@@ -437,12 +448,21 @@ export const MinimaxTts = {
         notify('creating', '正在合成语音...');
 
         // 2. 发送同步请求
-        const response = await fetch(`${baseUrl}/v1/t2a_v2`, {
+        const requestUrl = `${baseUrl}/v1/t2a_v2`;
+        const response = await trackedApiRequest({
+            ...trace,
+            feature: 'tts',
+            reason: trace?.reason || 'TTS 合成',
+            provider: 'minimax',
+            model: config.model,
+            userInitiated: trace?.userInitiated === true,
+            url: requestUrl,
+        }, () => fetch(requestUrl, {
             method: 'POST',
             headers: makeHeaders(config.apiKey, config.groupId || ''),
             body: JSON.stringify(body),
             signal,
-        });
+        }));
 
         if (!response.ok) {
             const errData = await parseResponse<any>(response).catch(() => null);
@@ -490,7 +510,8 @@ export const MinimaxTts = {
         text: string,
         config: TtsConfig,
         onStatus?: (status: TtsSynthesisStatus, message: string) => void,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        trace?: ApiRequestTraceMeta,
     ): Promise<TtsSynthesisResult> {
         const notify = (s: TtsSynthesisStatus, m: string) => {
             onStatus?.(s, m);
@@ -507,7 +528,7 @@ export const MinimaxTts = {
         if (pre?.enabled && pre.apiBase && pre.apiKey && pre.model) {
             notify('preprocessing', '正在用 AI 添加语气词...');
             try {
-                textToSynthesize = await this.preprocessText(text, pre, signal);
+                textToSynthesize = await this.preprocessText(text, pre, signal, trace);
                 console.log('[TTS] 预处理完成，原文长度:', text.length, '→ 处理后:', textToSynthesize.length);
             } catch (e) {
                 if (isAbortError(e)) throw e;
@@ -596,7 +617,8 @@ export const MinimaxTts = {
     async preprocessText(
         text: string,
         config: TtsPreprocessRequestConfig,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        trace?: ApiRequestTraceMeta,
     ): Promise<string> {
         if (!config.apiBase || !config.apiKey || !config.model) {
             console.warn('[TTS Preprocess] 预处理 API 未配置，使用原始文本');
@@ -612,7 +634,7 @@ export const MinimaxTts = {
         const processedChunks: string[] = [];
         for (const chunk of chunks) {
             if (signal?.aborted) throw new DOMException('TTS preprocessing aborted', 'AbortError');
-            processedChunks.push(await preprocessTextChunk(chunk, config, baseUrl, signal));
+            processedChunks.push(await preprocessTextChunk(chunk, config, baseUrl, signal, trace));
         }
 
         return joinPreprocessedChunks(processedChunks) || text;

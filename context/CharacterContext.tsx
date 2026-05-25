@@ -3,6 +3,7 @@ import { CharacterProfile,GroupProfile,Worldbook,NovelBook } from '../types';
 import { DB } from '../utils/db';
 import { migrateCloudCharacterInstance } from '../utils/backendClient';
 import { preloadImages } from '../utils/preloadResources';
+import { normalizeGroupProfiles } from '../utils/groupChatDirector';
 import { useNotification } from './NotificationContext';
 
 export interface CharacterUpdateOptions {
@@ -342,7 +343,12 @@ export const CharacterProvider: React.FC<CharacterProviderProps> = ({
                     setActiveCharacterIdState(initialCharacter.id);
                 }
 
-                setGroups(dbGroups);
+                const normalizedGroupResult = normalizeGroupProfiles(dbGroups, finalChars);
+                setGroups(normalizedGroupResult.groups);
+                if (normalizedGroupResult.changedGroups.length > 0) {
+                    await Promise.all(normalizedGroupResult.changedGroups.map(group => DB.saveGroup(group)));
+                    console.log(`[Migration] Normalized ${normalizedGroupResult.changedGroups.length} group member list(s) to character.id`);
+                }
                 setWorldbooks(dbWorldbooks);
                 setNovels(dbNovels);
 

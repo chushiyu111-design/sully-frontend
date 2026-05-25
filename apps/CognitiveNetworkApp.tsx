@@ -1753,14 +1753,16 @@ const CognitiveNetworkApp: React.FC = () => {
                                 <h2 className="text-[34px] font-bold text-white/90 tracking-[0.34em] leading-none mb-1" style={{ fontFamily: "'Noto Serif SC', serif" }}>拾 念</h2>
                                 <p className="text-[10px] text-white/28 mt-3 tracking-[0.16em] italic leading-relaxed" style={{ fontFamily: "'Noto Serif SC', serif" }}>没说出口的心动，也会被他悄悄珍藏</p>
                             </div>
-                            <div className="flex justify-center gap-2 overflow-x-auto no-scrollbar mt-6 mb-10 -mx-5 px-5">
-                                {characters.map(c => (
-                                    <button key={c.id} onClick={() => { setSelectedCharId(c.id); haptic.light(); }}
-                                        className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[10px] font-medium transition-all ${selectedCharId === c.id ? 'bg-white/90 text-[#1E1E20] shadow-[0_4px_20px_rgba(255,255,255,0.12)]' : 'bg-white/[0.04] text-white/35 border border-white/[0.06] hover:bg-white/[0.08]'}`}>
-                                        <img src={c.avatar} alt={c.name} className="w-4 h-4 rounded-full object-cover" />
-                                        {c.name}
-                                    </button>
-                                ))}
+                            <div className="overflow-x-auto no-scrollbar mt-6 mb-10 -mx-5 px-5">
+                                <div className="flex w-max min-w-full justify-center gap-2">
+                                    {characters.map(c => (
+                                        <button key={c.id} onClick={() => { setSelectedCharId(c.id); haptic.light(); }}
+                                            className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[10px] font-medium transition-all ${selectedCharId === c.id ? 'bg-white/90 text-[#1E1E20] shadow-[0_4px_20px_rgba(255,255,255,0.12)]' : 'bg-white/[0.04] text-white/35 border border-white/[0.06] hover:bg-white/[0.08]'}`}>
+                                            <img src={c.avatar} alt={c.name} className="w-4 h-4 rounded-full object-cover" />
+                                            {c.name}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                             <div className="relative space-y-[14px]">
                                 <span className="absolute -top-5 right-2 text-[7px] text-white/[0.1] italic tracking-[0.15em] select-none pointer-events-none" style={{ fontFamily: "Georgia, serif" }}>Good night</span>

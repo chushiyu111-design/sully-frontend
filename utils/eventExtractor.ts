@@ -11,6 +11,7 @@
 import { addPendingEvent,PendingEvent } from './temporalContext';
 import { extractJsonTyped } from './safeApi';
 import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from './runtimeConfig';
+import { trackedApiRequest } from './apiRequestLedger';
 
 // ─── Configuration ──────────────────────────────────────────
 
@@ -130,7 +131,15 @@ async function extract(
 
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
-            const resp = await fetch(`${baseUrl}/chat/completions`, {
+            const url = `${baseUrl}/chat/completions`;
+            const resp = await trackedApiRequest({
+                feature: 'memory',
+                reason: '时间事件提取',
+                model: apiConfig.model,
+                conversationId: charId,
+                userInitiated: false,
+                url,
+            }, () => fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -143,7 +152,7 @@ async function extract(
                     max_tokens: 150,
                 }),
                 signal: controller.signal,
-            });
+            }));
 
             if (!resp.ok) {
                 const error = new Error(`HTTP ${resp.status}`);

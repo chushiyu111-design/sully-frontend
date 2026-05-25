@@ -13,6 +13,7 @@ const SttSettings = React.lazy(() => import('./settings/SttSettings'));
 const EmbeddingSettings = React.lazy(() => import('./settings/EmbeddingSettings'));
 const DataSettings = React.lazy(() => import('./settings/DataSettings'));
 const AgentSettings = React.lazy(() => import('./settings/AgentSettings'));
+const ApiLedgerSettings = React.lazy(() => import('./settings/ApiLedgerSettings'));
 
 const panelComponents: Record<Exclude<SettingsPanel, 'menu'>, React.LazyExoticComponent<React.FC>> = {
     api: ApiSettings,
@@ -23,6 +24,7 @@ const panelComponents: Record<Exclude<SettingsPanel, 'menu'>, React.LazyExoticCo
     embedding: EmbeddingSettings,
     data: DataSettings,
     agent: AgentSettings,
+    debug: ApiLedgerSettings,
 };
 
 const panelTitles: Record<Exclude<SettingsPanel, 'menu'>, string> = {
@@ -34,6 +36,7 @@ const panelTitles: Record<Exclude<SettingsPanel, 'menu'>, string> = {
     stt: '语音识别',
     embedding: '向量记忆引擎',
     agent: '自律代理',
+    debug: 'API 请求账本',
 };
 
 const Settings: React.FC = () => {

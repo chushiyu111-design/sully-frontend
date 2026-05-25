@@ -35,6 +35,11 @@ import {
     filterPersistedCallHistory,
 } from './callLogPersistence';
 import { getVoiceCallVisibleText } from './voiceCallTextSanitizer';
+import {
+    loadVoiceCallForeignLangConfig,
+    saveVoiceCallForeignLangConfig,
+    type VoiceCallForeignLangConfig,
+} from './voiceCallForeignLangSettings';
 
 interface VoiceCallScreenProps {
     avatarUrl: string;
@@ -80,7 +85,13 @@ const VoiceCallScreen: React.FC<VoiceCallScreenProps> = ({
     );
 
     // ─── 外语模式 (Foreign Language) ───
-    const [foreignLang, setForeignLang] = useState<{ sourceLang: string; targetLang: string } | null>(null);
+    const [foreignLang, setForeignLangState] = useState<VoiceCallForeignLangConfig | null>(() => (
+        loadVoiceCallForeignLangConfig()
+    ));
+    const setForeignLang = useCallback((config: VoiceCallForeignLangConfig | null) => {
+        setForeignLangState(config);
+        saveVoiceCallForeignLangConfig(config);
+    }, []);
 
     // ─── 向量记忆 (Vector Memory) ───
     const embeddingApiKey = useMemo(() => getEmbeddingConfig().apiKey || undefined, []);

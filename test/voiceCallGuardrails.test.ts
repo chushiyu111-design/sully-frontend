@@ -2,6 +2,7 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 import { shouldEmitVoiceCallSentence,VoiceCallLlm } from '../apps/voicecall/voiceCallLlm';
 import {
     sanitizeVoiceCallAssistantText,
+    sanitizeVoiceCallAssistantTextForTts,
     splitVoiceCallForeignSentence,
 } from '../apps/voicecall/voiceCallTextSanitizer';
 
@@ -26,6 +27,18 @@ describe('voice call guardrails', () => {
         expect(
             sanitizeVoiceCallAssistantText('Hello there, stay with me.'),
         ).toBe('Hello there, stay with me.');
+    });
+
+    it('converts stage directions into provider emotion tags for TTS only', () => {
+        expect(
+            sanitizeVoiceCallAssistantTextForTts('(laughs softly) I knew it.', 'minimax'),
+        ).toBe('(laughs) I knew it.');
+        expect(
+            sanitizeVoiceCallAssistantTextForTts('(sighs) I knew it.', 'elevenlabs-v3'),
+        ).toBe('[sighs] I knew it.');
+        expect(
+            sanitizeVoiceCallAssistantTextForTts('(sighs) I knew it.', 'strip'),
+        ).toBe('I knew it.');
     });
 
     it('locks default voice-call output to spoken Chinese when foreign mode is disabled', () => {

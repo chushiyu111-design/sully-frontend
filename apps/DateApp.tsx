@@ -12,10 +12,17 @@ import DateSettings from '../components/date/DateSettings';
 import { buildDatePreamble,buildTheaterScene,buildDateTail } from '../utils/datePrompts';
 import { extractThinking, extractInnerWhispers, type InnerWhisper } from '../utils/thinkingExtractor';
 import { DEFAULT_DATE_SUMMARY_PROMPT,buildSummaryPrompt,formatDateMessagesForBridge,formatMessagesForSummary } from '../utils/dateSummaryPrompts';
+import {
+    buildDateDiaryMemoryPrompt,
+    parseDateDiaryMemoryResponse,
+    renderDateDiaryMemoryTemplate,
+    type DateDiaryMemoryDraft,
+} from '../utils/dateDiaryMemory';
 import { getSecondaryApiConfig } from '../utils/runtimeConfig';
 import { renderMarkdown } from '../utils/markdownLite';
 import { stripTranslationTags } from '../utils/chatParser';
 import { isDateModeContextMessage } from '../utils/mainlineMemory';
+import { trackedApiRequest } from '../utils/apiRequestLedger';
 
 type SummaryType = 'auto' | 'manual';
 const DATE_SUMMARY_CONTEXT_KEEP_COUNT = 5;
@@ -32,6 +39,11 @@ type SummaryDraft = {
     /** Set only during exit flow — after saving, also create bridge + finishExit */
     bridgeOnSave?: boolean;
     injectToVectorMemory?: boolean;
+};
+type DateDiaryMemoryPreviewEntry = DateDiaryMemoryDraft & { id: string };
+type DateDiaryMemoryPreviewState = {
+    summaryDraft: SummaryDraft;
+    entries: DateDiaryMemoryPreviewEntry[];
 };
 
 const isDateSummaryMessage = (m: Message) => m.metadata?.source === 'date' && m.metadata?.isSummary === true;
@@ -81,6 +93,43 @@ const buildDateSummaryMemoryPrompt = (msgs: Message[]) => {
 const hasCompleteApiConfig = (config?: { baseUrl?: string; apiKey?: string; model?: string } | null): config is { baseUrl: string; apiKey: string; model: string } => (
     !!config?.baseUrl?.trim() && !!config?.apiKey?.trim() && !!config?.model?.trim()
 );
+
+const fetchDateChatCompletion = (
+    config: { baseUrl: string; apiKey: string; model: string },
+    body: Record<string, unknown>,
+    reason: string,
+    conversationId?: string,
+    messageId?: number,
+    userInitiated = false,
+): Promise<Response> => {
+    const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    return trackedApiRequest({
+        feature: 'date',
+        reason,
+        model: config.model,
+        conversationId,
+        messageId,
+        userInitiated,
+        url,
+    }, () => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+        body: JSON.stringify(body),
+    }));
+};
+
+const createDiaryMemoryPreviewEntry = (draft?: Partial<DateDiaryMemoryDraft>): DateDiaryMemoryPreviewEntry => ({
+    id: `date-diary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: draft?.title || '未命名片段',
+    content: draft?.content || '',
+    emotionalJourney: draft?.emotionalJourney || '',
+    importance: Math.min(10, Math.max(1, Math.round(draft?.importance || 5))),
+});
+
+const parseDiaryMemoryImportance = (value: string): number => {
+    const parsed = parseInt(value || '5', 10);
+    return Number.isFinite(parsed) ? Math.min(10, Math.max(1, parsed)) : 5;
+};
 
 export const buildHistorySessions = (msgs: Message[]): DateHistorySession[] => {
     const dateMsgs = msgs
@@ -163,7 +212,7 @@ const DateApp: React.FC = () => {
     const [expandedSummarySessions, setExpandedSummarySessions] = useState<Set<number>>(() => new Set());
 
     // Resume Logic State
-    const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
+    const [pendingSessionCharId, setPendingSessionCharId] = useState<string | null>(null);
 
     // --- NEW: Editing State lifted to here for DB sync ---
     const [dateMessages, setDateMessages] = useState<Message[]>([]);
@@ -176,11 +225,15 @@ const DateApp: React.FC = () => {
     const [isSummaryGenerating, setIsSummaryGenerating] = useState(false);
     const [activeSummaryDraft, setActiveSummaryDraft] = useState<SummaryDraft | null>(null);
     const [pendingAutoSummary, setPendingAutoSummary] = useState<SummaryDraft | null>(null);
+    const [diaryMemoryPreview, setDiaryMemoryPreview] = useState<DateDiaryMemoryPreviewState | null>(null);
+    const [isDiaryMemoryGenerating, setIsDiaryMemoryGenerating] = useState(false);
+    const [isDiaryMemorySaving, setIsDiaryMemorySaving] = useState(false);
     const [showSummarySettings, setShowSummarySettings] = useState(false);
     const [summaryPromptDraft, setSummaryPromptDraft] = useState('');
     const summaryGeneratingRef = useRef(false);
 
     const char = characters.find(c => c.id === activeCharacterId);
+    const pendingChar = pendingSessionCharId ? characters.find(c => c.id === pendingSessionCharId) : null;
     const secondaryApiConfig = getSecondaryApiConfig();
     const canManualSummary = hasCompleteApiConfig(secondaryApiConfig) || hasCompleteApiConfig(apiConfig);
     const canAutoSummary = hasCompleteApiConfig(secondaryApiConfig);
@@ -346,18 +399,19 @@ const DateApp: React.FC = () => {
             const promptSnapshot = char.dateSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
             const prompt = buildSummaryPrompt(char.name, userProfile.name, buildTimeLabel(), targetMessages, promptSnapshot);
 
-            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchDateChatCompletion(selectedApi, {
                     model: selectedApi.model,
                     messages: [
                         { role: 'system', content: '你负责把线下见面记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
                         { role: 'user', content: prompt }
                     ],
                     temperature: 0.45,
-                }),
-            });
+                },
+                summaryType === 'auto' ? '见面自动摘要更新' : '见面手动摘要生成',
+                char.id,
+                undefined,
+                summaryType === 'manual',
+            );
 
             if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
             const data = await safeResponseJson(response);
@@ -452,18 +506,19 @@ ${exitPromptContent}
 - 不要生成新的剧情，不要改写已经发生的事实。
 - 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
 
-            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchDateChatCompletion(selectedApi, {
                     model: selectedApi.model,
                     messages: [
                         { role: 'system', content: '你负责把线下见面的所有记录整理成一份完整的最终总结。只输出总结正文。' },
                         { role: 'user', content: fullPrompt },
                     ],
                     temperature: 0.45,
-                }),
-            });
+                },
+                '见面退出最终摘要',
+                char.id,
+                undefined,
+                true,
+            );
             if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
             const data = await safeResponseJson(response);
             const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
@@ -485,8 +540,8 @@ ${exitPromptContent}
         }
     };
 
-    const saveSummaryDraft = async (draft: SummaryDraft) => {
-        if (!char) return;
+    const saveSummaryRecord = async (draft: SummaryDraft): Promise<number> => {
+        if (!char) return 0;
         // Save summary as pure summary — NO bridge flag in metadata.
         const savedSummaryId = await DB.saveMessage({
             charId: char.id, role: 'system', type: 'text', content: draft.content,
@@ -498,67 +553,231 @@ ${exitPromptContent}
         if (char.dateSummaryAutoHideEnabled) await hideSummarizedDateMessages(draft, savedSummaryId);
         if (draft.summaryType === 'auto') updateCharacter(char.id, { dateSummaryLastAutoMsgId: draft.lastCoveredMsgId });
         if (draft.fromPendingAuto || pendingAutoSummary?.lastCoveredMsgId === draft.lastCoveredMsgId) setPendingAutoSummary(null);
-        setActiveSummaryDraft(null);
         await loadDateMessages();
-        
-        if (draft.injectToVectorMemory) {
-            try {
-                const { getEmbeddingConfig, hasCloudSyncTarget } = await import('../utils/runtimeConfig');
-                const { EmbeddingService } = await import('../utils/embeddingService');
-                const { markVectorMemoryAsPendingSync, markVectorMemoryAsLocalOnly, markVectorMemoryAsSynced } = await import('../utils/vectorMemorySyncState');
-                const { pushMemories } = await import('../utils/backendClient');
+        return savedSummaryId;
+    };
 
-                const embedConfig = getEmbeddingConfig();
-                const embedKey = embedConfig.apiKey;
-                
-                if (!embedKey) {
-                    addToast('无法刻入向量记忆：未配置 Embedding API Key', 'error');
-                } else {
-                    const vector = await EmbeddingService.embed(draft.content, 'VECTOR_MEMORY', embedKey);
-                    const newMemId = crypto.randomUUID();
-                    const newMem = {
-                        id: newMemId,
-                        charId: char.id,
-                        title: '约会记忆总结',
-                        content: draft.content,
-                        vector,
-                        modelId: embedConfig.model,
-                        source: 'import' as const,
-                        importance: 5,
-                        createdAt: Date.now(),
-                        mentionCount: 0,
-                        lastMentioned: 0,
-                        sourceMessageIds: Array.isArray(draft.coveredMsgIds) ? draft.coveredMsgIds.filter(id => typeof id === 'number') as number[] : [],
-                    };
-                    
-                    const isCloud = hasCloudSyncTarget();
-                    const finalMem = isCloud ? markVectorMemoryAsPendingSync(newMem) : markVectorMemoryAsLocalOnly(newMem);
-                    await DB.saveVectorMemory(finalMem);
-                    
-                    if (isCloud) {
-                        pushMemories(char.id, [finalMem]).then(success => {
-                            if (success) {
-                                DB.saveVectorMemory(markVectorMemoryAsSynced(finalMem)).catch(() => {});
-                            }
-                        }).catch(() => {});
-                    }
-                    addToast('已存入永久记忆库', 'success');
-                }
-            } catch (e: any) {
-                console.error('[DateApp] Save vector memory failed', e);
-                addToast('向量记忆写入失败，但总结已保存', 'error');
-            }
-        }
-
+    const finishSummarySave = async (draft: SummaryDraft, diaryMemoryCount = 0) => {
+        const memorySuffix = diaryMemoryCount > 0 ? `，已刻入 ${diaryMemoryCount} 条日记记忆` : '';
         // If this save was triggered from exit flow, create bridge then exit
         if (draft.bridgeOnSave && draft.exitState) {
             const bridged = await createBridgeFromSummary();
-            addToast(bridged ? '总结已同步到主聊天' : '总结已保存', 'success');
+            addToast(bridged ? `总结已同步到主聊天${memorySuffix}` : `总结已保存${memorySuffix}`, 'success');
             finishExitSession(draft.exitState);
         } else {
-            addToast('总结已保存', 'success');
+            addToast(`总结已保存${memorySuffix}`, 'success');
             if (draft.exitState) finishExitSession(draft.exitState);
         }
+    };
+
+    const prepareDiaryMemoryPreview = async (draft: SummaryDraft) => {
+        if (!char || isDiaryMemoryGenerating) return;
+        const secondaryConfig = getSecondaryApiConfig();
+        const selectedApi = hasCompleteApiConfig(secondaryConfig) ? secondaryConfig : apiConfig;
+        if (!hasCompleteApiConfig(selectedApi)) {
+            addToast('请先配置主 API 或副 API 来生成日记记忆', 'error');
+            return;
+        }
+
+        setIsDiaryMemoryGenerating(true);
+        try {
+            const prompt = buildDateDiaryMemoryPrompt(char.name, userProfile.name, buildTimeLabel(), draft.content);
+            const response = await fetchDateChatCompletion(selectedApi, {
+                    model: selectedApi.model,
+                    messages: [
+                        { role: 'system', content: '你负责把线下见面总结拆成角色第一人称的长期日记记忆。只输出 JSON 数组。' },
+                        { role: 'user', content: prompt },
+                    ],
+                    temperature: 0.5,
+                    max_tokens: 3500,
+                },
+                '见面日记记忆预览',
+                char.id,
+                undefined,
+                true,
+            );
+
+            if (!response.ok) throw new Error(`Diary Memory API Error: ${response.status}`);
+            const data = await safeResponseJson(response);
+            const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
+            const entries = parseDateDiaryMemoryResponse(extracted.content);
+            if (entries.length === 0) throw new Error('日记记忆内容为空或无法解析');
+
+            setDiaryMemoryPreview({
+                summaryDraft: draft,
+                entries: entries.map(entry => createDiaryMemoryPreviewEntry(entry)),
+            });
+            setActiveSummaryDraft(null);
+        } catch (e: any) {
+            console.error('[DateApp] Generate diary memory preview failed', e);
+            addToast(`日记记忆生成失败: ${e.message || e}`, 'error');
+        } finally {
+            setIsDiaryMemoryGenerating(false);
+        }
+    };
+
+    const saveDateDiaryVectorMemories = async (
+        entries: DateDiaryMemoryPreviewEntry[],
+        draft: SummaryDraft,
+    ): Promise<number> => {
+        if (!char) return 0;
+        const validEntries = entries
+            .map(entry => ({
+                ...entry,
+                title: entry.title.trim(),
+                content: entry.content.trim(),
+                emotionalJourney: entry.emotionalJourney?.trim() || undefined,
+                importance: Number.isFinite(entry.importance)
+                    ? Math.min(10, Math.max(1, Math.round(entry.importance)))
+                    : 5,
+            }))
+            .filter(entry => entry.title && entry.content);
+        if (validEntries.length === 0) return 0;
+
+        const { getEmbeddingConfig, hasCloudSyncTarget } = await import('../utils/runtimeConfig');
+        const { EmbeddingService } = await import('../utils/embeddingService');
+        const { markVectorMemoryAsPendingSync, markVectorMemoryAsLocalOnly, markVectorMemoryAsSynced } = await import('../utils/vectorMemorySyncState');
+        const { pushMemories } = await import('../utils/backendClient');
+
+        const embedConfig = getEmbeddingConfig();
+        const embedKey = embedConfig.apiKey;
+        if (!embedKey) throw new Error('未配置 Embedding API Key');
+
+        const textsToEmbed = validEntries.map(entry => {
+            const renderedContent = renderDateDiaryMemoryTemplate(entry.content, char.name, userProfile.name);
+            const renderedEmotion = entry.emotionalJourney
+                ? renderDateDiaryMemoryTemplate(entry.emotionalJourney, char.name, userProfile.name)
+                : '';
+            return `${entry.title}: ${renderedContent}${renderedEmotion ? `\n当时的感受: ${renderedEmotion}` : ''}`;
+        });
+        const vectors = await EmbeddingService.embedBatch(textsToEmbed, 'VECTOR_MEMORY', embedKey);
+        if (vectors.length !== validEntries.length) throw new Error('Embedding 返回数量不一致');
+
+        const sourceMessageIds = Array.isArray(draft.coveredMsgIds)
+            ? draft.coveredMsgIds.filter((id): id is number => typeof id === 'number')
+            : [];
+        const createdAt = Date.now();
+        const memories = validEntries.map((entry, index) => ({
+            id: `vmem-date-${createdAt}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+            charId: char.id,
+            title: entry.title,
+            content: entry.content,
+            emotionalJourney: entry.emotionalJourney,
+            vector: vectors[index],
+            modelId: embedConfig.model,
+            source: 'manual' as const,
+            importance: entry.importance,
+            createdAt: createdAt + index,
+            mentionCount: 0,
+            lastMentioned: 0,
+            sourceMessageIds,
+        }));
+
+        const isCloud = hasCloudSyncTarget();
+        const finalMemories = memories.map(memory => (
+            isCloud ? markVectorMemoryAsPendingSync(memory) : markVectorMemoryAsLocalOnly(memory)
+        ));
+        await Promise.all(finalMemories.map(memory => DB.saveVectorMemory(memory)));
+
+        if (isCloud) {
+            pushMemories(char.id, finalMemories).then(success => {
+                if (!success) return;
+                finalMemories.forEach(memory => {
+                    DB.saveVectorMemory(markVectorMemoryAsSynced(memory)).catch(() => {});
+                });
+            }).catch(() => {});
+        }
+
+        return finalMemories.length;
+    };
+
+    const saveSummaryDraft = async (draft: SummaryDraft) => {
+        if (!char) return;
+        if (draft.injectToVectorMemory) {
+            await prepareDiaryMemoryPreview(draft);
+            return;
+        }
+
+        const savedSummaryId = await saveSummaryRecord(draft);
+        if (savedSummaryId) {
+            setActiveSummaryDraft(null);
+            await finishSummarySave(draft);
+        }
+    };
+
+    const saveDiaryMemoryPreview = async () => {
+        if (!diaryMemoryPreview || !char || isDiaryMemorySaving) return;
+        const validEntries = diaryMemoryPreview.entries.filter(entry => entry.title.trim() && entry.content.trim());
+        if (validEntries.length === 0) {
+            addToast('至少保留一条日记记忆，或选择跳过记忆保存', 'info');
+            return;
+        }
+
+        setIsDiaryMemorySaving(true);
+        try {
+            const summaryDraft = { ...diaryMemoryPreview.summaryDraft, injectToVectorMemory: false };
+            const diaryMemoryCount = await saveDateDiaryVectorMemories(validEntries, summaryDraft);
+            const savedSummaryId = await saveSummaryRecord(summaryDraft);
+            if (savedSummaryId) {
+                setDiaryMemoryPreview(null);
+                setActiveSummaryDraft(null);
+                await finishSummarySave(summaryDraft, diaryMemoryCount);
+            }
+        } catch (e: any) {
+            console.error('[DateApp] Save diary memory preview failed', e);
+            addToast(`日记记忆写入失败: ${e.message || e}`, 'error');
+        } finally {
+            setIsDiaryMemorySaving(false);
+        }
+    };
+
+    const skipDiaryMemoryPreview = async () => {
+        if (!diaryMemoryPreview || isDiaryMemorySaving) return;
+        setIsDiaryMemorySaving(true);
+        try {
+            const summaryDraft = { ...diaryMemoryPreview.summaryDraft, injectToVectorMemory: false };
+            const savedSummaryId = await saveSummaryRecord(summaryDraft);
+            if (savedSummaryId) {
+                setDiaryMemoryPreview(null);
+                setActiveSummaryDraft(null);
+                await finishSummarySave(summaryDraft);
+            }
+        } catch (e: any) {
+            console.error('[DateApp] Save summary without diary memory failed', e);
+            addToast(`总结保存失败: ${e.message || e}`, 'error');
+        } finally {
+            setIsDiaryMemorySaving(false);
+        }
+    };
+
+    const returnToSummaryFromDiaryPreview = () => {
+        if (!diaryMemoryPreview || isDiaryMemorySaving) return;
+        setActiveSummaryDraft(diaryMemoryPreview.summaryDraft);
+        setDiaryMemoryPreview(null);
+    };
+
+    const updateDiaryMemoryPreviewEntry = (
+        id: string,
+        updates: Partial<Omit<DateDiaryMemoryPreviewEntry, 'id'>>,
+    ) => {
+        setDiaryMemoryPreview(current => current ? {
+            ...current,
+            entries: current.entries.map(entry => entry.id === id ? { ...entry, ...updates } : entry),
+        } : current);
+    };
+
+    const removeDiaryMemoryPreviewEntry = (id: string) => {
+        setDiaryMemoryPreview(current => current ? {
+            ...current,
+            entries: current.entries.filter(entry => entry.id !== id),
+        } : current);
+    };
+
+    const addDiaryMemoryPreviewEntry = () => {
+        setDiaryMemoryPreview(current => current ? {
+            ...current,
+            entries: [...current.entries, createDiaryMemoryPreviewEntry()],
+        } : current);
     };
 
     const closeSummaryModal = () => {
@@ -726,7 +945,9 @@ ${exitPromptContent}
 
     const renderSummaryModal = () => {
         if (!activeSummaryDraft) return null;
-        const saveLabel = activeSummaryDraft.exitState ? '保存并退出' : '保存';
+        const saveLabel = activeSummaryDraft.injectToVectorMemory
+            ? '生成日记预览'
+            : activeSummaryDraft.bridgeOnSave ? '保存并同步' : activeSummaryDraft.exitState ? '保存并退出' : '保存';
         return (
             <Modal
                 isOpen={!!activeSummaryDraft}
@@ -741,14 +962,37 @@ ${exitPromptContent}
                             复制
                         </button>
                         <button onClick={discardSummaryDraft} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold">丢弃</button>
-                        <button onClick={() => saveSummaryDraft(activeSummaryDraft)} className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl">{saveLabel}</button>
+                        <button
+                            disabled={!activeSummaryDraft.content.trim() || isDiaryMemoryGenerating}
+                            onClick={() => saveSummaryDraft(activeSummaryDraft)}
+                            className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50"
+                        >
+                            {isDiaryMemoryGenerating ? '生成日记...' : saveLabel}
+                        </button>
                     </>
                 }
             >
                 <div className="flex flex-col gap-4">
-                    <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
-                        {renderMarkdown(activeSummaryDraft.content)}
+                    <div>
+                        <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-slate-400">
+                            <span>总结正文</span>
+                            <span>{activeSummaryDraft.content.trim().length} 字</span>
+                        </div>
+                        <textarea
+                            value={activeSummaryDraft.content}
+                            onChange={e => setActiveSummaryDraft(current => current ? { ...current, content: e.target.value } : current)}
+                            rows={10}
+                            className="w-full resize-y rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
+                        />
                     </div>
+                    {activeSummaryDraft.content.trim() && (
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">排版预览</div>
+                            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+                                {renderMarkdown(activeSummaryDraft.content)}
+                            </div>
+                        </div>
+                    )}
                     {activeSummaryDraft.summaryType === 'manual' && activeSummaryDraft.bridgeOnSave && (
                         <label className="flex items-center gap-2 mt-4 cursor-pointer p-3 bg-slate-50 rounded-xl border border-slate-200 transition-colors hover:bg-slate-100">
                             <input 
@@ -757,9 +1001,114 @@ ${exitPromptContent}
                                 checked={activeSummaryDraft.injectToVectorMemory || false} 
                                 onChange={e => setActiveSummaryDraft({ ...activeSummaryDraft, injectToVectorMemory: e.target.checked })} 
                             />
-                            <span className="text-sm font-medium text-slate-700">将此段总结刻入永久向量记忆库 (Vector Memory)</span>
+                            <span className="text-sm font-medium text-slate-700">提取角色日记碎片，确认后刻入永久向量记忆库</span>
                         </label>
                     )}
+                </div>
+            </Modal>
+        );
+    };
+
+    const renderDiaryMemoryPreviewModal = () => {
+        if (!diaryMemoryPreview) return null;
+        const validCount = diaryMemoryPreview.entries.filter(entry => entry.title.trim() && entry.content.trim()).length;
+        return (
+            <Modal
+                isOpen={!!diaryMemoryPreview}
+                title="日记记忆预览"
+                onClose={returnToSummaryFromDiaryPreview}
+                footer={
+                    <>
+                        <button
+                            disabled={isDiaryMemorySaving}
+                            onClick={returnToSummaryFromDiaryPreview}
+                            className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-500 font-bold disabled:opacity-50"
+                        >
+                            返回总结
+                        </button>
+                        <button
+                            disabled={isDiaryMemorySaving}
+                            onClick={skipDiaryMemoryPreview}
+                            className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold disabled:opacity-50"
+                        >
+                            跳过记忆
+                        </button>
+                        <button
+                            disabled={isDiaryMemorySaving || validCount === 0}
+                            onClick={saveDiaryMemoryPreview}
+                            className="flex-1 py-3 bg-emerald-500 text-white font-bold rounded-2xl disabled:opacity-50"
+                        >
+                            {isDiaryMemorySaving ? '写入中...' : `写入 ${validCount} 条`}
+                        </button>
+                    </>
+                }
+            >
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs leading-relaxed text-slate-400">这些碎片会单独向量化。正文保留字面量 <span className="font-mono text-slate-500">{'{userName}'}</span> / <span className="font-mono text-slate-500">{'{charName}'}</span>，召回注入时再替换成当前名字。</p>
+                        <button
+                            type="button"
+                            disabled={isDiaryMemorySaving}
+                            onClick={addDiaryMemoryPreviewEntry}
+                            className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-500 active:scale-95 disabled:opacity-50"
+                        >
+                            新增
+                        </button>
+                    </div>
+                    <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
+                        {diaryMemoryPreview.entries.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-400">
+                                暂无日记碎片，可以新增一条，或跳过记忆保存。
+                            </div>
+                        ) : diaryMemoryPreview.entries.map((entry, index) => (
+                            <div key={entry.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">碎片 {index + 1}</span>
+                                    <button
+                                        type="button"
+                                        disabled={isDiaryMemorySaving}
+                                        onClick={() => removeDiaryMemoryPreviewEntry(entry.id)}
+                                        className="rounded-full bg-white px-2 py-1 text-[11px] font-bold text-red-400 disabled:opacity-50"
+                                    >
+                                        删除
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-[1fr_72px] gap-2">
+                                    <input
+                                        value={entry.title}
+                                        disabled={isDiaryMemorySaving}
+                                        onChange={e => updateDiaryMemoryPreviewEntry(entry.id, { title: e.target.value })}
+                                        placeholder="标题"
+                                        className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 disabled:opacity-60"
+                                    />
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={10}
+                                        value={entry.importance}
+                                        disabled={isDiaryMemorySaving}
+                                        onChange={e => updateDiaryMemoryPreviewEntry(entry.id, { importance: parseDiaryMemoryImportance(e.target.value) })}
+                                        className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-center text-xs font-bold text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 disabled:opacity-60"
+                                    />
+                                </div>
+                                <textarea
+                                    value={entry.content}
+                                    disabled={isDiaryMemorySaving}
+                                    onChange={e => updateDiaryMemoryPreviewEntry(entry.id, { content: e.target.value })}
+                                    rows={5}
+                                    placeholder="我记得 {userName} ..."
+                                    className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 disabled:opacity-60"
+                                />
+                                <input
+                                    value={entry.emotionalJourney || ''}
+                                    disabled={isDiaryMemorySaving}
+                                    onChange={e => updateDiaryMemoryPreviewEntry(entry.id, { emotionalJourney: e.target.value })}
+                                    placeholder="当时的感受，例如：舍不得、克制、心动"
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100 disabled:opacity-60"
+                                />
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </Modal>
         );
@@ -824,25 +1173,36 @@ ${exitPromptContent}
     // --- Resume / Start Logic ---
     const handleCharClick = (c: CharacterProfile) => {
         if (c.savedDateState) {
-            setPendingSessionChar(c);
+            setPendingSessionCharId(c.id);
         } else {
             startPeek(c);
         }
     };
 
     const handleResumeSession = () => {
-        if (!pendingSessionChar) return;
-        setActiveCharacterId(pendingSessionChar.id);
+        if (!pendingSessionCharId) return;
+        const c = characters.find(ch => ch.id === pendingSessionCharId);
+        if (!c || !c.savedDateState) {
+            addToast('存档已丢失', 'error');
+            setPendingSessionCharId(null);
+            return;
+        }
+        setActiveCharacterId(c.id);
         setMode('session');
-        setPendingSessionChar(null);
+        setPendingSessionCharId(null);
         addToast('已恢复上次进度', 'success');
     };
 
     const handleStartNewSession = () => {
-        if (!pendingSessionChar) return;
-        updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
-        startPeek(pendingSessionChar);
-        setPendingSessionChar(null);
+        if (!pendingSessionCharId) return;
+        const c = characters.find(ch => ch.id === pendingSessionCharId);
+        if (!c) {
+            setPendingSessionCharId(null);
+            return;
+        }
+        updateCharacter(c.id, { savedDateState: undefined });
+        startPeek(c);
+        setPendingSessionCharId(null);
     };
 
     // --- 关键修复: 进入 Session 时立即归档开场白 ---
@@ -916,18 +1276,19 @@ ${exitPromptContent}
 2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据之前的聊天状态决定。'}
 3. **描写风格**: 电影感，沉浸式，细节丰富。不要输出任何前缀，直接输出描写内容。`;
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchDateChatCompletion(apiConfig, {
                     model: apiConfig.model,
                     messages: [
                         { role: "system", content: peekSystemPrompt },
                         { role: "user", content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` }
                     ],
                     temperature: 0.85
-                })
-            });
+                },
+                '见面入场前状态感知',
+                c.id,
+                undefined,
+                true,
+            );
 
             if (!response.ok) throw new Error('Failed to sense presence');
             const data = await safeResponseJson(response);
@@ -948,7 +1309,7 @@ ${exitPromptContent}
         if (!char) throw new Error("No char");
 
         // 1. Save User Msg
-        await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
+        const userMessageId = await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
 
         // 2. Prepare Context
         // Re-fetch messages. Since we saved the opening in handleEnterSession, 
@@ -982,26 +1343,28 @@ ${exitPromptContent}
         systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, undefined, char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPov, charPov);
 
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
+        const response = await fetchDateChatCompletion(apiConfig, {
                 model: apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
                     { role: 'user', content: `${text}\n\n(System Note: 严格遵守沉浸剧场格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签。叙述人称严格遵守当前视角设定。${directorHint ? `\n<director_note>${directorHint}</director_note>` : ''}${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。规则：
-• 只有${char.name}的「台词/说的话」用${dateTranslateSourceLang}写，并用 <翻译><原文>[emotion] ${dateTranslateSourceLang}台词</原文><译文>${dateTranslateTargetLang}译文</译文></翻译> 包裹。
+• 每一行仍然必须以 [emotion] 开头，<翻译> 标签只能出现在 [emotion] 后面，不能放在行首。
+• 只有${char.name}的「台词/说的话」用${dateTranslateSourceLang}写，并写成 [emotion]<翻译><原文>${dateTranslateSourceLang}台词</原文><译文>${dateTranslateTargetLang}译文</译文></翻译>。
 • 叙述、动作描写、心理活动、环境描写 → 保持中文不变，不用 <翻译> 标签。
-• 译文不需要 [emotion] 标签。
+• <原文> 和 <译文> 内不要再写 [emotion] 标签。
 示例：
-<翻译><原文>[happy] 「おはよう！今日はいい天気だね」</原文><译文>「早上好！今天天气真好呢」</译文></翻译>
-[shy] 她的脸颂微微泛红，视线移向了窗外。]` : ''})` }
+[happy]<翻译><原文>「おはよう！今日はいい天気だね」</原文><译文>「早上好！今天天气真好呢」</译文></翻译>
+[shy] 她的脸颊微微泛红，视线移向了窗外。]` : ''})` }
                 ],
                 temperature: char.dateTemperature ?? 0.85,
                 max_tokens: 8192,
-            })
-        });
+            },
+            directorHint ? '见面导演提示回复' : '见面聊天回复',
+            char.id,
+            userMessageId,
+            true,
+        );
 
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
@@ -1030,10 +1393,8 @@ ${exitPromptContent}
         const lastMsg = dateMessages[dateMessages.length - 1];
         if (lastMsg.role !== 'assistant') throw new Error("Cannot reroll user message");
 
-        // 1. Delete last AI message
-        await DB.deleteMessage(lastMsg.id);
-
-        // 2. Find the user input that triggered it
+        // 1. Find the user input that triggered it
+        // Note: filter out the last AI msg from context without deleting it yet.
         const allMsgs = await DB.getMessagesByCharId(char.id);
         const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id && isDateModeContextMessage(m));
         const validDateMsgs = validMsgs.filter(isDateDialogueMessage).sort((a, b) => a.timestamp - b.timestamp);
@@ -1041,7 +1402,7 @@ ${exitPromptContent}
 
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
 
-        // 3. Call API logic
+        // 2. Call API logic
         const limit = char.contextLimit || 500;
         const historyMsgs = validMsgs.slice(-limit, -1).map(m => ({
             role: m.role,
@@ -1059,20 +1420,21 @@ ${exitPromptContent}
         systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotionsR, userPovR, charPovR, undefined, char.dateOutputWordCount, char.dateWritingStyle);
         systemPrompt += buildDateTail(char.name, userProfile.name, userPovR, charPovR);
 
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
+        const response = await fetchDateChatCompletion(apiConfig, {
                 model: apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     ...historyMsgs,
-                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。只有${char.name}的台词用${dateTranslateSourceLang}写并用 <翻译><原文>...<译文>...</翻译> 包裹；叙述/动作/心理描写保持中文不变。]` : ''})` }
+                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写。严格遵守沉浸剧场格式、当前叙述人称。${dateTranslationEnabled ? `\n[Reminder: 双语模式已开启。每一行仍必须以 [emotion] 开头。只有${char.name}的台词用${dateTranslateSourceLang}写成 [emotion]<翻译><原文>...</原文><译文>...</译文></翻译>；叙述/动作/心理描写保持中文不变，不用 <翻译>。]` : ''})` }
                 ],
                 temperature: Math.min((char.dateTemperature ?? 0.85) + 0.05, 2.0),
                 max_tokens: 8192,
-            })
-        });
+            },
+            '见面回复重掷',
+            char.id,
+            lastUserMsg.id,
+            true,
+        );
 
         if (!response.ok) throw new Error('API Error');
         const data = await safeResponseJson(response);
@@ -1085,6 +1447,9 @@ ${exitPromptContent}
         // Save AI Response — DB stores only 原文 (translation stripped), return raw for real-time rendering
         const contentForDbR = stripTranslationTags(content);
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: contentForDbR, metadata: { source: 'date', thinking: extracted.thinking } });
+
+        // 3. Now safely delete the old AI message since the new one is saved
+        await DB.deleteMessage(lastMsg.id);
 
         // Sync
         const freshMsgs = await DB.getMessagesByCharId(char.id);
@@ -1179,8 +1544,8 @@ ${exitPromptContent}
                         </div>
                     ))}
                 </div>
-                <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => setPendingSessionChar(null)} footer={<div className="flex gap-3 w-full"><button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button><button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button></div>}>
-                    <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br /><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span></div>
+                <Modal isOpen={!!pendingSessionCharId} title="发现进度" onClose={() => setPendingSessionCharId(null)} footer={<div className="flex gap-3 w-full"><button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button><button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button></div>}>
+                    <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingChar?.name} 有未结束的见面。<br /><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingChar?.savedDateState?.timestamp ? new Date(pendingChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span></div>
                 </Modal>
             </div>
         );
@@ -1362,6 +1727,7 @@ ${exitPromptContent}
                     <textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" />
                 </Modal>
                 {renderSummaryModal()}
+                {renderDiaryMemoryPreviewModal()}
                 {renderSummarySettingsModal()}
             </>
         );

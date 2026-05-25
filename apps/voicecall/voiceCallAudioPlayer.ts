@@ -129,6 +129,10 @@ export class VoiceCallAudioPlayer {
         return this.state === 'playing' || this.state === 'gap_waiting' || this.state === 'waiting_next';
     }
 
+    get isAudiblyPlaying(): boolean {
+        return this.state === 'playing';
+    }
+
     constructor(options: VoiceCallAudioPlayerOptions = {}) {
         this.sampleRate = options.sampleRate ?? 24000;
         this.gapMs = options.gapMs ?? 1800;

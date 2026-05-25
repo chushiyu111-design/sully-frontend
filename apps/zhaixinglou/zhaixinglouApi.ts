@@ -35,6 +35,11 @@ export async function fetchSecondaryApi(
             'Authorization': `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
+    }, 2, {
+        feature: 'loveshow',
+        reason: '摘星楼内容生成',
+        model: config.model,
+        userInitiated: true,
     });
 
     return extractContent(data);
@@ -99,6 +104,11 @@ export async function testSecondaryConnection(config: SecondaryAPIConfig): Promi
             messages: [{ role: 'user', content: 'Hi' }],
             max_tokens: 5,
         }),
+    }, 2, {
+        feature: 'loveshow',
+        reason: '摘星楼 API 连接测试',
+        model: config.model,
+        userInitiated: true,
     });
 
     const content = extractContent(data);

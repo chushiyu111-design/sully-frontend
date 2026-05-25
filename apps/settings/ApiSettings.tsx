@@ -21,6 +21,7 @@ const ApiSettings: React.FC = () => {
     const [localModel, setLocalModel] = useState(apiConfig.model);
     const [localTemperature, setLocalTemperature] = useState(getConfigTemperature(apiConfig.temperature));
     const [localDisablePrefill, setLocalDisablePrefill] = useState(apiConfig.disablePrefill || false);
+    const [localStreamChat, setLocalStreamChat] = useState(apiConfig.streamChat || false);
     const [localDeepSeekMode, setLocalDeepSeekMode] = useState(apiConfig.useDeepSeekMode || false);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -36,6 +37,7 @@ const ApiSettings: React.FC = () => {
         setLocalModel(apiConfig.model);
         setLocalTemperature(getConfigTemperature(apiConfig.temperature));
         setLocalDisablePrefill(apiConfig.disablePrefill || false);
+        setLocalStreamChat(apiConfig.streamChat || false);
         setLocalDeepSeekMode(apiConfig.useDeepSeekMode || false);
     }, [apiConfig]);
 
@@ -45,20 +47,21 @@ const ApiSettings: React.FC = () => {
         setLocalModel(preset.config.model);
         setLocalTemperature(getConfigTemperature(preset.config.temperature));
         setLocalDisablePrefill(preset.config.disablePrefill || false);
+        setLocalStreamChat(preset.config.streamChat || false);
         setLocalDeepSeekMode(preset.config.useDeepSeekMode || false);
         addToast(`已加载配置: ${preset.name}`, 'info');
     };
 
     const handleSavePreset = () => {
         if (!newPresetName.trim()) { addToast('请输入预设名称', 'error'); return; }
-        addApiPreset(newPresetName, { baseUrl: localUrl, apiKey: localKey, model: localModel, temperature: localTemperature, disablePrefill: localDisablePrefill, useDeepSeekMode: localDeepSeekMode });
+        addApiPreset(newPresetName, { baseUrl: localUrl, apiKey: localKey, model: localModel, temperature: localTemperature, disablePrefill: localDisablePrefill, streamChat: localStreamChat, useDeepSeekMode: localDeepSeekMode });
         setNewPresetName('');
         setShowPresetModal(false);
         addToast('预设已保存', 'success');
     };
 
     const handleSaveApi = () => {
-        updateApiConfig({ apiKey: localKey, baseUrl: localUrl, model: localModel, temperature: localTemperature, disablePrefill: localDisablePrefill, useDeepSeekMode: localDeepSeekMode });
+        updateApiConfig({ apiKey: localKey, baseUrl: localUrl, model: localModel, temperature: localTemperature, disablePrefill: localDisablePrefill, streamChat: localStreamChat, useDeepSeekMode: localDeepSeekMode });
         setStatusMsg('配置已保存');
         setTimeout(() => setStatusMsg(''), 2000);
         setTestConnectionStatus('idle');
@@ -164,6 +167,14 @@ const ApiSettings: React.FC = () => {
                         <label htmlFor="disablePrefill" className="text-xs font-semibold text-slate-600 flex-1 cursor-pointer">
                             关闭助手预填充 (Disable Prefill)
                             <span className="block text-[10px] font-normal text-slate-400 mt-0.5">如果中转站报错 400 且频繁吞字数扣费，请务必勾选此项。官方接口无需勾选。</span>
+                        </label>
+                    </div>
+
+                    <div className="group flex items-center gap-3 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3">
+                        <input type="checkbox" id="streamChat" checked={localStreamChat} onChange={(e) => setLocalStreamChat(e.target.checked)} className="w-4 h-4 text-primary bg-slate-100 border-slate-300 rounded focus:ring-primary" />
+                        <label htmlFor="streamChat" className="text-xs font-semibold text-slate-600 flex-1 cursor-pointer">
+                            流式收消息（实验）
+                            <span className="block text-[10px] font-normal text-slate-400 mt-0.5">开启后会先显示实时预览，结束后再按原有气泡、表情、语音、卡片逻辑入库；不兼容时自动退回普通模式。</span>
                         </label>
                     </div>
 

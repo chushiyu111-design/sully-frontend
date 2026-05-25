@@ -13,6 +13,7 @@ import { MinimaxTts,TtsSynthesisStatus } from '../utils/minimaxTts';
 import { TtsConfig } from '../types/tts';
 import { DB } from '../utils/db';
 import { toCharacterVoiceIdError } from '../utils/characterTts';
+import type { ApiRequestTraceMeta } from '../utils/apiRequestLedger';
 
 export interface VoiceTtsState {
     /** 当前正在播放的消息 ID */
@@ -125,7 +126,8 @@ export function useVoiceTts() {
         msgId: number,
         text: string,
         ttsConfig: TtsConfig,
-        onStatus?: (status: TtsSynthesisStatus, message: string) => void
+        onStatus?: (status: TtsSynthesisStatus, message: string) => void,
+        trace?: ApiRequestTraceMeta,
     ): Promise<{ duration: number } | null> => {
         // Mark as loading immediately (before queuing) so the UI spinner appears at once
         setLoadingMsgIds(prev => {
@@ -146,7 +148,11 @@ export function useVoiceTts() {
             if (controller.signal.aborted) return null;
 
             try {
-                const result = await MinimaxTts.synthesizeSync(text, ttsConfig, onStatus, controller.signal);
+                const result = await MinimaxTts.synthesizeSync(text, ttsConfig, onStatus, controller.signal, {
+                    ...trace,
+                    feature: 'tts',
+                    messageId: trace?.messageId ?? msgId,
+                });
                 if (!result || !result.blob) return null;
 
                 await DB.saveVoiceAudio(msgId, result.blob);

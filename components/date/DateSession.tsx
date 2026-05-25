@@ -7,6 +7,13 @@ import { useOS } from '../../context/OSContext';
 import DateSettings from './DateSettings';
 import SummaryFloatingBall from './SummaryFloatingBall';
 
+const isAppleMobileWebKit = () => {
+    if (typeof navigator === 'undefined') return false;
+    const platform = navigator.platform || '';
+    const ua = navigator.userAgent || '';
+    return /iP(ad|hone|od)/.test(ua) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
+
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
     const l = line.trim().toLowerCase();
@@ -223,6 +230,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const touchStartRef = useRef<{x: number, y: number} | null>(null);
     const novelScrollRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const isResumedRef = useRef(false);
 
     // Back Handler
     useEffect(() => {
@@ -257,12 +266,13 @@ const DateSession: React.FC<DateSessionProps> = ({
     useEffect(() => {
         if (initialState) {
             // Resume
-            setBgImage(initialState.bgImage);
-            setCurrentSprite(initialState.currentSprite);
-            setCurrentText(initialState.currentText);
-            setDisplayedText(initialState.currentText);
-            setDialogueQueue(initialState.dialogueQueue);
-            setDialogueBatch(initialState.dialogueBatch);
+            isResumedRef.current = true;
+            setBgImage(initialState.bgImage || '');
+            setCurrentSprite(initialState.currentSprite || '');
+            setCurrentText(initialState.currentText || '');
+            setDisplayedText(initialState.currentText || '');
+            setDialogueQueue(initialState.dialogueQueue || []);
+            setDialogueBatch(initialState.dialogueBatch || []);
             setIsNovelMode(initialState.isNovelMode);
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
@@ -301,7 +311,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Sprite & Config Sync (If user goes to settings and comes back, this helps)
     useEffect(() => {
         if (char.spriteConfig) setSpriteConfig(char.spriteConfig);
-        if (char.dateBackground) setBgImage(char.dateBackground);
+        if (char.dateBackground && !isResumedRef.current) setBgImage(char.dateBackground);
     }, [char]);
 
     // Novel Mode Scroll
@@ -310,6 +320,12 @@ const DateSession: React.FC<DateSessionProps> = ({
             novelScrollRef.current.scrollTop = novelScrollRef.current.scrollHeight;
         }
     }, [sessionMessages.length, isNovelMode, showInputBox]);
+
+    useEffect(() => {
+        if (!showInputBox || isTyping || isAppleMobileWebKit()) return;
+        const id = window.setTimeout(() => inputRef.current?.focus(), 0);
+        return () => window.clearTimeout(id);
+    }, [showInputBox, isTyping]);
 
     // Typewriter effect
     useEffect(() => {
@@ -379,13 +395,13 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
 
         // Next item
-        if (dialogueQueue.length > 0) {
-            processNextDialogue(dialogueQueue[0], dialogueQueue.slice(1));
+        if ((dialogueQueue || []).length > 0) {
+            processNextDialogue(dialogueQueue![0], dialogueQueue!.slice(1));
             return;
         }
 
         // Loop
-        if (dialogueBatch.length > 0) {
+        if ((dialogueBatch || []).length > 0) {
             // Replay
             addToast('↺ 重播对话', 'info');
             processNextDialogue(dialogueBatch[0], dialogueBatch.slice(1));
@@ -500,8 +516,8 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     const handleExitClick = (syncMode: DateExitSyncMode) => {
         const currentState: DateState = {
-            dialogueQueue,
-            dialogueBatch,
+            dialogueQueue: dialogueQueue || [],
+            dialogueBatch: dialogueBatch || [],
             currentText,
             bgImage,
             currentSprite,
@@ -556,6 +572,7 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // Determine if we can reroll (last message is assistant)
     const canReroll = messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+    const transientUiActive = showInputBox || isTyping;
 
     return (
         <div className="h-full w-full relative bg-black overflow-hidden font-sans select-none" onClick={handleScreenClick}>
@@ -684,7 +701,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                     {!isTyping && (
                         <div className="absolute inset-x-0 bottom-8 z-30 flex flex-col items-center gap-3">
                             {/* VN Dialogue Box */}
-                            <div className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer">
+                            <div className={`w-[90%] max-w-lg rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer ${transientUiActive ? 'bg-black/70' : 'bg-black/60 backdrop-blur-xl'}`}>
                                 <div className="absolute -top-3 left-6"><div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div></div>
                                 <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {/* Translation subtitle — fades in after typewriter finishes */}
@@ -693,12 +710,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                                         {currentTranslation}
                                     </p>
                                 )}
-                                {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
-                                {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && !whispersVisible && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
+                                {!isTextAnimating && (dialogueQueue || []).length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
+                                {!isTextAnimating && (dialogueQueue || []).length === 0 && (dialogueBatch || []).length > 0 && !whispersVisible && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}
                             </div>
 
                             {/* Inner Whispers — Glassmorphism floating options */}
-                            {whispersVisible && activeWhispers.length > 0 && !isTextAnimating && dialogueQueue.length === 0 && (
+                            {whispersVisible && activeWhispers.length > 0 && !isTextAnimating && (dialogueQueue || []).length === 0 && (
                                 <div className="w-[90%] max-w-lg flex flex-col gap-2 pointer-events-auto">
                                     {activeWhispers.map((w, i) => (
                                         <button
@@ -747,15 +764,15 @@ const DateSession: React.FC<DateSessionProps> = ({
             <div className={`absolute inset-x-0 bottom-0 z-40 flex justify-center pointer-events-none transition-all duration-300 ${isTyping || showInputBox ? 'opacity-100' : 'opacity-0'}`}>
                 {isTyping && (
                     <div className="absolute bottom-1/2 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-auto">
-                        <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
+                        <div className="bg-black/85 px-6 py-3 rounded-full border border-white/20 shadow-2xl animate-pulse flex items-center gap-3">
                              <div className="flex gap-1.5"><div className="w-2 h-2 bg-white rounded-full animate-bounce"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-75"></div><div className="w-2 h-2 bg-white rounded-full animate-bounce delay-150"></div></div>
                              <span className="text-xs text-white font-bold tracking-widest uppercase">Typing...</span>
                         </div>
                     </div>
                 )}
                 {showInputBox && (
-                    <div className={`w-[90%] max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
-                        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
+                    <div className={`w-[90%] max-w-lg rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-black/70 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
+                        <textarea ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} />
                         <button onClick={() => handleSend()} disabled={!input.trim() || isTyping} className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center">SEND</button>
                     </div>
                 )}

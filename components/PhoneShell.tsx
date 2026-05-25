@@ -10,7 +10,7 @@ import AppSplashScreen from './os/AppSplashScreen';
 import Launcher from '../apps/Launcher';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
-import { StatusBar as CapStatusBar,Style as StatusBarStyle } from '@capacitor/status-bar';
+import { StatusBar as CapStatusBar,Style as StatusBarStyle,Animation as StatusBarAnimation } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { requestSystemFullscreen } from '../utils/systemFullscreen';
@@ -394,13 +394,26 @@ const PhoneShell: React.FC = () => {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     const init = async () => {
+      const platform = Capacitor.getPlatform();
       try {
-        await CapStatusBar.setOverlaysWebView({ overlay: true });
-        await CapStatusBar.hide();
         await CapStatusBar.setStyle({ style: StatusBarStyle.Dark });
+
+        if (platform === 'android') {
+          await CapStatusBar.setOverlaysWebView({ overlay: true });
+          await CapStatusBar.hide();
+        } else if (platform === 'ios') {
+          await CapStatusBar.hide({ animation: StatusBarAnimation.None });
+        } else {
+          await CapStatusBar.hide();
+        }
+      } catch (e) {
+        console.error('Native status bar init failed', e);
+      }
+
+      try {
         const permStatus = await LocalNotifications.checkPermissions();
         if (permStatus.display !== 'granted') await LocalNotifications.requestPermissions();
-      } catch (e) { console.error('Native init failed', e); }
+      } catch (e) { console.error('Native notification init failed', e); }
     };
     init();
   }, []);
@@ -533,17 +546,9 @@ const PhoneShell: React.FC = () => {
 
       <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
 
-      {/* 
-          Full-screen app container.
-          Keep `absolute inset-0` to avoid layout collapse, and keep `flex flex-col`
-          because several app views still rely on column layout plus safe-area padding.
-       */}
+      {/* Full-screen app container. Individual apps handle their own safe-area spacing. */}
       <div
         className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none flex flex-col"
-        style={{
-          paddingTop: activeApp !== AppID.Launcher ? 'var(--safe-top, env(safe-area-inset-top))' : 0,
-          paddingBottom: activeApp !== AppID.Launcher ? 'var(--safe-bottom, env(safe-area-inset-bottom))' : 0
-        }}
       >
         <ActiveAppContainer activeApp={activeApp} onCloseApp={handleCloseActiveApp} />
 

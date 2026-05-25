@@ -15,6 +15,12 @@
 
 - React、Vite、Tailwind、页面结构、前端配置、前端调用链路，都在本仓库内处理
 
+## 本机验证策略
+
+- 本仓库开发机器性能有限，默认遵守 `docs/verification-policy.md`。
+- 除非用户明确要求，不默认运行全量测试、全量构建、全量 E2E、coverage、benchmark 或长时间 watch。
+- 优先执行和本次修改直接相关的轻量验证，并在最终回复中说明已验证内容与未验证内容。
+
 ## 部署红线
 
 - 本仓库的 `origin/main` 会自动触发 Cloudflare Pages 正式环境部署；推送到 `main` 就等于更新正式链接。

@@ -22,6 +22,7 @@ import { composeCustomStatusTemplateHtml } from './statusTemplateComposer';
 import { parseStatusBlock } from './statusBlockParser';
 import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from './runtimeConfig';
+import { trackedApiRequest,type ApiRequestTraceMeta } from './apiRequestLedger';
 import {
   RawSenseOutput,
   SenseDelta,
@@ -333,6 +334,7 @@ async function callSecondaryLLM(
     maxTokens: number = 800,
     temperature: number = 0.6,
     contextMessages?: SecondaryLLMMessage[],
+    trace?: ApiRequestTraceMeta,
 ): Promise<string | null> {
     const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
     const normalizedContextMessages = normalizeSecondaryMessages(contextMessages);
@@ -351,7 +353,15 @@ async function callSecondaryLLM(
 
     let resp: Response;
     try {
-        resp = await fetch(`${baseUrl}/chat/completions`, {
+        const url = `${baseUrl}/chat/completions`;
+        resp = await trackedApiRequest({
+            feature: 'memory',
+            reason: '副 API 状态/心声任务',
+            model: apiConfig.model,
+            userInitiated: false,
+            ...trace,
+            url,
+        }, () => fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -364,7 +374,7 @@ async function callSecondaryLLM(
                 max_tokens: maxTokens,
             }),
             signal,
-        });
+        }));
     } catch (error) {
         markSecondaryApiConfigFailure(apiConfig, error);
         throw error;
@@ -527,6 +537,7 @@ async function senseBefore(
             SECONDARY_LLM_MAX_TOKENS,
             0.4,
             resolvedContext.contextMessages,
+            { reason: '状态感知（回复前）', conversationId: char.id },
         );
         if (!content) return null;
 
@@ -768,6 +779,7 @@ async function generateInnerVoice(
             SECONDARY_LLM_MAX_TOKENS,
             0.6,
             resolvedContext.contextMessages,
+            { reason: '心声生成（回复后）', conversationId: char.id },
         );
         if (!content) return null;
 
@@ -1049,6 +1061,7 @@ async function generateCreativeCard(
             SECONDARY_LLM_MAX_TOKENS,
             0.7,
             resolvedContext.contextMessages,
+            { reason: '状态卡生成（回复后）', conversationId: char.id },
         );
         if (!content) return null;
 
@@ -1309,6 +1322,7 @@ async function generateFreeformCard(
             SECONDARY_LLM_MAX_TOKENS,
             0.85,
             resolvedContext.contextMessages,
+            { reason: '自由状态卡生成（回复后）', conversationId: char.id },
         );
         if (!content) return null;
 
@@ -1463,6 +1477,7 @@ ${aiReply.slice(0, 500)}
             SECONDARY_LLM_MAX_TOKENS,
             0.8,
             resolvedContext.contextMessages,
+            { reason: '自定义状态卡生成（回复后）', conversationId: char.id },
         );
         if (!content) return null;
 
@@ -1642,6 +1657,8 @@ async function batchSenseForWindow(
             const content = await callSecondaryLLM(
                 apiConfig, prompt.system, prompt.user,
                 localController.signal, SECONDARY_LLM_MAX_TOKENS, 0.4,
+                undefined,
+                { reason: '状态感知重试', conversationId: charName },
             );
             if (!content) return null;
 

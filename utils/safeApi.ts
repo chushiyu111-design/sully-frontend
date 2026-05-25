@@ -1,3 +1,5 @@
+import { setApiRequestRetry,trackedApiRequest,type ApiRequestTraceMeta } from './apiRequestLedger';
+
 /**
  * Safe API response parsing utilities.
  *
@@ -45,55 +47,84 @@ export async function safeResponseJson(response: Response): Promise<any> {
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
-    maxRetries: number = 2
+    maxRetries: number = 2,
+    trace?: ApiRequestTraceMeta,
 ): Promise<any> {
     const retryableStatuses = new Set([429, 500, 502, 503, 504]);
-    let lastError: Error | null = null;
+    const inferredTrace = (): ApiRequestTraceMeta | undefined => {
+        if (!url.includes('/chat/completions')) return undefined;
+        let model: string | undefined;
+        if (typeof options.body === 'string') {
+            try {
+                const body = JSON.parse(options.body) as { model?: unknown };
+                if (typeof body.model === 'string') model = body.model;
+            } catch {
+                // Ignore body parse failures; the ledger must never affect requests.
+            }
+        }
+        return {
+            feature: 'unknown',
+            reason: '未标注 AI 请求',
+            model,
+            userInitiated: false,
+        };
+    };
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            const response = await fetch(url, options);
+    const execute = async (requestId?: string): Promise<any> => {
+        let lastError: Error | null = null;
 
-            if (!response.ok) {
-                // For retryable status codes, retry before giving up
-                if (retryableStatuses.has(response.status) && attempt < maxRetries) {
-                    const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
-                    console.warn(`[SafeAPI] HTTP ${response.status}, retry ${attempt + 1}/${maxRetries} in ${delay}ms...`);
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await fetch(url, options);
+
+                if (!response.ok) {
+                    // For retryable status codes, retry before giving up
+                    if (retryableStatuses.has(response.status) && attempt < maxRetries) {
+                        const delay = Math.pow(2, attempt) * 1000; // 1s, 2s
+                        console.warn(`[SafeAPI] HTTP ${response.status}, retry ${attempt + 1}/${maxRetries} in ${delay}ms...`);
+                        if (requestId) setApiRequestRetry(requestId, attempt + 1, `自动重试: HTTP ${response.status}`);
+                        await new Promise(r => setTimeout(r, delay));
+                        continue;
+                    }
+                    // Non-retryable or last attempt: parse body for error details
+                    const data = await safeResponseJson(response);
+                    // If we somehow got valid JSON with error info, wrap it
+                    const errMsg = data?.error?.message || data?.error || `HTTP ${response.status}`;
+                    throw new Error(`API Error ${response.status}: ${errMsg}`);
+                }
+
+                return await safeResponseJson(response);
+            } catch (e: any) {
+                lastError = e;
+
+                // Network errors (fetch itself failed) are retryable
+                if (e.name === 'TypeError' && attempt < maxRetries) {
+                    const delay = Math.pow(2, attempt) * 1000;
+                    console.warn(`[SafeAPI] Network error, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
+                    if (requestId) setApiRequestRetry(requestId, attempt + 1, '自动重试: 网络错误');
                     await new Promise(r => setTimeout(r, delay));
                     continue;
                 }
-                // Non-retryable or last attempt: parse body for error details
-                const data = await safeResponseJson(response);
-                // If we somehow got valid JSON with error info, wrap it
-                const errMsg = data?.error?.message || data?.error || `HTTP ${response.status}`;
-                throw new Error(`API Error ${response.status}: ${errMsg}`);
+
+                // For HTML/parse errors on non-ok responses during retry, continue
+                if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
+                    const delay = Math.pow(2, attempt) * 1000;
+                    console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                    if (requestId) setApiRequestRetry(requestId, attempt + 1, '自动重试: HTML 响应');
+                    await new Promise(r => setTimeout(r, delay));
+                    continue;
+                }
+
+                throw e;
             }
-
-            return await safeResponseJson(response);
-        } catch (e: any) {
-            lastError = e;
-
-            // Network errors (fetch itself failed) are retryable
-            if (e.name === 'TypeError' && attempt < maxRetries) {
-                const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] Network error, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-            }
-
-            // For HTML/parse errors on non-ok responses during retry, continue
-            if (attempt < maxRetries && e.message?.includes('API返回了HTML')) {
-                const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] HTML response, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-            }
-
-            throw e;
         }
-    }
 
-    throw lastError || new Error('API请求失败');
+        throw lastError || new Error('API请求失败');
+    };
+
+    const effectiveTrace = trace || inferredTrace();
+    if (!effectiveTrace) return execute();
+    return trackedApiRequest({ ...effectiveTrace, url }, ({ requestId }) => execute(requestId));
 }
 
 /**
@@ -118,7 +149,10 @@ export function extractContent(data: any): string {
  *
  * Returns parsed object on success, null on total failure.
  */
-export function extractJson(raw: string): any | null {
+export function extractJson(
+    raw: string,
+    options: { logFailure?: boolean } = {},
+): any | null {
     if (!raw) return null;
 
     // 0. Strip <think>/<thinking> reasoning tags (DeepSeek-R1, some Claude models)
@@ -233,7 +267,9 @@ export function extractJson(raw: string): any | null {
         }
     }
 
-    console.error('[extractJson] All attempts failed. Raw:', raw.slice(0, 300));
+    if (options.logFailure !== false) {
+        console.error('[extractJson] All attempts failed. Raw:', raw.slice(0, 300));
+    }
     return null;
 }
 
@@ -259,8 +295,9 @@ export function extractJson(raw: string): any | null {
 export function extractJsonTyped<T>(
     raw: string,
     validate: (obj: any) => T | null,
+    options: { logFailure?: boolean } = {},
 ): T | null {
-    const parsed = extractJson(raw);
+    const parsed = extractJson(raw, options);
     if (parsed === null) return null;
     return validate(parsed);
 }

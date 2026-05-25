@@ -61,6 +61,7 @@ describe('runtimeConfig', () => {
             useGeminiJailbreak: false,
             useDeepSeekMode: false,
             disablePrefill: false,
+            streamChat: false,
         });
     });
 
@@ -214,7 +215,7 @@ describe('runtimeConfig', () => {
             elevenLabs: {
                 apiKey: 'eleven-key',
                 voiceId: 'eleven-voice',
-                modelId: 'eleven_flash_v2_5',
+                modelId: 'eleven_v3',
                 languageCode: 'en',
                 stability: 1,
                 similarityBoost: 0,

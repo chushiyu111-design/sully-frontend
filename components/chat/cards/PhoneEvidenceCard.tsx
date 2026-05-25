@@ -23,16 +23,48 @@ interface PhoneEvidenceCardProps {
     message: Message;
 }
 
+function asPhoneCardText(value: unknown, fallback = '', maxChars = 1200): string {
+    let text = fallback;
+    if (value === null || value === undefined) return fallback;
+
+    if (typeof value === 'string') {
+        text = value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+        text = String(value);
+    } else if (Array.isArray(value)) {
+        text = value
+            .map(item => asPhoneCardText(item, '', Math.ceil(maxChars / 2)))
+            .filter(Boolean)
+            .join('; ');
+    } else if (typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const candidate = record.text ?? record.content ?? record.name ?? record.label ?? record.title ?? record.detail ?? record.status ?? record.amount ?? record.value ?? record.shop;
+        if (candidate !== undefined && candidate !== value) {
+            text = asPhoneCardText(candidate, fallback, maxChars);
+        } else {
+            try {
+                text = JSON.stringify(value);
+            } catch {
+                text = fallback;
+            }
+        }
+    }
+
+    const normalized = text.trim();
+    if (normalized.length <= maxChars) return normalized;
+    return `${normalized.slice(0, maxChars).trimEnd()}...`;
+}
+
 const PhoneEvidenceCard: React.FC<PhoneEvidenceCardProps> = ({ message }) => {
     const meta = message.metadata || {};
-    const phoneType = (meta.phoneType as string) || '';
-    const title = (meta.phoneTitle as string) || '';
-    const detail = (meta.phoneDetail as string) || '';
-    const value = meta.phoneValue as string | undefined;
-    const label = (meta.phoneLabel as string) || phoneType;
-    const charName = (meta.charName as string) || '';
-    const charAvatar = (meta.charAvatar as string) || undefined;
-    const shop = (meta.phoneShop as string) || undefined;
+    const phoneType = asPhoneCardText(meta.phoneType);
+    const title = asPhoneCardText(meta.phoneTitle);
+    const detail = asPhoneCardText(meta.phoneDetail);
+    const value = asPhoneCardText(meta.phoneValue) || undefined;
+    const label = asPhoneCardText(meta.phoneLabel, phoneType);
+    const charName = asPhoneCardText(meta.charName);
+    const charAvatar = asPhoneCardText(meta.charAvatar) || undefined;
+    const shop = asPhoneCardText(meta.phoneShop) || undefined;
 
     switch (phoneType) {
         case 'chat':

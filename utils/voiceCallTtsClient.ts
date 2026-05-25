@@ -1,4 +1,5 @@
 import type { TtsConfig } from '../types/tts';
+import { ElevenLabsTtsHttpStream } from './elevenLabsTtsHttpStream';
 import { ElevenLabsTtsWs } from './elevenLabsTtsWs';
 import { MinimaxTtsWs,type MinimaxTtsWsCallbacks,type TtsAudioChunk,type WsConnectionState } from './minimaxTtsWs';
 
@@ -17,8 +18,16 @@ export interface VoiceCallTtsClient {
     close(): void;
 }
 
+export function isElevenLabsV3Model(config: TtsConfig): boolean {
+    return config.voiceCallProvider === 'elevenlabs'
+        && config.elevenLabs.modelId.trim() === 'eleven_v3';
+}
+
 export function createVoiceCallTtsClient(config: TtsConfig, callbacks: VoiceCallTtsCallbacks = {}): VoiceCallTtsClient {
     if (config.voiceCallProvider === 'elevenlabs') {
+        if (isElevenLabsV3Model(config)) {
+            return new ElevenLabsTtsHttpStream(callbacks);
+        }
         return new ElevenLabsTtsWs(callbacks);
     }
 

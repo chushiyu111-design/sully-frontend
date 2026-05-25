@@ -1,10 +1,10 @@
 
-import { useState,useRef,useCallback } from 'react';
+import { useState,useRef,useCallback,type Dispatch,type SetStateAction } from 'react';
 import { CharacterProfile,UserProfile,Message,Emoji,EmojiCategory,GroupProfile,RealtimeConfig } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser,BILINGUAL_MARKER } from '../utils/chatParser';
-import { safeFetchJson } from '../utils/safeApi';
+import { safeFetchJson,safeResponseJson } from '../utils/safeApi';
 import { haptic,playThemeNotification } from '../utils/haptics';
 import { THEME_PLUGINS } from '../components/chat/ThemeRegistry';
 import { VectorMemoryExtractor } from '../utils/vectorMemoryExtractor';
@@ -14,6 +14,12 @@ import { EventExtractor } from '../utils/eventExtractor';
 import { extractThinking, safeThinkingFallbackReply } from '../utils/thinkingExtractor';
 import { isDeepSeekMode } from '../utils/deepseekPrompts';
 import { DEFAULT_CHAT_TEMPERATURE,getEmbeddingConfig,normalizeChatTemperature,selectSecondaryApiConfig } from '../utils/runtimeConfig';
+import {
+    ApiRequestDedupedError,
+    isApiRequestDedupePending,
+    trackedApiRequest,
+    type ApiRequestTraceMeta,
+} from '../utils/apiRequestLedger';
 import { BackendAgentManager, buildContextSnapshot } from '../utils/autonomousAgent';
 import {
     generateAgentScheduleRevision,
@@ -50,7 +56,7 @@ interface UseChatAIProps {
     emojis: Emoji[];
     categories: EmojiCategory[];
     addToast: (msg: string, type: 'info' | 'success' | 'error') => void;
-    setMessages: (msgs: Message[]) => void; // Callback to update UI messages
+    setMessages: Dispatch<SetStateAction<Message[]>>; // Callback to update UI messages
     realtimeConfig?: RealtimeConfig; // 新增：实时配置
     translationConfig?: { enabled: boolean; sourceLang: string; targetLang: string };
     autoVoice?: boolean; // 开启后向 AI 注入语音消息格式指引
@@ -64,6 +70,143 @@ interface UseChatAIProps {
 
 interface TriggerAIOptions {
     transientUserPrompt?: string;
+}
+
+class ChatStreamError extends Error {
+    partialContent: string;
+
+    constructor(message: string, partialContent = '') {
+        super(message);
+        this.name = 'ChatStreamError';
+        this.partialContent = partialContent;
+    }
+}
+
+function extractStreamTextDelta(payload: any): string {
+    const choice = payload?.choices?.[0];
+    const delta = choice?.delta;
+    return (
+        delta?.content ||
+        delta?.text ||
+        choice?.text ||
+        choice?.message?.content ||
+        ''
+    );
+}
+
+function extractStreamThinkingDelta(payload: any): string {
+    const delta = payload?.choices?.[0]?.delta;
+    return (
+        delta?.reasoning_content ||
+        delta?.thinking ||
+        delta?.reasoning ||
+        ''
+    );
+}
+
+function buildStreamingPreviewContent(content: string, usePrefill: boolean, thinkTag: string): string {
+    const contentForExtraction = usePrefill && !content.includes('<thinking>') && !content.includes('<think>')
+        ? `<${thinkTag}>\n${content}`
+        : content;
+    const extracted = extractThinking(contentForExtraction);
+    return ChatParser.sanitize(extracted.content).trim();
+}
+
+async function fetchStreamingChatCompletion(
+    url: string,
+    init: RequestInit,
+    onPreview: (content: string) => void,
+    trace?: ApiRequestTraceMeta,
+): Promise<any> {
+    const run = async (): Promise<any> => {
+    let content = '';
+    let reasoningContent = '';
+    let usage: any = null;
+    let finishReason: string | null = null;
+
+    try {
+        const response = await fetch(url, init);
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new ChatStreamError(`API Error ${response.status}: ${text.slice(0, 200)}`);
+        }
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!response.body || contentType.includes('application/json')) {
+            return await safeResponseJson(response);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const consumeLine = (line: string): boolean => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(':')) return false;
+
+            const data = trimmed.startsWith('data:')
+                ? trimmed.slice(5).trim()
+                : trimmed;
+            if (!data) return false;
+            if (data === '[DONE]') return true;
+
+            try {
+                const payload = JSON.parse(data);
+                usage = payload.usage || usage;
+                finishReason = payload.choices?.[0]?.finish_reason || finishReason;
+
+                const thinkingDelta = extractStreamThinkingDelta(payload);
+                if (thinkingDelta) reasoningContent += thinkingDelta;
+
+                const delta = extractStreamTextDelta(payload);
+                if (delta) {
+                    content += delta;
+                    onPreview(content);
+                }
+            } catch {
+                // Some providers send comments or non-JSON keepalive lines in the same stream.
+            }
+            return false;
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+
+            let shouldStop = false;
+            for (const line of lines) {
+                shouldStop = consumeLine(line) || shouldStop;
+            }
+            if (shouldStop) break;
+        }
+
+        if (buffer.trim()) consumeLine(buffer);
+
+        return {
+            choices: [{
+                message: {
+                    content,
+                    reasoning_content: reasoningContent,
+                },
+                finish_reason: finishReason || 'stop',
+            }],
+            usage,
+        };
+    } catch (error: any) {
+        if (error instanceof ChatStreamError) {
+            error.partialContent = error.partialContent || content;
+            throw error;
+        }
+        throw new ChatStreamError(error?.message || '流式请求失败', content);
+    }
+    };
+
+    if (trace) return trackedApiRequest({ ...trace, url }, () => run());
+    return run();
 }
 
 function buildChatNotificationBody(content: string, fallback = '发来了一条新消息'): string {
@@ -103,6 +246,7 @@ export const useChatAI = ({
     const [weiboStatus, setWeiboStatus] = useState<string>('');
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
+    const isTypingRef = useRef(false);
 
     // MindSnapshot retry context
     const lastMindSnapshotCtx = useRef<{ char: any; aiContent: string; msgs: Message[]; config: any; goalListStr?: string; contextOptions?: SecondaryFullContextOptions } | null>(null);
@@ -181,19 +325,43 @@ export const useChatAI = ({
     };
 
     const triggerAI = async (currentMsgs: Message[], options: TriggerAIOptions = {}) => {
-        if (isTyping || !char) return;
+        if (isTypingRef.current || isTyping || !char) return;
         if (!apiConfig.baseUrl) { alert("请先在设置中配置 API URL"); return; }
+        const transientTrigger = Boolean(options.transientUserPrompt?.trim());
+        const sourceMessage = currentMsgs
+            .slice()
+            .reverse()
+            .find(message => message.role === 'user' && typeof message.id === 'number' && message.id > 0);
+        const sourceMessageId = sourceMessage?.id;
+        const mainChatDedupeKey = !transientTrigger && sourceMessageId
+            ? `main-chat:${char.id}:${sourceMessageId}`
+            : undefined;
+        if (isApiRequestDedupePending(mainChatDedupeKey)) {
+            console.warn('[ApiLedger] Duplicate main chat request blocked for message:', sourceMessageId);
+            return;
+        }
 
         const refreshRecentMessages = async () => {
             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
         };
 
+        isTypingRef.current = true;
         setIsTyping(true);
         setRecallStatus('');
 
         try {
             const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` };
+            const buildMainChatTrace = (reason: string, retryCount = 0): ApiRequestTraceMeta => ({
+                feature: 'chat',
+                reason,
+                model: apiConfig.model,
+                conversationId: char.id,
+                messageId: sourceMessageId,
+                userInitiated: !transientTrigger,
+                dedupeKey: mainChatDedupeKey,
+                retryCount,
+            });
 
             // 0. Internal State Layer: senseBefore (和下方 buildSystemPrompt 的 embedding/rerank 并行)
             // Background assistive features must use the secondary API only.
@@ -501,11 +669,75 @@ mode 可选值：
                 stream: false,
             };
 
-            let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                body: JSON.stringify(requestBody)
-            });
-            updateTokenUsage(data, historyMsgCount, 'initial');
+            const streamPreviewId = -Math.floor(Date.now() + Math.random() * 1000);
+            let streamPreviewVisible = false;
+            let lastStreamPreviewAt = 0;
+            const clearStreamPreview = () => {
+                if (!streamPreviewVisible) return;
+                setMessages(prev => prev.filter(message => message.id !== streamPreviewId));
+                streamPreviewVisible = false;
+            };
+            const updateStreamPreview = (rawContent: string, force = false) => {
+                const previewContent = buildStreamingPreviewContent(rawContent, usePrefill, thinkTag);
+                if (!previewContent) return;
+                const now = Date.now();
+                if (!force && now - lastStreamPreviewAt < 120) return;
+                lastStreamPreviewAt = now;
+                streamPreviewVisible = true;
+
+                const previewMessage: Message = {
+                    id: streamPreviewId,
+                    charId: char.id,
+                    role: 'assistant',
+                    type: 'text',
+                    content: previewContent,
+                    timestamp: now,
+                    metadata: { streamingPreview: true },
+                };
+
+                setMessages(prev => {
+                    const existingIndex = prev.findIndex(message => message.id === streamPreviewId);
+                    if (existingIndex === -1) return [...prev, previewMessage];
+                    return prev.map(message => message.id === streamPreviewId ? previewMessage : message);
+                });
+            };
+
+            let data: any;
+            if (apiConfig.streamChat === true) {
+                try {
+                    requestBody = { ...requestBody, stream: true };
+                    data = await fetchStreamingChatCompletion(
+                        `${baseUrl}/chat/completions`,
+                        {
+                            method: 'POST', headers,
+                            body: JSON.stringify(requestBody),
+                        },
+                        (content) => updateStreamPreview(content),
+                        buildMainChatTrace('主聊天回复（流式）'),
+                    );
+                    updateStreamPreview(data.choices?.[0]?.message?.content || '', true);
+                    updateTokenUsage(data, historyMsgCount, 'initial-stream');
+                } catch (streamError: any) {
+                    clearStreamPreview();
+                    if (streamError?.partialContent?.trim()) {
+                        throw streamError;
+                    }
+
+                    console.warn('[ChatStream] Streaming failed before output, falling back to non-streaming:', streamError?.message || streamError);
+                    requestBody = { ...requestBody, stream: false };
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(requestBody)
+                    }, 2, buildMainChatTrace('主聊天回复：流式失败后的非流式回退', 1));
+                    updateTokenUsage(data, historyMsgCount, 'initial-fallback');
+                }
+            } else {
+                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                    method: 'POST', headers,
+                    body: JSON.stringify(requestBody)
+                }, 2, buildMainChatTrace('主聊天回复'));
+                updateTokenUsage(data, historyMsgCount, 'initial');
+            }
 
             // 3.5 Check for empty API responses (e.g. content filters, max context limits)
             if (!data.choices || data.choices.length === 0) {
@@ -578,7 +810,7 @@ mode 可选值：
                     const retryData = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify(retryBody)
-                    });
+                    }, 2, buildMainChatTrace('主聊天回复：格式失败重试', 1));
                     updateTokenUsage(retryData, historyMsgCount, 'chainlock-retry');
                     const retryContent = retryData.choices?.[0]?.message?.content || '';
                     if (retryContent.trim()) {
@@ -1248,9 +1480,14 @@ mode 可选值：
             maybeGenerateScheduleRevision(scheduleSignal, scheduleReason, aiContent, currentMsgs);
 
         } catch (e: any) {
+            if (e instanceof ApiRequestDedupedError) {
+                console.warn('[ApiLedger] Pending chat request blocked:', e.requestId);
+                return;
+            }
             await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
             await refreshRecentMessages();
         } finally {
+            isTypingRef.current = false;
             setIsTyping(false);
             setRecallStatus('');
             setSearchStatus('');

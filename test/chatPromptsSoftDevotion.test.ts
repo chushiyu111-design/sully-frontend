@@ -85,10 +85,11 @@ describe('ChatPrompts soft devotion mode', () => {
             [],
         );
 
-        expect(systemPrompt).not.toContain('<soft_devotion_chat_mode>');
+        expect(systemPrompt).not.toContain('\n<soft_devotion_chat_mode>\n');
+        expect(systemPrompt).not.toContain('以 <equality> 和 <soft_devotion_chat_mode> 共同为基准');
     });
 
-    it('injects the role-bound mode between RP and speech rules when enabled', async () => {
+    it('does not inject a duplicate soft devotion block outside core context', async () => {
         const systemPrompt = await ChatPrompts.buildSystemPrompt(
             character(true),
             user(),
@@ -99,13 +100,13 @@ describe('ChatPrompts soft devotion mode', () => {
         );
 
         const rpIndex = systemPrompt.indexOf('<rp_core>');
-        const softIndex = systemPrompt.indexOf('<soft_devotion_chat_mode>');
         const speechIndex = systemPrompt.indexOf('<speech_soul>');
 
-        expect(softIndex).toBeGreaterThan(rpIndex);
-        expect(softIndex).toBeLessThan(speechIndex);
-        expect(systemPrompt).toContain('糯米是你格外珍惜、格外偏爱、格外舍不得弄疼的人');
-        expect(systemPrompt).toContain('本模式优先于通用 <equality> 规则里的部分禁用项');
+        expect(rpIndex).toBeGreaterThan(-1);
+        expect(speechIndex).toBeGreaterThan(rpIndex);
+        expect(systemPrompt).not.toContain('\n<soft_devotion_chat_mode>\n');
+        expect(systemPrompt).not.toContain('糯米是你格外珍惜、格外偏爱、格外舍不得弄疼的人');
+        expect(systemPrompt).not.toContain('本模式优先于通用 <equality> 规则里的部分禁用项');
         expect(systemPrompt).toContain('以 <equality> 和 <soft_devotion_chat_mode> 共同为基准');
     });
 });

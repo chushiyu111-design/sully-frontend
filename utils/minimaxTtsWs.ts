@@ -17,6 +17,7 @@
 
 import { getTtsWsProxyUrl } from './backendConfig';
 import { TtsConfig } from '../types/tts';
+import { trackedApiRequest } from './apiRequestLedger';
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────
 
@@ -118,6 +119,7 @@ export class MinimaxTtsWs {
     private taskFinishedEmitted = false;
     /** Worker 代理发送的诊断错误信息（proxy_error 消息） */
     private lastProxyError: string = '';
+    private activeConfig: TtsConfig | null = null;
 
     // 用于 await 风格的 Promise resolve/reject
     private connectResolve: (() => void) | null = null;
@@ -186,6 +188,7 @@ export class MinimaxTtsWs {
             }
             this.taskFinishedEmitted = false;
             this.lastProxyError = '';
+            this.activeConfig = config;
 
             this.connectResolve = resolve;
             this.connectReject = reject;
@@ -370,7 +373,15 @@ export class MinimaxTtsWs {
         };
 
         console.log('[TTS WS] Sending task_continue:', text.slice(0, 50) + (text.length > 50 ? '...' : ''));
-        this.ws.send(JSON.stringify(msg));
+        void trackedApiRequest({
+            feature: 'tts',
+            reason: '语音通话 MiniMax TTS 片段',
+            provider: 'minimax',
+            model: this.activeConfig?.model,
+            userInitiated: false,
+        }, async () => {
+            this.ws?.send(JSON.stringify(msg));
+        });
     }
 
     // ─── 发送 task_finish ──────────────────────────────────────────
@@ -422,6 +433,7 @@ export class MinimaxTtsWs {
         this.connectReject = null;
         this.startResolve = null;
         this.startReject = null;
+        this.activeConfig = null;
         if (this.finishResolve) {
             this.finishResolve();
             this.finishResolve = null;

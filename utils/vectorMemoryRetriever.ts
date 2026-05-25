@@ -30,6 +30,7 @@ import { parseDateExpression } from './parseDateExpression';
 import { extractHormoneSnapshot,hormoneResonance as computeHormoneResonance } from './hormoneDynamics';
 import { tryBackendRetrieval } from './backendClient';
 import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
+import { renderDateDiaryMemoryTemplate } from './dateDiaryMemory';
 
 
 
@@ -234,7 +235,7 @@ export const VectorMemoryRetriever = {
                     // Backend successfully handled the request (even if it found 0 memories)
                     if (memories) console.log('🔗 [VectorRetriever] Using backend retrieval result');
                     else console.log('🔗 [VectorRetriever] Backend returned 0 memories');
-                    return memories || null; 
+                    return memories ? renderDateDiaryMemoryTemplate(memories, charName, userName) : null;
                     // Return null here if empty, because index.ts expects null if no memories found,
                     // but we DO NOT fall through to the local pipeline below.
                 }
@@ -381,7 +382,11 @@ export const VectorMemoryRetriever = {
                 const rerankCandidates = scored.slice(0, RERANK_CANDIDATE_COUNT);
                 const rerankDocuments = rerankCandidates.map(s => {
                     const m = s.memory;
-                    return `${m.title}: ${m.content}${m.emotionalJourney ? ` (${m.emotionalJourney})` : ''}`;
+                    const content = renderDateDiaryMemoryTemplate(m.content, charName, userName);
+                    const emotionalJourney = m.emotionalJourney
+                        ? renderDateDiaryMemoryTemplate(m.emotionalJourney, charName, userName)
+                        : '';
+                    return `${m.title}: ${content}${emotionalJourney ? ` (${emotionalJourney})` : ''}`;
                 });
 
                 const rerankResults = await EmbeddingService.rerank(
@@ -482,6 +487,10 @@ export const VectorMemoryRetriever = {
             const formatted = relevant.map((s, i) => {
                 const m = s.memory;
                 const pos = positionMap.get(m.id) || 0;
+                const content = renderDateDiaryMemoryTemplate(m.content, charName, userName);
+                const emotionalJourney = m.emotionalJourney
+                    ? renderDateDiaryMemoryTemplate(m.emotionalJourney, charName, userName)
+                    : '';
 
                 // Relative time label
                 const ageMs = Date.now() - m.createdAt;
@@ -499,9 +508,9 @@ export const VectorMemoryRetriever = {
                     year: 'numeric', month: 'long'
                 });
 
-                let line = `${i + 1}. [#${pos}/${totalMemories}, ${timeLabel}, ${dateStr}] ${m.title}\n   ${m.content}`;
-                if (m.emotionalJourney) {
-                    line += `\n   → 当时的感受: ${m.emotionalJourney}`;
+                let line = `${i + 1}. [#${pos}/${totalMemories}, ${timeLabel}, ${dateStr}] ${m.title}\n   ${content}`;
+                if (emotionalJourney) {
+                    line += `\n   → 当时的感受: ${emotionalJourney}`;
                 }
                 return line;
             }).join('\n\n');

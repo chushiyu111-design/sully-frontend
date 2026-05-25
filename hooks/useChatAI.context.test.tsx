@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatAI } from './useChatAI';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
-import { safeFetchJson } from '../utils/safeApi';
+import { safeFetchJson,safeResponseJson } from '../utils/safeApi';
 import { VectorMemoryExtractor } from '../utils/vectorMemoryExtractor';
 import { MindSnapshotExtractor } from '../utils/mindSnapshotExtractor';
 import { EventExtractor } from '../utils/eventExtractor';
@@ -44,6 +44,7 @@ vi.mock('../utils/chatParser', () => ({
 
 vi.mock('../utils/safeApi', () => ({
     safeFetchJson: vi.fn(),
+    safeResponseJson: vi.fn((response: Response) => response.json()),
 }));
 
 vi.mock('../utils/haptics', () => ({
@@ -135,6 +136,7 @@ vi.mock('../utils/playbackContextRuntime', () => ({
 const mockedDB = vi.mocked(DB);
 const mockedChatPrompts = vi.mocked(ChatPrompts);
 const mockedSafeFetchJson = vi.mocked(safeFetchJson);
+const mockedSafeResponseJson = vi.mocked(safeResponseJson);
 const mockedGetEmbeddingConfig = vi.mocked(getEmbeddingConfig);
 const mockedGetSecondaryApiConfig = vi.mocked(getSecondaryApiConfig);
 const mockedSelectSecondaryApiConfig = vi.mocked(selectSecondaryApiConfig);
@@ -156,9 +158,11 @@ function makeMessage(id: number, content: string): Message {
 describe('useChatAI context loading', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.unstubAllGlobals();
         mockedGetEmbeddingConfig.mockReturnValue({ apiKey: '' } as any);
         mockedGetSecondaryApiConfig.mockReturnValue(null as any);
         mockedSelectSecondaryApiConfig.mockReturnValue(null as any);
+        mockedSafeResponseJson.mockImplementation((response: Response) => response.json());
         mockedDB.getRecentMessagesByCharId.mockResolvedValue([makeMessage(2, 'full db context')]);
         mockedSafeFetchJson.mockResolvedValue({
             choices: [{ message: { content: 'assistant reply' } }],
@@ -251,5 +255,63 @@ describe('useChatAI context loading', () => {
         expect(mockedMindSnapshotExtractor.generateInnerVoice).not.toHaveBeenCalled();
         expect(mockedVectorMemoryExtractor.maybeExtract).not.toHaveBeenCalled();
         expect(mockedEventExtractor.extract).not.toHaveBeenCalled();
+    });
+
+    it('uses streaming preview when the experimental stream toggle is enabled', async () => {
+        const encoder = new TextEncoder();
+        const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hello "}}]}\n\n'));
+                controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}\n\n'));
+                controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                controller.close();
+            },
+        }), { headers: { 'content-type': 'text/event-stream' } }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        let renderedMessages: Message[] = [makeMessage(1, 'ui-visible only')];
+        const setMessages = vi.fn((next: Message[] | ((prev: Message[]) => Message[])) => {
+            renderedMessages = typeof next === 'function' ? next(renderedMessages) : next;
+        });
+        const char = {
+            id: 'char-1',
+            name: 'Sully',
+            avatar: '',
+            description: '',
+            systemPrompt: '',
+            memories: [],
+            contextLimit: 777,
+            statusBarMode: 'off',
+        } as CharacterProfile;
+
+        const { result } = renderHook(() => useChatAI({
+            char,
+            userProfile: { name: 'Tester', avatar: '' } as any,
+            apiConfig: {
+                baseUrl: 'https://example.test',
+                apiKey: 'sk-test',
+                model: 'test-model',
+                disablePrefill: true,
+                streamChat: true,
+            },
+            groups: [],
+            emojis: [],
+            categories: [],
+            addToast: vi.fn(),
+            setMessages: setMessages as any,
+        }));
+
+        await act(async () => {
+            await result.current.triggerAI([makeMessage(1, 'ui-visible only')]);
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string).stream).toBe(true);
+        expect(mockedSafeFetchJson).not.toHaveBeenCalled();
+        expect(setMessages).toHaveBeenCalledWith(expect.any(Function));
+        expect(mockedDB.saveMessage).toHaveBeenCalledWith(expect.objectContaining({
+            role: 'assistant',
+            content: 'hello world',
+        }));
     });
 });

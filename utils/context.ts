@@ -2,6 +2,7 @@
 import { CharacterProfile,UserProfile } from '../types';
 import { renderBodySignals } from './bodySignalRenderer';
 import { resolveInternalState } from './hormoneDynamics';
+import { buildSoftDevotionChatModePrompt } from './softDevotionPrompt';
 
 /**
  * Memory Central
@@ -83,6 +84,10 @@ export const ContextBuilder = {
             context += bodyLine + '\n';
         }
         context += '\n';
+
+        if (char.softDevotionChatMode === true) {
+            context += buildSoftDevotionChatModePrompt(char.name, user.name);
+        }
 
         // 4. 印象档案 (Private Impression)
         if (char.impression) {

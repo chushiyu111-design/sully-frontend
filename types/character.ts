@@ -41,6 +41,7 @@ export interface StoryPhoneCustomApp {
     id: string;
     name: string;
     icon: string;
+    iconImage?: string;
     color: string;
     prompt: string;
     installedAt: number;

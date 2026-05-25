@@ -1,7 +1,7 @@
 
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 44; // Bumped for chat context mirrors
+const DB_VERSION = 45; // Bumped for yesterday newspaper reports
 
 export const STORE_CHARACTERS = 'characters';
 export const STORE_MESSAGES = 'messages';
@@ -35,6 +35,7 @@ export const STORE_MEMORY_RECORDS = 'memory_records';
 export const STORE_MEMORY_RECORD_AUDIO = 'memory_record_audio';
 export const STORE_HOT_NEWS_SNAPSHOTS = 'hot_news_snapshots';
 export const STORE_CHAT_CONTEXT_MIRRORS = 'chat_context_mirrors';
+export const STORE_YESTERDAY_NEWSPAPERS = 'yesterday_newspapers';
 
 export interface ScheduledMessage {
     id: string;
@@ -223,6 +224,11 @@ export const openDB = (): Promise<IDBDatabase> => {
 
             createStore(STORE_HOT_NEWS_SNAPSHOTS, { keyPath: 'id' });
             createStore(STORE_CHAT_CONTEXT_MIRRORS, { keyPath: 'charId' });
+            if (!db.objectStoreNames.contains(STORE_YESTERDAY_NEWSPAPERS)) {
+                const newspaperStore = db.createObjectStore(STORE_YESTERDAY_NEWSPAPERS, { keyPath: 'id' });
+                newspaperStore.createIndex('ownerUserIdCharIdDate', ['ownerUserId', 'charId', 'date'], { unique: true });
+                newspaperStore.createIndex('charIdDate', ['charId', 'date'], { unique: false });
+            }
         };
     });
 };

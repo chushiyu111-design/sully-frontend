@@ -15,6 +15,7 @@ import {
     hasCompleteVoiceCallTranslationTag,
     sanitizeVoiceCallAssistantText,
 } from './voiceCallTextSanitizer';
+import { trackedApiRequest } from '../../utils/apiRequestLedger';
 
 // ─── 类型 ──────────────────────────────────────────────────────────────
 
@@ -1322,7 +1323,7 @@ export class VoiceCallLlm {
         };
 
         /** 内部执行一次 LLM 调用 */
-        const attemptChat = async (): Promise<void> => {
+        const attemptChat = async (attempt: number): Promise<void> => {
             this.abortController = new AbortController();
             this.abortRequested = false;
             let emittedSentence = false;
@@ -1333,7 +1334,15 @@ export class VoiceCallLlm {
 
             const runNonStreamingFallback = async (): Promise<void> => {
                 console.warn('[VoiceCallLlm] Streaming transport failed before output; falling back to non-streaming request');
-                const response = await fetch(url, {
+                const response = await trackedApiRequest({
+                    feature: 'phone',
+                    reason: '语音通话 LLM 非流式回退',
+                    model: this.config.model,
+                    conversationId: this.config.charId,
+                    retryCount: attempt + 1,
+                    userInitiated: true,
+                    url,
+                }, () => fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1341,7 +1350,7 @@ export class VoiceCallLlm {
                     },
                     body: JSON.stringify(buildRequestBody(false)),
                     signal: this.abortController?.signal,
-                });
+                }));
 
                 if (!response.ok) {
                     const errText = await response.text().catch(() => '');
@@ -1369,15 +1378,25 @@ export class VoiceCallLlm {
             };
 
             try {
-                const response = await fetch(url, {
+                const controller = this.abortController;
+                if (!controller) throw new Error('Abort controller was not initialized');
+                const response = await trackedApiRequest({
+                    feature: 'phone',
+                    reason: attempt > 0 ? '语音通话 LLM 自动重试' : '语音通话 LLM 回复',
+                    model: this.config.model,
+                    conversationId: this.config.charId,
+                    retryCount: attempt,
+                    userInitiated: true,
+                    url,
+                }, () => fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${this.config.apiKey || 'sk-none'}`,
                     },
                     body: JSON.stringify(buildRequestBody(true)),
-                    signal: this.abortController.signal,
-                });
+                    signal: controller.signal,
+                }));
 
                 if (!response.ok) {
                     const errText = await response.text().catch(() => '');
@@ -1432,7 +1451,7 @@ export class VoiceCallLlm {
         // ─── 带重试的执行 ───
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-                await attemptChat();
+                await attemptChat(attempt);
                 return; // 成功，直接返回
             } catch (err: any) {
                 if (err.name === 'AbortError' && (this.abortRequested || this.abortController?.signal.aborted)) {

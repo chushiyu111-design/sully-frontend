@@ -218,7 +218,12 @@ export const VectorMemoryExtractor = {
                 const existingHeaders = selectExtractionMemoryHeaders(allHeaders);
                 const formattedMsgs = formatMessages(windowMsgs, charSnapshot.name);
                 const prompt = buildExtractionPrompt(charSnapshot.name, existingHeaders, formattedMsgs);
-                const results = await callLLM(prompt, apiConfig);
+                const results = await callLLM(prompt, apiConfig, undefined, {
+                    reason: '自动记忆提取',
+                    retryReason: '自动记忆提取重试',
+                    conversationId: charId,
+                    userInitiated: false,
+                });
 
                 const windowSourceIds = windowMsgs.map(m => m.id).filter((id): id is number => typeof id === 'number');
                 const newMemIds: string[] = [];
@@ -409,7 +414,12 @@ export const VectorMemoryExtractor = {
             const prompt = buildExtractionPrompt(charName, existingHeaders, formattedMsgs);
 
             try {
-                const results = await callLLM(prompt, apiConfig, signal);
+                const results = await callLLM(prompt, apiConfig, signal, {
+                    reason: '批量记忆提取',
+                    retryReason: '批量记忆提取重试',
+                    conversationId: charId,
+                    userInitiated: true,
+                });
                 if (signal?.aborted) {
                     throw new DOMException('Batch extraction aborted', 'AbortError');
                 }
@@ -580,7 +590,12 @@ export const VectorMemoryExtractor = {
                     charName,
                 );
                 const prompt = buildExtractionPrompt(charName, existingHeaders, formattedMsgs);
-                const results = await callLLM(prompt, apiConfig);
+                const results = await callLLM(prompt, apiConfig, undefined, {
+                    reason: '通话记忆提取',
+                    retryReason: '通话记忆提取重试',
+                    conversationId: charId,
+                    userInitiated: false,
+                });
 
                 const callMemIds: string[] = [];
                 for (const result of results) {

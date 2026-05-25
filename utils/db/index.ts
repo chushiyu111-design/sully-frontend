@@ -13,6 +13,7 @@ import * as bankStore from './bankStore';
 import * as backupStore from './backupStore';
 import * as vectorMemoryStore from './vectorMemoryStore';
 import * as memoryRecordStore from './memoryRecordStore';
+import * as newspaperStore from './newspaperStore';
 
 
 // Compose the same `DB` object shape as the original monolithic file
@@ -200,4 +201,12 @@ export const DB = {
     getMemoryRecordAudioEntry: memoryRecordStore.getMemoryRecordAudioEntry,
     getMemoryRecordAudioByRecordId: memoryRecordStore.getMemoryRecordAudioByRecordId,
     deleteMemoryRecordAudio: memoryRecordStore.deleteMemoryRecordAudio,
+
+    // Yesterday Newspaper
+    buildYesterdayNewspaperId: newspaperStore.buildYesterdayNewspaperId,
+    getYesterdayNewspaper: newspaperStore.getYesterdayNewspaper,
+    saveYesterdayNewspaper: newspaperStore.saveYesterdayNewspaper,
+    markYesterdayNewspaperOpened: newspaperStore.markYesterdayNewspaperOpened,
+    getLatestYesterdayNewspaperByPeriod: newspaperStore.getLatestYesterdayNewspaperByPeriod,
+    getYesterdayNewspapersByCharId: newspaperStore.getYesterdayNewspapersByCharId,
 };

@@ -11,6 +11,7 @@ import { useZhaixinglouStore,SelectedCard } from './zhaixinglouStore';
 import { GothicHeader,GothicDivider,GothicCornerDecor,GothicBackgroundDecor,DECOR } from './components/GothicDecorations';
 import SecondaryApiSettingsModal from './SecondaryApiSettingsModal';
 import { useTarotPreloader } from './AssetPreloader';
+import { useZhaixinglouFonts } from './zhaixinglouFonts';
 // --- Lazy-loaded sub-pages (progressively prefetched by viewState) ---
 const LazyGoldenParticles = React.lazy(() => import('./GoldenParticles'));
 const StarMirror = React.lazy(() => import('./StarMirror'));
@@ -51,6 +52,7 @@ const ZhaixinglouApp: React.FC = () => {
     const [flippingCardId, setFlippingCardId] = useState<string | null>(null);
     const [flipPhase, setFlipPhase] = useState<'idle' | 'toBack' | 'holdBack' | 'toFront' | 'done'>('idle');
     const [showParticles, setShowParticles] = useState(false);
+    const zhaixinglouFonts = useZhaixinglouFonts();
 
     // Preload all tarot images + font in background
     useTarotPreloader();
@@ -451,6 +453,11 @@ const ZhaixinglouApp: React.FC = () => {
                 onAddPreset={p => dispatch({ type: 'ADD_SECONDARY_PRESET', preset: p })}
                 onRemovePreset={id => dispatch({ type: 'REMOVE_SECONDARY_PRESET', id })}
                 onSetModels={m => dispatch({ type: 'SET_SECONDARY_MODELS', models: m })}
+                fontSettings={zhaixinglouFonts.settings}
+                isFontLoading={zhaixinglouFonts.isLoading}
+                onSetFontUrl={zhaixinglouFonts.setFontUrl}
+                onSetFontFile={zhaixinglouFonts.setFontFile}
+                onResetFont={zhaixinglouFonts.resetFont}
             />
         </div>
     );

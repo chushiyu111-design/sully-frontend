@@ -15,3 +15,4 @@ export * from './stt';
 export * from './memoryRecord';
 export * from './theater';
 export * from './loveshow';
+export * from './newspaper';

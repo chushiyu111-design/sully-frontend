@@ -1,4 +1,5 @@
 import type { APIConfig } from '../../types';
+import { trackedApiRequest } from '../apiRequestLedger';
 import { formatMessagesForContext } from '../messageContext';
 import { markSecondaryApiConfigFailure,markSecondaryApiConfigSuccess } from '../runtimeConfig';
 
@@ -10,6 +11,14 @@ export interface ExtractResult {
     emotionalJourney?: string;
     importance?: number;
     reason?: string;
+}
+
+export interface ExtractionLlmTraceOptions {
+    reason?: string;
+    retryReason?: string;
+    conversationId?: string;
+    messageId?: string | number;
+    userInitiated?: boolean;
 }
 
 async function readLlmErrorDetail(response: Response): Promise<string> {
@@ -102,14 +111,28 @@ export async function callLLM(
     prompt: string,
     apiConfig: APIConfig,
     signal?: AbortSignal,
+    trace: ExtractionLlmTraceOptions = {},
 ): Promise<ExtractResult[]> {
+    const baseReason = trace.reason || '记忆提取';
+    const retryReason = trace.retryReason || (baseReason === '记忆提取' ? '记忆提取重试' : `${baseReason}重试`);
     const doCall = async (
         promptText: string,
         maxTokens: number,
+        retryCount = 0,
     ): Promise<{ content: string; truncated: boolean }> => {
         let response: Response;
         try {
-            response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            const url = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+            response = await trackedApiRequest({
+                feature: 'memory',
+                reason: retryCount > 0 ? retryReason : baseReason,
+                model: apiConfig.model,
+                conversationId: trace.conversationId,
+                messageId: trace.messageId,
+                retryCount,
+                userInitiated: trace.userInitiated === true,
+                url,
+            }, () => fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -122,7 +145,7 @@ export async function callLLM(
                     max_tokens: maxTokens,
                 }),
                 signal,
-            });
+            }));
         } catch (error) {
             markSecondaryApiConfigFailure(apiConfig, error);
             throw error;
@@ -214,7 +237,7 @@ export async function callLLM(
                 /content 必须精简，不超过 \d+ 字！emotionalJourney 不超过 \d+ 字！/,
                 'content 不超过 80 字！emotionalJourney 不超过 20 字！',
             );
-        const retry = await doCall(retryPrompt, 6000);
+        const retry = await doCall(retryPrompt, 6000, 1);
         console.log(`🧠 [VectorExtract] Retry: ${retry.content.length} chars, truncated=${retry.truncated}`);
         results = parseContent(retry.content, 'retry');
 

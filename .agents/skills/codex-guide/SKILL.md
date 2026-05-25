@@ -249,17 +249,25 @@ cd csyos-workers && npm run dry-run:staging
 - [明确列出]
 
 ### ✅ 验收标准
-- [ ] `npx tsc --noEmit` 无错误 (前端+后端)
+- [ ] 按 `SULLYTEST2/docs/verification-policy.md` 完成最小必要验证
 - [ ] [功能验证点]
 ```
 
 ---
 
-## 9. 验证清单（每次任务完成后）
+## 9. 验证策略（每次任务完成后）
 
-- [ ] 前端 `npx tsc --noEmit` 通过
-- [ ] 后端 `npx tsc --noEmit` 通过
-- [ ] 前端 `npm run test:run` 通过
-- [ ] 后端 `npm run dry-run:staging` 通过
-- [ ] 无 `any` 类型泄漏
-- [ ] 新增 D1 查询都有 `WHERE user_id = ?`
+默认遵守 `SULLYTEST2/docs/verification-policy.md` 的低负载验证策略，不机械执行全量测试、全量构建或长时间任务。
+
+### 默认优先
+
+- [ ] 阅读本次修改直接相关的调用链
+- [ ] 运行最小相关测试或最小相关检查
+- [ ] 页面改动做浏览器冒烟和控制台检查
+- [ ] 最终回复说明已验证内容与未运行内容
+
+### 按风险升级
+
+- [ ] 修改核心入口、共享 hook、运行时配置、数据库或部署脚本时，扩大到相邻功能验证
+- [ ] 需要全量 `tsc`、`test:run`、build、E2E、dry-run 时，先说明原因和机器负载风险
+- [ ] 用户明确要求发布或重型验证时，再执行对应命令

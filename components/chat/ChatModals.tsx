@@ -2,7 +2,7 @@
 import React,{ useRef,useState } from 'react';
 import Modal from '../os/Modal';
 import { useOS } from '../../context/OSContext';
-import { AppID,CharacterProfile,Message,EmojiCategory } from '../../types';
+import { AppID,CharacterProfile,Message,EmojiCategory,YesterdayNewspaperPeriodType } from '../../types';
 import { CustomStatusTemplate } from '../../types/statusCard';
 
 type CustomTemplateSelection = CustomStatusTemplate & {
@@ -107,6 +107,13 @@ interface ChatModalsProps {
     // Thinking Chain
     showThinking?: boolean;
     onToggleShowThinking?: () => void;
+    // Opt-in automations
+    newspaperEnabled?: boolean;
+    onToggleNewspaper?: () => void;
+    newspaperGenerating?: boolean;
+    onGenerateNewspaperPeriod?: (periodType: YesterdayNewspaperPeriodType) => void;
+    todayScheduleEnabled?: boolean;
+    onToggleTodaySchedule?: () => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -137,6 +144,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     statusBarMode, onStatusBarModeChange,
     customStatusTemplates, onSaveCustomTemplate,
     showThinking, onToggleShowThinking,
+    newspaperEnabled, onToggleNewspaper, newspaperGenerating, onGenerateNewspaperPeriod,
+    todayScheduleEnabled, onToggleTodaySchedule,
 }) => {
     const { openApp } = useOS();
     const bgInputRef = useRef<HTMLInputElement>(null);
@@ -165,6 +174,14 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             const ids = Array.from(visibilitySelection);
             onSaveCategoryVisibility(selectedCategory.id, ids.length > 0 ? ids : undefined);
         }
+        setModalType('none');
+    };
+
+    const handleGenerateNewspaperPeriod = (periodType: YesterdayNewspaperPeriodType, label: string) => {
+        if (!newspaperEnabled || newspaperGenerating || !onGenerateNewspaperPeriod) return;
+        const confirmed = typeof window === 'undefined' || window.confirm(`确认生成${label}？这会调用一次聊天模型。`);
+        if (!confirmed) return;
+        onGenerateNewspaperPeriod(periodType);
         setModalType('none');
     };
 
@@ -243,16 +260,67 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         </p>
                     </div>
 
-                    {/* Thinking Chain Toggle */}
+                    {onToggleShowThinking && (
+                        <div className="pt-2 border-t border-slate-100">
+                            <div className="flex justify-between items-center cursor-pointer" onClick={onToggleShowThinking}>
+                                <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">思考链可见</label>
+                                <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${showThinking ? 'bg-primary' : 'bg-slate-200'}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${showThinking ? 'translate-x-4' : ''}`}></div>
+                                </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                                开启后，支持思考的模型（DeepSeek-R1, Qwen3 等）的推理过程将显示在气泡中的可折叠区域内。
+                            </p>
+                        </div>
+                    )}
+
                     <div className="pt-2 border-t border-slate-100">
-                        <div className="flex justify-between items-center cursor-pointer" onClick={onToggleShowThinking}>
-                            <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">思考链可见</label>
-                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${showThinking ? 'bg-primary' : 'bg-slate-200'}`}>
-                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${showThinking ? 'translate-x-4' : ''}`}></div>
+                        <div className={`flex justify-between items-center ${onToggleNewspaper ? 'cursor-pointer' : 'opacity-60'}`} onClick={onToggleNewspaper}>
+                            <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">昨日来信</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${newspaperEnabled ? 'bg-primary' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${newspaperEnabled ? 'translate-x-4' : ''}`}></div>
                             </div>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                            开启后，支持思考的模型（DeepSeek-R1, Qwen3 等）的推理过程将显示在气泡中的可折叠区域内。
+                            打开后，进入聊天时自动投递「昨日来信」。周章 / 月章需要手动确认生成。
+                        </p>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                disabled={!newspaperEnabled || newspaperGenerating || !onGenerateNewspaperPeriod}
+                                onClick={() => handleGenerateNewspaperPeriod('weekly', '回望·周章')}
+                                className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                                    newspaperEnabled && !newspaperGenerating && onGenerateNewspaperPeriod
+                                        ? 'bg-slate-900 text-white active:scale-95'
+                                        : 'bg-slate-100 text-slate-400'
+                                }`}
+                            >
+                                生成周章
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!newspaperEnabled || newspaperGenerating || !onGenerateNewspaperPeriod}
+                                onClick={() => handleGenerateNewspaperPeriod('monthly', '回望·月章')}
+                                className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                                    newspaperEnabled && !newspaperGenerating && onGenerateNewspaperPeriod
+                                        ? 'bg-slate-900 text-white active:scale-95'
+                                        : 'bg-slate-100 text-slate-400'
+                                }`}
+                            >
+                                生成月章
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100">
+                        <div className={`flex justify-between items-center ${onToggleTodaySchedule ? 'cursor-pointer' : 'opacity-60'}`} onClick={onToggleTodaySchedule}>
+                            <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">今日行程</label>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${todayScheduleEnabled ? 'bg-primary' : 'bg-slate-200'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${todayScheduleEnabled ? 'translate-x-4' : ''}`}></div>
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                            打开后，聊天页才会同步并显示今日行程入口。默认关闭。
                         </p>
                     </div>
 

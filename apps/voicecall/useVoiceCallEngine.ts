@@ -9,7 +9,7 @@
  *   2. 硅基流动 STT 高速识别（~0.5s）
  *   3. LLM 流式输出 + 标点截断 → 每句话立刻送 TTS
  *   4. TTS WebSocket 流式返回 PCM → ring-buffer 连续播放
- *   5. 打断 (Barge-in)：VAD 检测到用户说话 → 停播 + 中止 LLM/TTS
+ *   5. 打断 (Barge-in)：VAD 连续检测到用户说话 → 停播 + 中止 LLM/TTS
  *
  * 依赖：
  *   - @ricky0123/vad-web (MicVAD)
@@ -27,6 +27,7 @@ import { CloudStt } from '../../utils/cloudStt';
 import {
     createVoiceCallTtsClient,
     getVoiceCallTtsProviderName,
+    isElevenLabsV3Model,
     isVoiceCallTtsConfigured,
     type VoiceCallTtsClient,
 } from '../../utils/voiceCallTtsClient';
@@ -34,7 +35,9 @@ import { VoiceCallLlm,VoiceCallLlmConfig } from './voiceCallLlm';
 import { VoiceCallAudioPlayer } from './voiceCallAudioPlayer';
 import {
     sanitizeVoiceCallAssistantText,
+    sanitizeVoiceCallAssistantTextForTts,
     splitVoiceCallForeignSentence,
+    type VoiceCallTtsEmotionTagFormat,
 } from './voiceCallTextSanitizer';
 import type { VoiceCallMode } from './voiceCallTypes';
 import { VectorMemoryRetriever } from '../../utils/vectorMemoryRetriever';
@@ -59,6 +62,11 @@ type VoiceCallTranscriptSource = 'voice' | 'text';
 type VoiceCallForeignLangConfig = { sourceLang: string; targetLang: string };
 
 const ELEVENLABS_TTS_STALL_MS = 15000;
+const BARGE_IN_TTS_GRACE_MS = 700;
+const BARGE_IN_MIN_SPEECH_MS = 750;
+const BARGE_IN_CONFIRMED_AUDIO_WINDOW_MS = 2500;
+const BARGE_IN_AEC_IGNORE_MS = 250;
+const VAD_SAMPLE_RATE = 16000;
 
 export interface VoiceCallSubtitleEntry {
     id: number;
@@ -69,7 +77,10 @@ export interface VoiceCallSubtitleEntry {
 }
 
 export interface VoiceCallQueuedSentence {
+    /** Text sent to TTS. May include provider-specific emotion tags. */
     spokenText: string;
+    /** Text shown in UI/history. Emotion tags are hidden here. */
+    displayText: string;
     translationText: string;
 }
 
@@ -206,9 +217,36 @@ const VOICE_CALL_TTS_LANGUAGE_BOOST_MAP: Record<string, string> = {
     'Spanish': 'Spanish',
 };
 
+const VOICE_CALL_ELEVENLABS_LANGUAGE_CODE_MAP: Record<string, string> = {
+    '中文': 'zh',
+    'Chinese': 'zh',
+    '普通话': 'zh',
+    'English': 'en',
+    '英语': 'en',
+    '日本語': 'ja',
+    '日本语': 'ja',
+    '日语': 'ja',
+    '日文': 'ja',
+    'Japanese': 'ja',
+    '한국어': 'ko',
+    '韩语': 'ko',
+    'Korean': 'ko',
+    'Français': 'fr',
+    '法语': 'fr',
+    'French': 'fr',
+    'Español': 'es',
+    '西班牙语': 'es',
+    'Spanish': 'es',
+};
+
 function resolveVoiceCallLanguageBoost(foreignLang?: VoiceCallForeignLangConfig): string | undefined {
     const sourceLang = foreignLang?.sourceLang?.trim();
     return sourceLang ? VOICE_CALL_TTS_LANGUAGE_BOOST_MAP[sourceLang] : undefined;
+}
+
+function resolveVoiceCallElevenLabsLanguageCode(foreignLang?: VoiceCallForeignLangConfig): string | undefined {
+    const sourceLang = foreignLang?.sourceLang?.trim();
+    return sourceLang ? VOICE_CALL_ELEVENLABS_LANGUAGE_CODE_MAP[sourceLang] : undefined;
 }
 
 export function buildVoiceCallTtsConfig(
@@ -217,9 +255,16 @@ export function buildVoiceCallTtsConfig(
     sampleRate: number = VOICE_CALL_DEFAULT_SAMPLE_RATE,
 ): TtsConfig {
     const languageBoost = resolveVoiceCallLanguageBoost(foreignLang);
+    const elevenLabsLanguageCode = resolveVoiceCallElevenLabsLanguageCode(foreignLang);
     return {
         ...base,
         ...(languageBoost ? { languageBoost } : {}),
+        ...(elevenLabsLanguageCode ? {
+            elevenLabs: {
+                ...base.elevenLabs,
+                languageCode: elevenLabsLanguageCode,
+            },
+        } : {}),
         audioSetting: {
             ...base.audioSetting,
             format: 'pcm' as const,
@@ -228,16 +273,28 @@ export function buildVoiceCallTtsConfig(
     };
 }
 
-export function buildVoiceCallQueuedSentence(sentence: string): VoiceCallQueuedSentence | null {
-    const parsed = splitVoiceCallForeignSentence(sentence);
-    const spokenText = sanitizeVoiceCallAssistantText(parsed.spokenText);
+function getVoiceCallEmotionTagFormat(ttsConfig?: TtsConfig): VoiceCallTtsEmotionTagFormat {
+    if (ttsConfig?.voiceCallProvider === 'elevenlabs') {
+        return ttsConfig.elevenLabs.modelId.trim() === 'eleven_v3' ? 'elevenlabs-v3' : 'strip';
+    }
+    return 'minimax';
+}
 
-    if (!spokenText) {
+export function buildVoiceCallQueuedSentence(sentence: string, ttsConfig?: TtsConfig): VoiceCallQueuedSentence | null {
+    const parsed = splitVoiceCallForeignSentence(sentence);
+    const displayText = sanitizeVoiceCallAssistantText(parsed.spokenText);
+    const spokenText = sanitizeVoiceCallAssistantTextForTts(
+        parsed.spokenText,
+        getVoiceCallEmotionTagFormat(ttsConfig),
+    );
+
+    if (!spokenText && !displayText) {
         return null;
     }
 
     return {
-        spokenText,
+        spokenText: spokenText || displayText,
+        displayText: displayText || spokenText,
         translationText: parsed.translationText,
     };
 }
@@ -336,6 +393,12 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 clearTimeout(sttDebounceTimerRef.current);
                 sttDebounceTimerRef.current = null;
             }
+            if (bargeInTimerRef.current) {
+                clearTimeout(bargeInTimerRef.current);
+                bargeInTimerRef.current = null;
+            }
+            bargeInCandidateStartedAtRef.current = 0;
+            confirmedBargeInAudioUntilRef.current = 0;
             pendingAudioSegmentsRef.current = [];
             // 强制重置"录音中"（防止 onSpeechStart 已触发但 onSpeechEnd 被静音守卫跳过）
             setIsUserSpeaking(false);
@@ -345,6 +408,10 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
     // 打断保护：忽略一段时间内的 VAD 检测（AEC 尾音）
     const ignoreUntilRef = useRef(0);
+    const aiSpeakingStartedAtRef = useRef(0);
+    const bargeInTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const bargeInCandidateStartedAtRef = useRef(0);
+    const confirmedBargeInAudioUntilRef = useRef(0);
 
     // ── Generation counter：防止打断后旧 pipeline 的回调继续执行 ──
     const generationRef = useRef(0);
@@ -444,6 +511,13 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             // ──── LLM + TTS ────
             setEngineState('speaking');
             engineStateRef.current = 'speaking';
+            aiSpeakingStartedAtRef.current = Date.now();
+            confirmedBargeInAudioUntilRef.current = 0;
+            if (bargeInTimerRef.current) {
+                clearTimeout(bargeInTimerRef.current);
+                bargeInTimerRef.current = null;
+            }
+            bargeInCandidateStartedAtRef.current = 0;
             // 闸门期间压制 isSpeaking（音频还没播出来）
             if (!gatedRef.current) {
                 opts.onAISpeakingChange(true);
@@ -456,6 +530,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 console.error('[Engine] Missing module refs');
                 setEngineState('listening');
                 engineStateRef.current = 'listening';
+                aiSpeakingStartedAtRef.current = 0;
                 opts.onAISpeakingChange(false);
                 return;
             }
@@ -480,6 +555,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         turnAudioChunksRef.current = [];
                     }
                     opts.onAISpeakingChange(false);
+                    aiSpeakingStartedAtRef.current = 0;
                     setEngineState('listening');
                     engineStateRef.current = 'listening';
                 }
@@ -507,20 +583,21 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     if (llmComplete && engineActiveRef.current) {
                         setEngineState('listening');
                         engineStateRef.current = 'listening';
+                        aiSpeakingStartedAtRef.current = 0;
                     }
                     return;
                 }
                 degradedDisplaying = true;
                 const sentence = degradedSentenceQueue.shift()!;
-                setAiResponse(sentence.spokenText);
+                setAiResponse(sentence.displayText);
                 setAiTranslation(sentence.translationText);
                 pushSubtitle({
                     role: 'assistant',
-                    text: sentence.spokenText,
+                    text: sentence.displayText,
                     translation: sentence.translationText,
                 });
                 // 显示时长：按字数计算，模拟阅读节奏
-                const displayMs = Math.max(2000, Math.min(6000, sentence.spokenText.length * 120));
+                const displayMs = Math.max(2000, Math.min(6000, sentence.displayText.length * 120));
                 setTimeout(() => {
                     showNextDegradedSentence();
                 }, displayMs);
@@ -543,6 +620,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             let firstAudioReceived = false;
             let ttsStallTimer: ReturnType<typeof setTimeout> | null = null;
             const usingElevenLabs = vcTtsConfig.voiceCallProvider === 'elevenlabs';
+            const elevenLabsTtsStallMs = isElevenLabsV3Model(vcTtsConfig) ? 60000 : ELEVENLABS_TTS_STALL_MS;
 
             const clearTtsStallTimer = () => {
                 if (ttsStallTimer) {
@@ -561,13 +639,16 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
             player.onSentenceStart = (idx) => {
                 if (gen !== generationRef.current) return;
+                if (idx === 0) {
+                    aiSpeakingStartedAtRef.current = Date.now();
+                }
                 const sentence = getVoiceCallPlaybackSentence(sentenceQueue, idx);
                 if (sentence) {
-                    setAiResponse(sentence.spokenText);
+                    setAiResponse(sentence.displayText);
                     setAiTranslation(sentence.translationText);
                     pushSubtitle({
                         role: 'assistant',
-                        text: sentence.spokenText,
+                        text: sentence.displayText,
                         translation: sentence.translationText,
                     });
                 }
@@ -605,6 +686,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 }
                 setTtsDegraded(true);
                 opts.onAISpeakingChange(false);
+                aiSpeakingStartedAtRef.current = 0;
                 setEngineState('processing');
                 engineStateRef.current = 'processing';
                 // 把尚未完成播放的句子逐句入队显示
@@ -619,9 +701,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
                 ttsStallTimer = setTimeout(() => {
                     if (gen !== generationRef.current || ttsConnectFailed || firstAudioReceived) return;
-                    console.warn(`[Engine] ElevenLabs TTS produced no audio within ${ELEVENLABS_TTS_STALL_MS}ms; falling back to text for this turn`);
+                    console.warn(`[Engine] ElevenLabs TTS produced no audio within ${elevenLabsTtsStallMs}ms; falling back to text for this turn`);
                     degradeRemainingToText();
-                }, ELEVENLABS_TTS_STALL_MS);
+                }, elevenLabsTtsStallMs);
             };
 
             const handleTtsError = (errMsg: string) => {
@@ -632,6 +714,15 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     return;
                 }
                 opts.onError?.(errMsg);
+            };
+
+            const handleElevenLabsMidTurnDisconnect = () => {
+                if (!usingElevenLabs || reconnectAttempted || !engineActiveRef.current) {
+                    return false;
+                }
+                reconnectAttempted = true;
+                attemptTtsReconnect();
+                return true;
             };
 
             /** 尝试 TTS mid-turn 重连（最多 1 次） */
@@ -695,6 +786,11 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     attemptTtsReconnect();
                     return;
                 }
+                if (usingElevenLabs && !llmComplete) {
+                    if (handleElevenLabsMidTurnDisconnect()) return;
+                    degradeRemainingToText();
+                    return;
+                }
 
                 tryMarkTtsFinished();
             };
@@ -703,13 +799,14 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             if (!ttsAvailableRef.current) {
                 setTtsDegraded(true);
                 opts.onAISpeakingChange(false);
+                aiSpeakingStartedAtRef.current = 0;
                 setEngineState('processing');
                 engineStateRef.current = 'processing';
 
                 await llm.chat(text, {
                     onSentence: (sentence) => {
                         if (gen !== generationRef.current || !engineActiveRef.current) return;
-                        const queuedSentence = buildVoiceCallQueuedSentence(sentence);
+                        const queuedSentence = buildVoiceCallQueuedSentence(sentence, vcTtsConfig);
                         if (!queuedSentence) {
                             return;
                         }
@@ -725,6 +822,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                             opts.onAISpeakingChange(false);
                             setEngineState('listening');
                             engineStateRef.current = 'listening';
+                            aiSpeakingStartedAtRef.current = 0;
                         }
                     },
                     onError: (errMsg) => {
@@ -734,6 +832,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         opts.onAISpeakingChange(false);
                         setEngineState('listening');
                         engineStateRef.current = 'listening';
+                        aiSpeakingStartedAtRef.current = 0;
                     },
                     onRetrying: () => {
                         if (gen !== generationRef.current) return;
@@ -787,7 +886,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 onSentence: async (sentence) => {
                     if (gen !== generationRef.current || !engineActiveRef.current) return;
 
-                    const queuedSentence = buildVoiceCallQueuedSentence(sentence);
+                    const queuedSentence = buildVoiceCallQueuedSentence(sentence, vcTtsConfig);
                     if (!queuedSentence) {
                         console.warn(`[Engine] Dropped voice-call meta narration: "${sentence}"`);
                         return;
@@ -806,6 +905,11 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     if (ttsReady) {
                         try { ttsWs.sendText(queuedSentence.spokenText); sentSentCount++; } catch (err) {
                             console.error('[Engine] TTS sendText error:', err);
+                            if (usingElevenLabs) {
+                                if (!handleElevenLabsMidTurnDisconnect()) {
+                                    degradeRemainingToText();
+                                }
+                            }
                         }
                         armElevenLabsStallFallback();
                     } else {
@@ -827,6 +931,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         if (!degradedDisplaying && degradedSentenceQueue.length === 0 && engineActiveRef.current) {
                             setEngineState('listening');
                             engineStateRef.current = 'listening';
+                            aiSpeakingStartedAtRef.current = 0;
                         }
                     } else {
                         // TTS 连接中但 LLM 已完成（极端情况）
@@ -835,6 +940,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                                 opts.onAISpeakingChange(false);
                                 setEngineState('listening');
                                 engineStateRef.current = 'listening';
+                                aiSpeakingStartedAtRef.current = 0;
                             }
                             armElevenLabsStallFallback();
                             return;
@@ -844,6 +950,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                             opts.onAISpeakingChange(false);
                             setEngineState('listening');
                             engineStateRef.current = 'listening';
+                            aiSpeakingStartedAtRef.current = 0;
                         }
                     }
                 },
@@ -856,6 +963,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                     opts.onAISpeakingChange(false);
                     setEngineState('listening');
                     engineStateRef.current = 'listening';
+                    aiSpeakingStartedAtRef.current = 0;
                 },
                 onRetrying: () => {
                     if (gen !== generationRef.current) return;
@@ -869,6 +977,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             opts.onError?.(err.message || '处理出错');
             setEngineState('listening');
             engineStateRef.current = 'listening';
+            aiSpeakingStartedAtRef.current = 0;
             optionsRef.current.onAISpeakingChange(false);
         }
     }, [pushSubtitle]);
@@ -926,11 +1035,22 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
 
     // ─── 打断逻辑 ────────────────────────────────────────────────
 
+    const clearBargeInCandidate = useCallback(() => {
+        if (bargeInTimerRef.current) {
+            clearTimeout(bargeInTimerRef.current);
+            bargeInTimerRef.current = null;
+        }
+        bargeInCandidateStartedAtRef.current = 0;
+    }, []);
+
     /**
      * stopCurrentTurn — 轻量打断（文字输入用）
      * 不设置 AEC 延迟，不影响 VAD 检测
      */
     const stopCurrentTurn = useCallback(() => {
+        clearBargeInCandidate();
+        confirmedBargeInAudioUntilRef.current = 0;
+        aiSpeakingStartedAtRef.current = 0;
         generationRef.current++;
         pendingAudioSegmentsRef.current = [];
         if (sttDebounceTimerRef.current) {
@@ -944,13 +1064,15 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         optionsRef.current.onAISpeakingChange(false);
         setEngineState('listening');
         engineStateRef.current = 'listening';
-    }, []);
+    }, [clearBargeInCandidate]);
 
     /** handleBargeIn — VAD 打断（含 AEC 保护延迟） */
     const handleBargeIn = useCallback(() => {
         console.log('[Engine] Barge-in! Stopping AI playback');
         const opts = optionsRef.current;
 
+        clearBargeInCandidate();
+        aiSpeakingStartedAtRef.current = 0;
         generationRef.current++;
 
         pendingAudioSegmentsRef.current = [];
@@ -965,12 +1087,68 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         llmRef.current?.abort();
 
         // AEC 保护（250ms 平衡回声抑制与响应速度）
-        ignoreUntilRef.current = Date.now() + 250;
+        ignoreUntilRef.current = Date.now() + BARGE_IN_AEC_IGNORE_MS;
 
         opts.onAISpeakingChange(false);
         setEngineState('listening');
         engineStateRef.current = 'listening';
-    }, []);
+    }, [clearBargeInCandidate]);
+
+    const scheduleBargeInCandidate = useCallback(() => {
+        if (bargeInTimerRef.current) return;
+
+        const startedAt = Date.now();
+        const startedGeneration = generationRef.current;
+        bargeInCandidateStartedAtRef.current = startedAt;
+
+        const armTimer = (delayMs: number) => {
+            bargeInTimerRef.current = setTimeout(() => {
+                bargeInTimerRef.current = null;
+
+                if (!engineActiveRef.current || optionsRef.current.isMuted || gatedRef.current) {
+                    bargeInCandidateStartedAtRef.current = 0;
+                    return;
+                }
+                if (startedGeneration !== generationRef.current || engineStateRef.current !== 'speaking') {
+                    bargeInCandidateStartedAtRef.current = 0;
+                    return;
+                }
+
+                const now = Date.now();
+                const speechMs = now - startedAt;
+                const aiSpeakingMs = aiSpeakingStartedAtRef.current > 0
+                    ? now - aiSpeakingStartedAtRef.current
+                    : Number.POSITIVE_INFINITY;
+                const retryDelay = Math.max(
+                    BARGE_IN_MIN_SPEECH_MS - speechMs,
+                    BARGE_IN_TTS_GRACE_MS - aiSpeakingMs,
+                    0,
+                );
+
+                if (retryDelay > 0) {
+                    armTimer(retryDelay);
+                    return;
+                }
+
+                confirmedBargeInAudioUntilRef.current = now + BARGE_IN_CONFIRMED_AUDIO_WINDOW_MS;
+                bargeInCandidateStartedAtRef.current = 0;
+                console.log(`[Engine] Barge-in confirmed after ${speechMs}ms of speech`);
+                handleBargeIn();
+            }, Math.max(0, delayMs));
+        };
+
+        const aiSpeakingMs = aiSpeakingStartedAtRef.current > 0
+            ? startedAt - aiSpeakingStartedAtRef.current
+            : Number.POSITIVE_INFINITY;
+        const initialDelay = Math.max(
+            BARGE_IN_MIN_SPEECH_MS,
+            BARGE_IN_TTS_GRACE_MS - aiSpeakingMs,
+            0,
+        );
+
+        console.log(`[Engine] Barge-in candidate: waiting ${initialDelay}ms before interrupt`);
+        armTimer(initialDelay);
+    }, [handleBargeIn]);
 
     /**
      * sendTextMessage — 文字输入入口
@@ -1017,6 +1195,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         turnAudioChunksRef.current = [];
         turnAudioBlobsRef.current = new Map();
         pendingAudioSegmentsRef.current = [];
+        clearBargeInCandidate();
+        confirmedBargeInAudioUntilRef.current = 0;
+        aiSpeakingStartedAtRef.current = 0;
         lastCallHistoryRef.current = [];
         recentContextMessagesRef.current = [];
 
@@ -1122,6 +1303,12 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                         negativeSpeechThreshold: 0.3,
                         redemptionMs: 300,
                         startOnLoad: false,
+                        onVADMisfire: () => {
+                            console.log('[Engine] VAD: misfire');
+                            clearBargeInCandidate();
+                            confirmedBargeInAudioUntilRef.current = 0;
+                            setIsUserSpeaking(false);
+                        },
                         onSpeechStart: () => {
                             // 静音时忽略 VAD 检测 — 不设录音状态、不触发 barge-in
                             if (optionsRef.current.isMuted) return;
@@ -1129,31 +1316,49 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                             if (gatedRef.current) return;
                             console.log('[Engine] VAD: speech start');
                             setIsUserSpeaking(true);
-                            // 打断检查
-                            if (engineStateRef.current === 'speaking') {
-                                handleBargeIn();
+                            // AI 正在说话时先进入候选，持续说话达到阈值才真正 barge-in。
+                            if (engineStateRef.current === 'speaking' && playerRef.current?.isAudiblyPlaying) {
+                                scheduleBargeInCandidate();
                             }
                         },
                         onSpeechEnd: (audio: Float32Array) => {
                             // 静音时忽略 VAD 结束 — 丢弃音频，不走 STT
-                            if (optionsRef.current.isMuted) return;
+                            if (optionsRef.current.isMuted) {
+                                clearBargeInCandidate();
+                                setIsUserSpeaking(false);
+                                return;
+                            }
                             // 闸门期间忽略 VAD
-                            if (gatedRef.current) return;
+                            if (gatedRef.current) {
+                                clearBargeInCandidate();
+                                setIsUserSpeaking(false);
+                                return;
+                            }
                             console.log('[Engine] VAD: speech end');
+                            const now = Date.now();
+                            const wasAudibleAiAtEnd = engineStateRef.current === 'speaking'
+                                && playerRef.current?.isAudiblyPlaying === true;
+                            const wasConfirmedBargeIn = now < confirmedBargeInAudioUntilRef.current;
+                            clearBargeInCandidate();
+                            confirmedBargeInAudioUntilRef.current = 0;
                             setIsUserSpeaking(false);
 
                             // ── 拼接模式：push 片段 + 重置去抖定时器 ──
                             if (!engineActiveRef.current) return;
-                            if (Date.now() < ignoreUntilRef.current) return;
+                            if (wasAudibleAiAtEnd && !wasConfirmedBargeIn) {
+                                console.log('[Engine] Barge-in candidate ended before threshold, ignoring segment');
+                                return;
+                            }
+                            if (now < ignoreUntilRef.current && !wasConfirmedBargeIn) return;
 
                             // 过短片段过滤
-                            if (audio.length < 16000 * 0.3) {
+                            if (audio.length < VAD_SAMPLE_RATE * 0.3) {
                                 console.log('[Engine] Voice segment too short, ignoring');
                                 return;
                             }
 
                             pendingAudioSegmentsRef.current.push(audio);
-                            console.log(`[Engine] Buffered segment ${pendingAudioSegmentsRef.current.length} (${(audio.length / 16000).toFixed(1)}s)`);
+                            console.log(`[Engine] Buffered segment ${pendingAudioSegmentsRef.current.length} (${(audio.length / VAD_SAMPLE_RATE).toFixed(1)}s)`);
 
                             // 重置去抖定时器
                             if (sttDebounceTimerRef.current) {
@@ -1176,8 +1381,8 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                                     offset += seg.length;
                                 }
 
-                                console.log(`[Engine] Concat ${segments.length} segment(s) → ${(totalLen / 16000).toFixed(1)}s total`);
-                                processConcatenatedAudio(concatenated, 16000);
+                                console.log(`[Engine] Concat ${segments.length} segment(s) → ${(totalLen / VAD_SAMPLE_RATE).toFixed(1)}s total`);
+                                processConcatenatedAudio(concatenated, VAD_SAMPLE_RATE);
                             }, STT_DEBOUNCE_MS);
                         },
                     });
@@ -1255,8 +1460,11 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             opts.onError?.(err.message || '语音引擎启动失败');
             setEngineState('idle');
             engineStateRef.current = 'idle';
+            aiSpeakingStartedAtRef.current = 0;
+            clearBargeInCandidate();
+            confirmedBargeInAudioUntilRef.current = 0;
         }
-    }, [processConcatenatedAudio, handleBargeIn, processUserMessage]);
+    }, [clearBargeInCandidate, processConcatenatedAudio, processUserMessage, scheduleBargeInCandidate]);
 
     // ─── 停止引擎 ──────────────────────────────────────────────────
 
@@ -1291,6 +1499,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
             clearTimeout(sttDebounceTimerRef.current);
             sttDebounceTimerRef.current = null;
         }
+        clearBargeInCandidate();
+        confirmedBargeInAudioUntilRef.current = 0;
+        aiSpeakingStartedAtRef.current = 0;
 
         // 停止 VAD
         if (vadRef.current) {
@@ -1339,7 +1550,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
         setIsUserSpeaking(false);
         setVoiceInputMode(runtimeProfileRef.current.voiceInputMode);
         console.log('[Engine] Voice call engine stopped');
-    }, []);
+    }, [clearBargeInCandidate]);
 
     // 组件卸载时自动清理
     useEffect(() => {
@@ -1352,6 +1563,9 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 ttsWsRef.current?.close();
                 llmRef.current?.abort();
                 streamRef.current?.getTracks().forEach(t => t.stop());
+                clearBargeInCandidate();
+                confirmedBargeInAudioUntilRef.current = 0;
+                aiSpeakingStartedAtRef.current = 0;
                 vadRef.current = null;
                 playerRef.current = null;
                 ttsWsRef.current = null;
@@ -1359,7 +1573,7 @@ export function useVoiceCallEngine(options: UseVoiceCallEngineOptions): UseVoice
                 streamRef.current = null;
             }
         };
-    }, []);
+    }, [clearBargeInCandidate]);
 
     // ── 开闸：释放闸门期间缓冲的音频 ──
     const releaseGate = useCallback(() => {

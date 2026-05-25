@@ -7,7 +7,7 @@ import {
   STORE_COURSES,STORE_GAMES,STORE_WORLDBOOKS,STORE_NOVELS,
   STORE_BANK_TX,STORE_BANK_DATA,STORE_XHS_ACTIVITIES,STORE_XHS_STOCK,
   STORE_VECTOR_MEMORIES,STORE_MEMORY_RECORDS,STORE_MEMORY_RECORD_AUDIO,
-  STORE_SCHEDULED,STORE_LETTERS,STORE_VOICE_AUDIO,
+  STORE_SCHEDULED,STORE_LETTERS,STORE_VOICE_AUDIO,STORE_YESTERDAY_NEWSPAPERS,
   DB_NAME_CONST
 } from './core';
 import { normalizeImportedMessage } from '../messageCompatibility';
@@ -114,7 +114,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         });
     };
 
-    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, memoryRecords, memoryRecordAudioRaw, scheduledMessages, letters, voiceAudioRaw] = await Promise.all([
+    const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, vectorMemories, memoryRecords, memoryRecordAudioRaw, scheduledMessages, letters, voiceAudioRaw, yesterdayNewspapers] = await Promise.all([
         getAllFromStore(STORE_CHARACTERS), getAllFromStore(STORE_MESSAGES),
         getAllFromStore(STORE_THEMES), getAllFromStore(STORE_EMOJIS),
         getAllFromStore(STORE_EMOJI_CATEGORIES), getAllFromStore(STORE_ASSETS),
@@ -131,7 +131,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         getAllFromStore(STORE_MEMORY_RECORDS),
         getAllFromStore(STORE_MEMORY_RECORD_AUDIO),
         getAllFromStore(STORE_SCHEDULED), getAllFromStore(STORE_LETTERS),
-        getAllFromStore(STORE_VOICE_AUDIO),
+        getAllFromStore(STORE_VOICE_AUDIO), getAllFromStore(STORE_YESTERDAY_NEWSPAPERS),
     ]);
     const memoryRecordAudio = await serializeMemoryRecordAudio(memoryRecordAudioRaw as MemoryRecordAudio[]);
     const voiceAudio = await serializeVoiceAudio(voiceAudioRaw as VoiceAudioRecord[]);
@@ -150,6 +150,7 @@ export const exportFullData = async (): Promise<Partial<FullBackupData>> => {
         memoryRecords,
         memoryRecordAudio,
         voiceAudio,
+        yesterdayNewspapers,
         scheduledMessages, letters
     };
 };
@@ -168,7 +169,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
         STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
         STORE_VECTOR_MEMORIES,
         STORE_MEMORY_RECORDS, STORE_MEMORY_RECORD_AUDIO,
-        STORE_SCHEDULED, STORE_LETTERS, STORE_VOICE_AUDIO
+        STORE_SCHEDULED, STORE_LETTERS, STORE_VOICE_AUDIO, STORE_YESTERDAY_NEWSPAPERS
     ].filter(name => db.objectStoreNames.contains(name));
 
     const tx = db.transaction(availableStores, 'readwrite');
@@ -299,6 +300,7 @@ export const importFullData = async (data: FullBackupData): Promise<void> => {
     }
     if (importedMemoryRecordAudio.length > 0) clearAndAdd(STORE_MEMORY_RECORD_AUDIO, importedMemoryRecordAudio);
     if (Array.isArray(data.voiceAudio)) replaceStore(STORE_VOICE_AUDIO, importedVoiceAudio);
+    if (Array.isArray(data.yesterdayNewspapers)) replaceStore(STORE_YESTERDAY_NEWSPAPERS, data.yesterdayNewspapers);
     if (data.scheduledMessages) clearAndAdd(STORE_SCHEDULED, data.scheduledMessages);
     if (data.letters) clearAndAdd(STORE_LETTERS, data.letters);
 

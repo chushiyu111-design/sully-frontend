@@ -10,6 +10,12 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../constants/archivePrompts';
 import { formatMessageForContext,shouldIncludeMessageInContext } from '../utils/messageContext';
+import {
+    getGroupDirectorActionContent,
+    getGroupMemberCharacters,
+    parseGroupDirectorActions,
+    resolveGroupDirectorMemberId,
+} from '../utils/groupChatDirector';
 
 // 复用 Chat.tsx 的高颜值样式逻辑，但针对群聊微调
 
@@ -616,12 +622,20 @@ ${logText.substring(0, 10000)}
     // --- Logic: AI Director (The Core Logic) ---
 
     const triggerDirector = async (currentMsgs: Message[]) => {
-        if (!activeGroup || !apiConfig.apiKey) return;
+        if (!activeGroup) return;
+        if (!apiConfig.apiKey) {
+            addToast('请先在设置中配置 API Key', 'error');
+            return;
+        }
         setIsTyping(true);
+        let savedMessageCount = 0;
 
         try {
             // 1. Prepare Group Context
-            const groupMembers = characters.filter(c => activeGroup.members.includes(c.id));
+            const groupMembers = getGroupMemberCharacters(activeGroup, characters);
+            if (groupMembers.length === 0) {
+                throw new Error('群成员数据异常：找不到可发言角色');
+            }
 
             // Calculate Time Context
             const lastMsg = currentMsgs[currentMsgs.length - 1];
@@ -772,38 +786,34 @@ ${recentGroupMsgs}
                 })
             });
 
-            if (!response.ok) throw new Error('Director Failed');
-
-            const data = await safeResponseJson(response);
-            let jsonStr = data.choices[0].message.content;
-
-            jsonStr = jsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
-            const firstBracket = jsonStr.indexOf('[');
-            const lastBracket = jsonStr.lastIndexOf(']');
-            if (firstBracket !== -1 && lastBracket !== -1) {
-                jsonStr = jsonStr.substring(firstBracket, lastBracket + 1);
+            if (!response.ok) {
+                const detail = await response.text().catch(() => '');
+                throw new Error(`AI 请求失败 (${response.status})${detail ? `: ${detail.slice(0, 120)}` : ''}`);
             }
 
-            let actions = [];
-            try {
-                actions = JSON.parse(jsonStr);
-                if (!Array.isArray(actions)) actions = [];
-            } catch (e) {
-                console.error("Director Parse Error", jsonStr);
+            const data = await safeResponseJson(response);
+            const rawDirectorContent = data.choices?.[0]?.message?.content;
+            const actions = parseGroupDirectorActions(rawDirectorContent);
+            if (actions.length === 0) {
+                console.error("Director Parse Error", rawDirectorContent);
+                throw new Error('AI 返回格式无法解析为群聊消息');
             }
 
             // Execute Actions with Splitting Logic
             for (const action of actions) {
-                const targetId = activeGroup.members.find(id => id === action.charId);
+                const targetId = resolveGroupDirectorMemberId(action, activeGroup, characters);
                 if (!targetId) continue;
                 const charName = characters.find(c => c.id === targetId)?.name || '成员';
+                const actionContent = getGroupDirectorActionContent(action);
+                if (!actionContent) continue;
 
                 // 0. Check for Private Message Command (Regex updated for robustness)
                 const privateMatches = [];
                 // Handle multiple private messages in one block or mixed content
                 const privateRegex = /\[\[PRIVATE\s*[:：]\s*([\s\S]*?)\]\]/g;
                 let match;
-                while ((match = privateRegex.exec(action.content)) !== null) {
+                let publicContent = actionContent;
+                while ((match = privateRegex.exec(publicContent)) !== null) {
                     privateMatches.push(match);
                 }
 
@@ -818,19 +828,20 @@ ${recentGroupMsgs}
                                 type: 'text',
                                 content: privateContent
                             });
+                            savedMessageCount += 1;
                             addToast(`${charName} 悄悄对你说: ${privateContent.substring(0, 15)}...`, 'info');
                         }
                         // Strip the private command from the public content
-                        action.content = action.content.replace(m[0], '');
+                        publicContent = publicContent.replace(m[0], '');
                     }
-                    action.content = action.content.trim();
+                    publicContent = publicContent.trim();
 
                     // If content is empty after stripping (pure private message), skip public rendering
-                    if (!action.content) continue;
+                    if (!publicContent) continue;
                 }
 
                 // 1. Check for Emoji Command
-                const emojiMatch = action.content.match(/\[\[SEND_EMOJI:\s*(.*?)\]\]/);
+                const emojiMatch = publicContent.match(/\[\[SEND_EMOJI\s*[:：]\s*(.*?)\]\]/);
                 if (emojiMatch) {
                     const emojiName = emojiMatch[1].trim();
                     const foundEmoji = emojis.find(e => e.name === emojiName);
@@ -842,6 +853,7 @@ ${recentGroupMsgs}
                             type: 'emoji',
                             content: foundEmoji.url
                         });
+                        savedMessageCount += 1;
                         setMessages(await DB.getGroupMessages(activeGroup.id));
                         await new Promise(r => setTimeout(r, 800)); // Delay after emoji
                         continue; // Skip text processing if it was purely an emoji command (or handled here)
@@ -850,7 +862,7 @@ ${recentGroupMsgs}
 
                 // 2. Text Splitting (Standard Chat Logic)
                 // Remove the emoji tag if it was processed, or just clean up
-                let textContent = action.content.replace(/\[\[SEND_EMOJI:.*?\]\]/g, '').trim();
+                let textContent = publicContent.replace(/\[\[SEND_EMOJI\s*[:：].*?\]\]/g, '').trim();
 
                 if (textContent) {
                     // Primary: split on line breaks
@@ -879,14 +891,27 @@ ${recentGroupMsgs}
                             type: 'text',
                             content: chunk
                         });
+                        savedMessageCount += 1;
                         setMessages(await DB.getGroupMessages(activeGroup.id));
                     }
                 }
             }
 
+            if (savedMessageCount === 0) {
+                throw new Error('AI 已返回，但没有匹配到群成员或可显示内容');
+            }
+
         } catch (e: any) {
             console.error(e);
+            addToast(`群聊生成失败: ${e.message || '未知错误'}`, 'error');
         } finally {
+            if (activeGroup) {
+                try {
+                    setMessages(await DB.getGroupMessages(activeGroup.id));
+                } catch (refreshError) {
+                    console.error('Failed to refresh group messages:', refreshError);
+                }
+            }
             setIsTyping(false);
         }
     };

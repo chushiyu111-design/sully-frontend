@@ -20,6 +20,7 @@ const {
         model: 'gpt-4o-mini',
         temperature: 0.85,
         disablePrefill: false,
+        streamChat: false,
     },
     removeApiPreset: vi.fn(),
     setAvailableModels: vi.fn(),
@@ -76,6 +77,17 @@ describe('ApiSettings', () => {
 
         expect(updateApiConfig).toHaveBeenCalledWith(expect.objectContaining({
             temperature: 1.25,
+        }));
+    });
+
+    it('saves the experimental streaming chat toggle', () => {
+        render(<ApiSettings />);
+
+        fireEvent.click(screen.getByLabelText('流式收消息（实验）', { exact: false }));
+        fireEvent.click(screen.getByText('保存配置'));
+
+        expect(updateApiConfig).toHaveBeenCalledWith(expect.objectContaining({
+            streamChat: true,
         }));
     });
 });

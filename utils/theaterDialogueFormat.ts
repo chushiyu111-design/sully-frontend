@@ -15,6 +15,9 @@ export interface TheaterVNPage {
 }
 
 type ParsedSegment = { type: 'dialogue' | 'narration'; text: string };
+type TheaterNavigationMessage = { id: string | number; role: string };
+
+export type TheaterPageIdentity = string;
 
 export interface TheaterAssistantBeatReply {
     beatIndex: number;
@@ -76,6 +79,84 @@ const trimDanglingQuotes = (text: string) => {
     while (value && QUOTE_CHARS.has(value[value.length - 1])) value = value.slice(0, -1).trimEnd();
     return value;
 };
+
+const normalizePageTextForIdentity = (text: string) => text.trim();
+
+const getPageIdentityPrefix = (page: TheaterVNPage): string =>
+    [
+        String(page.msgId),
+        page.role,
+        page.type,
+        normalizePageTextForIdentity(page.text),
+    ].join('\u001f');
+
+export function getTheaterPageIdentity(pages: TheaterVNPage[], index: number): TheaterPageIdentity | null {
+    const page = pages[index];
+    if (!page) return null;
+
+    const prefix = getPageIdentityPrefix(page);
+    let occurrence = 0;
+    for (let i = 0; i <= index; i++) {
+        if (getPageIdentityPrefix(pages[i]) === prefix) occurrence += 1;
+    }
+
+    return `${prefix}\u001f${occurrence}`;
+}
+
+export function findTheaterPageByIdentity(
+    pages: TheaterVNPage[],
+    identity: TheaterPageIdentity | null,
+): number {
+    if (!identity) return -1;
+    for (let i = 0; i < pages.length; i++) {
+        if (getTheaterPageIdentity(pages, i) === identity) return i;
+    }
+    return -1;
+}
+
+export function findFirstTheaterPageIndexByMessageIds(
+    pages: TheaterVNPage[],
+    msgIds: Set<string>,
+): number {
+    if (msgIds.size === 0) return -1;
+    return pages.findIndex(page => msgIds.has(String(page.msgId)));
+}
+
+export function resolveTheaterPageIndexAfterMessagesChange(
+    previousPages: TheaterVNPage[],
+    nextPages: TheaterVNPage[],
+    previousPageIndex: number,
+    previousMessageIds: Set<string>,
+    nextMessages: TheaterNavigationMessage[],
+): number {
+    if (nextPages.length === 0) return 0;
+
+    const newMessages = nextMessages.filter(message => !previousMessageIds.has(String(message.id)));
+    const firstNewUserMessage = newMessages.find(message => message.role === 'user');
+
+    if (firstNewUserMessage) {
+        const firstUserPageIndex = findFirstTheaterPageIndexByMessageIds(
+            nextPages,
+            new Set([String(firstNewUserMessage.id)]),
+        );
+        if (firstUserPageIndex >= 0) return firstUserPageIndex;
+    }
+
+    const newMessageIds = new Set(newMessages.map(message => String(message.id)));
+    const firstNewPageIndex = findFirstTheaterPageIndexByMessageIds(nextPages, newMessageIds);
+    const currentIdentity = getTheaterPageIdentity(previousPages, previousPageIndex);
+    const preservedCurrentPageIndex = findTheaterPageByIdentity(nextPages, currentIdentity);
+    const insertedBeforePreviousEnd = firstNewPageIndex >= 0 && firstNewPageIndex < previousPages.length;
+
+    if (insertedBeforePreviousEnd && preservedCurrentPageIndex >= 0) {
+        return preservedCurrentPageIndex;
+    }
+
+    if (firstNewPageIndex >= 0) return firstNewPageIndex;
+    if (preservedCurrentPageIndex >= 0) return preservedCurrentPageIndex;
+
+    return Math.min(Math.max(previousPageIndex, 0), nextPages.length - 1);
+}
 
 const getPrevNonSpace = (value: string, index: number) => {
     for (let i = index; i >= 0; i--) {

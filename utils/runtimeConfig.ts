@@ -224,6 +224,7 @@ function normalizeApiConfig(
         useGeminiJailbreak: value?.useGeminiJailbreak === true,
         useDeepSeekMode: value?.useDeepSeekMode === true,
         disablePrefill: value?.disablePrefill === true,
+        streamChat: value?.streamChat === true,
     };
 }
 
@@ -278,7 +279,7 @@ function normalizeTtsNumber(value: unknown, fallback: number, min: number, max: 
 
 function normalizeElevenLabsModelId(value: unknown): string {
     const modelId = normalizeString(value);
-    if (!modelId || modelId === 'eleven_v3') {
+    if (!modelId) {
         return DEFAULT_TTS_CONFIG.elevenLabs.modelId;
     }
     return modelId;

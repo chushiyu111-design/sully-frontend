@@ -6,6 +6,8 @@ import PhoneShell from './PhoneShell';
 import { AppID } from '../types';
 import { VirtualTimeProvider } from '../context/VirtualTimeContext';
 import { useOS } from '../context/OSContext';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar as CapStatusBar } from '@capacitor/status-bar';
 
 let launcherRenderCount = 0;
 let statusBarRenderCount = 0;
@@ -111,6 +113,7 @@ vi.mock('../utils/runtimeRecovery', () => ({
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: vi.fn(() => false),
+        getPlatform: vi.fn(() => 'web'),
     },
 }));
 
@@ -130,6 +133,9 @@ vi.mock('@capacitor/status-bar', () => ({
     },
     Style: {
         Dark: 'dark',
+    },
+    Animation: {
+        None: 'NONE',
     },
 }));
 
@@ -157,6 +163,8 @@ describe('PhoneShell active app rendering', () => {
 
         localStorage.clear();
         localStorage.setItem('sullyos_disclaimer_accepted', '1');
+        vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+        vi.mocked(Capacitor.getPlatform).mockReturnValue('web');
 
         window.scrollTo = vi.fn();
         window.requestIdleCallback = ((callback: IdleRequestCallback) => window.setTimeout(() => callback({
@@ -229,6 +237,26 @@ describe('PhoneShell active app rendering', () => {
             </VirtualTimeProvider>,
         );
 
-        expect(await screen.findByText('EchoRecord App')).toBeTruthy();
+        expect(await screen.findByText('EchoRecord App', {}, { timeout: 3000 })).toBeTruthy();
+    });
+
+    it('does not call the Android-only overlay API before hiding the iOS status bar', async () => {
+        vi.useRealTimers();
+        vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+        vi.mocked(Capacitor.getPlatform).mockReturnValue('ios');
+
+        render(
+            <VirtualTimeProvider>
+                <PhoneShell />
+            </VirtualTimeProvider>,
+        );
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(CapStatusBar.setOverlaysWebView).not.toHaveBeenCalled();
+        expect(CapStatusBar.hide).toHaveBeenCalledWith({ animation: 'NONE' });
     });
 });

@@ -1,14 +1,15 @@
 import React,{ useState } from 'react';
 import { X,Sun,Moon,ChatCircleDots,Heart,Translate } from '@phosphor-icons/react';
 import { getVoiceCallModeOptions,type VoiceCallMode } from '../voiceCallTypes';
+import { getVoiceCallForeignLangDraft,type VoiceCallForeignLangConfig } from '../voiceCallForeignLangSettings';
 
 interface ModeSelectOverlayProps {
     charName: string;
     onSelectMode: (mode: VoiceCallMode) => void;
     onCancel: () => void;
     // ─── 外语模式 (Foreign Language) ───
-    foreignLang?: { sourceLang: string; targetLang: string } | null;
-    onForeignLangChange?: (config: { sourceLang: string; targetLang: string } | null) => void;
+    foreignLang?: VoiceCallForeignLangConfig | null;
+    onForeignLangChange?: (config: VoiceCallForeignLangConfig | null) => void;
 }
 
 /** 模式 → 图标映射 */
@@ -32,8 +33,8 @@ const ModeSelectOverlay: React.FC<ModeSelectOverlayProps> = ({
     // ─── 外语模式 (Foreign Language): 本地状态 ───
     const LANG_OPTIONS = ['中文', 'English', '日本語', '한국어', 'Français', 'Español'];
     const isEnabled = !!foreignLang;
-    const [localSourceLang, setLocalSourceLang] = useState(foreignLang?.sourceLang || localStorage.getItem('chat_translate_source_lang') || '日本語');
-    const [localTargetLang, setLocalTargetLang] = useState(foreignLang?.targetLang || localStorage.getItem('chat_translate_lang') || '中文');
+    const [localSourceLang, setLocalSourceLang] = useState(() => foreignLang?.sourceLang || getVoiceCallForeignLangDraft().sourceLang);
+    const [localTargetLang, setLocalTargetLang] = useState(() => foreignLang?.targetLang || getVoiceCallForeignLangDraft().targetLang);
 
     const handleToggle = () => {
         if (isEnabled) {

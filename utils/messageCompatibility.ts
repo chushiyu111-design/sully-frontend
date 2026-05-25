@@ -70,6 +70,7 @@ const TYPE_ALIASES: Record<string, MessageType> = {
 
 const VECTOR_EXCLUDED_TYPES = new Set<string>(['system', 'moments']);
 const VECTOR_EXCLUDED_SOURCES = new Set(['theater', 'date']);
+const VECTOR_ALLOWED_SYSTEM_SOURCES = new Set(['phone', 'story_phone']);
 
 function normalizeKey(value: unknown): string {
     return typeof value === 'string'
@@ -218,9 +219,11 @@ export function normalizeImportedMessage(raw: unknown): Record<string, any> | nu
 export function normalizeMessageForVectorExtraction(raw: unknown): Message | null {
     const normalized = normalizeImportedMessage(raw) as Message | null;
     if (!normalized) return null;
-    if (normalized.role !== 'user' && normalized.role !== 'assistant') return null;
+    const source = String(normalized.metadata?.source || '');
+    const isVectorSystemEvidence = normalized.role === 'system' && VECTOR_ALLOWED_SYSTEM_SOURCES.has(source);
+    if (normalized.role !== 'user' && normalized.role !== 'assistant' && !isVectorSystemEvidence) return null;
     if (VECTOR_EXCLUDED_TYPES.has(normalized.type)) return null;
-    if (VECTOR_EXCLUDED_SOURCES.has(String(normalized.metadata?.source || ''))) return null;
+    if (VECTOR_EXCLUDED_SOURCES.has(source)) return null;
     if (!shouldIncludeMessageInContext(normalized)) return null;
     if (!normalized.content && normalized.type === 'text') return null;
     return normalized;

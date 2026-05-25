@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { PhoneEvidence } from '../types';
 import {
     MAX_PHONE_DETAIL_CHARS,
+    MAX_PHONE_CHAT_DETAIL_CHARS,
     MAX_PHONE_RECORDS_PER_APP,
     MAX_PHONE_RECORDS_TOTAL,
+    buildPhoneSystemMessageDraft,
     normalizeGeneratedPhoneItem,
+    normalizePhoneState,
     normalizeStoredPhoneRecord,
+    phoneStateNeedsNormalization,
     prunePhoneRecords
 } from './CheckPhone';
 
@@ -44,10 +48,10 @@ describe('CheckPhone phone record normalization', () => {
             title: '订单标题',
             detail: '规格 | 已发货',
             timestamp: 1710000000000,
-            systemMessageId: undefined,
             value: '42',
             shop: '旗舰店'
         });
+        expect('systemMessageId' in record).toBe(false);
     });
 
     it('trims overlong generated fields before they are stored', () => {
@@ -93,5 +97,44 @@ describe('CheckPhone phone record normalization', () => {
         expect(pruned.length).toBeLessThanOrEqual(MAX_PHONE_RECORDS_TOTAL);
         expect(pruned.some(record => record.id === 'custom-0')).toBe(false);
         expect(pruned.some(record => record.id === `custom-${MAX_PHONE_RECORDS_TOTAL + 19}`)).toBe(true);
+    });
+
+    it('normalizes legacy phone state before it is mounted into the phone app', () => {
+        const records = Array.from({ length: MAX_PHONE_RECORDS_PER_APP + 2 }, (_, index) => ({
+            id: `chat-${index}`,
+            type: 'chat',
+            title: index === 0 ? ({ label: '旧联系人' } as unknown as string) : `联系人 ${index}`,
+            detail: '长内容'.repeat(2000),
+            timestamp: index + 1,
+            ...(index === 10 ? { largeLegacyPayload: { nested: '不会被继续带入手机记录' } } : {})
+        }));
+
+        const phoneState = { records: records as PhoneEvidence[], customApps: [] };
+        const normalized = normalizePhoneState(phoneState);
+
+        expect(phoneStateNeedsNormalization(phoneState, normalized)).toBe(true);
+        expect(normalized.records.length).toBe(MAX_PHONE_RECORDS_PER_APP);
+        expect(normalized.records[0].title).toBe('联系人 2');
+        expect(normalized.records[0].detail.length).toBeLessThanOrEqual(MAX_PHONE_CHAT_DETAIL_CHARS + 3);
+        expect('largeLegacyPayload' in (normalized.records.find(record => record.id === 'chat-10') as unknown as Record<string, unknown>)).toBe(false);
+    });
+
+    it('keeps chat timeline phone evidence detailed without exceeding record safety limits', () => {
+        const longDetail = '招牌奶茶×1; '.repeat(500);
+        const draft = buildPhoneSystemMessageDraft({
+            type: 'delivery',
+            charName: 'Sully',
+            charAvatar: 'avatar.png',
+            logPrefix: '外卖APP',
+            title: '深夜茶餐厅',
+            detail: longDetail,
+            value: '¥42.00',
+            shop: '已完成'
+        });
+
+        expect(draft.content).toContain('招牌奶茶');
+        expect(String(draft.metadata.phoneDetail).length).toBeLessThanOrEqual(MAX_PHONE_DETAIL_CHARS + 3);
+        expect(draft.metadata.phoneTitle).toBe('深夜茶餐厅');
+        expect(draft.metadata.phoneValue).toBe('¥42.00');
     });
 });

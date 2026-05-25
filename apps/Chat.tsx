@@ -1,7 +1,7 @@
 import React,{ useState,useEffect,useRef,useLayoutEffect,useMemo,useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message,MessageType,MemoryFragment,Emoji,EmojiCategory,AppID } from '../types';
+import { Message,MessageType,MemoryFragment,Emoji,EmojiCategory,AppID,YesterdayNewspaperPeriodType,YesterdayNewspaperRecord } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
 import { parseBilingual } from '../utils/chatParser';
@@ -10,10 +10,14 @@ import { unlockAudio } from './voicecall/unlockAudio';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../constants/archivePrompts';
+import { THINKING_CHAIN_UI_ENABLED } from '../constants';
 import ChatHeader from '../components/chat/ChatHeader';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
-import DateWorldlineOrb from '../components/chat/DateWorldlineOrb';
+import {
+    YesterdayNewspaperDeliveryStack,
+    YesterdayNewspaperModal,
+} from '../components/chat/newspaper/YesterdayNewspaper';
 import Modal from '../components/os/Modal';
 import { useChatAI } from '../hooks/useChatAI';
 import { useVoiceTts } from '../hooks/useVoiceTts';
@@ -44,6 +48,17 @@ import {
     loadCalendarContextForCharacter,
     type CalendarContext,
 } from '../utils/calendarContext';
+import {
+    ensureYesterdayNewspaper,
+    getCurrentNewspaperPeriods,
+    getCurrentYesterdayNewspaper,
+    markCurrentYesterdayNewspaperOpened,
+} from '../utils/yesterdayNewspaper';
+
+const DATE_WORLDLINE_ORB_ENABLED: boolean = false;
+const DateWorldlineOrb = DATE_WORLDLINE_ORB_ENABLED
+    ? React.lazy(() => import('../components/chat/DateWorldlineOrb'))
+    : null;
 
 function toAgentApiConfig(value: unknown): AgentApiConfig | undefined {
     const record = value as Partial<AgentApiConfig> | undefined;
@@ -88,6 +103,25 @@ type ScopedAgentTodayScheduleState = AgentTodayScheduleState & {
     charId: string;
 };
 
+const chatTodayScheduleEnabledKey = (charId: string) => `chat_today_schedule_enabled_${charId}`;
+const chatNewspaperEnabledKey = (charId: string) => `chat_private_newspaper_enabled_${charId}`;
+
+const readChatFeatureToggle = (key: string) => {
+    try {
+        return localStorage.getItem(key) === 'true';
+    } catch {
+        return false;
+    }
+};
+
+const writeChatFeatureToggle = (key: string, value: boolean) => {
+    try {
+        localStorage.setItem(key, value ? 'true' : 'false');
+    } catch {
+        // localStorage may be unavailable in private contexts; keep runtime state working.
+    }
+};
+
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, openApp, appParams, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, ttsConfig, sttConfig, isDataLoaded } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
@@ -105,6 +139,15 @@ const Chat: React.FC = () => {
     const [showManualScheduleForm, setShowManualScheduleForm] = useState(false);
     const [manualScheduleSaving, setManualScheduleSaving] = useState(false);
     const [isTodayScheduleEntryHidden, setIsTodayScheduleEntryHidden] = useState(false);
+    const [todayScheduleFeatureEnabled, setTodayScheduleFeatureEnabled] = useState(() => (
+        activeCharacterId ? readChatFeatureToggle(chatTodayScheduleEnabledKey(activeCharacterId)) : false
+    ));
+    const [newspaperFeatureEnabled, setNewspaperFeatureEnabled] = useState(() => (
+        activeCharacterId ? readChatFeatureToggle(chatNewspaperEnabledKey(activeCharacterId)) : false
+    ));
+    const [yesterdayNewspaperRecords, setYesterdayNewspaperRecords] = useState<YesterdayNewspaperRecord[]>([]);
+    const [activeNewspaperRecordId, setActiveNewspaperRecordId] = useState<string | null>(null);
+    const [isYesterdayNewspaperOpen, setIsYesterdayNewspaperOpen] = useState(false);
     const [manualScheduleDraft, setManualScheduleDraft] = useState({
         startTime: '',
         endTime: '',
@@ -140,6 +183,7 @@ const Chat: React.FC = () => {
     const todayLifeSlowTimerRef = useRef<number | null>(null);
     const todayLifeHideTimerRef = useRef<number | null>(null);
     const lastTodayLifeEnsureKeyRef = useRef('');
+    const yesterdayNewspaperSeqRef = useRef(0);
     const draftPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingDraftPersistRef = useRef<{ key: string; value: string } | null>(null);
     const openingStoryPhoneMsgIdsRef = useRef<Set<number>>(new Set());
@@ -325,7 +369,7 @@ const Chat: React.FC = () => {
     }, [char, userProfile.name]);
 
     const refreshCalendarContext = useCallback(async () => {
-        if (!char?.id) {
+        if (!char?.id || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) {
             setCalendarContext(null);
             return;
         }
@@ -336,7 +380,7 @@ const Chat: React.FC = () => {
     }, [char?.id]);
 
     const refreshTodaySchedule = useCallback(async (visible = false) => {
-        if (!char) return;
+        if (!char || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) return;
         const charIdAtStart = char.id;
         const requestSeq = todayScheduleRequestSeqRef.current + 1;
         todayScheduleRequestSeqRef.current = requestSeq;
@@ -361,9 +405,10 @@ const Chat: React.FC = () => {
     }, [addToast, char, refreshCalendarContext]);
 
     const handleOpenTodaySchedule = useCallback(() => {
+        if (!char?.id || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) return;
         setIsTodayScheduleOpen(true);
         void refreshTodaySchedule(true);
-    }, [refreshTodaySchedule]);
+    }, [char?.id, refreshTodaySchedule]);
 
     const handleSaveManualSchedule = useCallback(async () => {
         if (!char) return;
@@ -406,7 +451,7 @@ const Chat: React.FC = () => {
     }, [addToast, buildTodayLifeContextSnapshot, char, manualScheduleDraft]);
 
     const syncTodayLife = useCallback(async (visible: boolean) => {
-        if (!char) return;
+        if (!char || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) return;
         const charIdAtStart = char.id;
         const recentKey = messagesRef.current
             .filter(message => message.role === 'user' || message.role === 'assistant')
@@ -471,13 +516,192 @@ const Chat: React.FC = () => {
         }
     }, [apiConfig, buildTodayLifeContextSnapshot, char, clearTodayLifeTimers, refreshTodaySchedule]);
 
+    const activeNewspaperRecord = useMemo(
+        () => yesterdayNewspaperRecords.find(record => record.id === activeNewspaperRecordId) || null,
+        [activeNewspaperRecordId, yesterdayNewspaperRecords],
+    );
+    const isYesterdayNewspaperGenerating = useMemo(
+        () => yesterdayNewspaperRecords.some(record => record.status === 'generating'),
+        [yesterdayNewspaperRecords],
+    );
+
+    const refreshYesterdayNewspaper = useCallback(async (
+        forceRegenerate = false,
+        targetPeriod?: YesterdayNewspaperPeriodType,
+    ) => {
+        if (!isDataLoaded || !char || !readChatFeatureToggle(chatNewspaperEnabledKey(char.id))) return;
+        const charIdAtStart = char.id;
+        const requestSeq = yesterdayNewspaperSeqRef.current + 1;
+        yesterdayNewspaperSeqRef.current = requestSeq;
+        const allPeriods = getCurrentNewspaperPeriods();
+        const periods = targetPeriod
+            ? allPeriods.filter(period => period.periodType === targetPeriod)
+            : allPeriods.filter(period => period.periodType === 'daily');
+        const periodOrder = new Map(allPeriods.map((period, index) => [period.periodType, index]));
+        const mergeRecords = (records: YesterdayNewspaperRecord[]) => {
+            setYesterdayNewspaperRecords(prev => {
+                const map = new Map<YesterdayNewspaperPeriodType, YesterdayNewspaperRecord>();
+                prev
+                    .filter(record => record.charId === charIdAtStart)
+                    .forEach(record => map.set(record.periodType || 'daily', record));
+                records.forEach(record => map.set(record.periodType || 'daily', record));
+                return Array.from(map.values())
+                    .sort((a, b) => (periodOrder.get(a.periodType || 'daily') ?? 99) - (periodOrder.get(b.periodType || 'daily') ?? 99));
+            });
+        };
+        const createPendingRecord = (period: typeof periods[number]): YesterdayNewspaperRecord => ({
+            id: `pending-${charIdAtStart}-${period.periodType}-${period.date}`,
+            ownerUserId: '',
+            charId: charIdAtStart,
+            date: period.date,
+            periodType: period.periodType,
+            status: 'generating',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        });
+
+        try {
+            const existingRecords = await Promise.all(
+                periods.map(period => getCurrentYesterdayNewspaper(charIdAtStart, period.periodType)),
+            );
+            if (currentChatCharIdRef.current !== charIdAtStart || yesterdayNewspaperSeqRef.current !== requestSeq) return;
+
+            const initialRecords = periods.map((period, index) => {
+                const existing = existingRecords[index];
+                if (existing && !forceRegenerate) return existing;
+                return createPendingRecord(period);
+            });
+            mergeRecords(initialRecords);
+
+            const usableApiConfig = apiConfig?.baseUrl && apiConfig?.model ? apiConfig : null;
+            for (const period of periods) {
+                const existing = existingRecords.find(record => (record?.periodType || 'daily') === period.periodType);
+                if (existing && !forceRegenerate && existing.status === 'failed') {
+                    continue;
+                }
+                const record = await ensureYesterdayNewspaper({
+                    char,
+                    userProfile,
+                    apiConfig: usableApiConfig,
+                    forceRegenerate,
+                    periodType: period.periodType,
+                });
+                if (currentChatCharIdRef.current !== charIdAtStart || yesterdayNewspaperSeqRef.current !== requestSeq) return;
+                mergeRecords([record]);
+            }
+        } catch (error) {
+            if (currentChatCharIdRef.current !== charIdAtStart || yesterdayNewspaperSeqRef.current !== requestSeq) return;
+            console.warn('[Chat] Yesterday newspaper failed:', error instanceof Error ? error.message : error);
+            mergeRecords(periods.map(period => ({
+                ...createPendingRecord(period),
+                status: 'failed',
+                error: error instanceof Error ? error.message : '昨日来信生成失败',
+                updatedAt: Date.now(),
+            })));
+        }
+    }, [
+        apiConfig?.apiKey,
+        apiConfig?.baseUrl,
+        apiConfig?.model,
+        char?.id,
+        isDataLoaded,
+        userProfile.avatar,
+        userProfile.bio,
+        userProfile.name,
+    ]);
+
+    const handleOpenYesterdayNewspaper = useCallback((record: YesterdayNewspaperRecord) => {
+        if (!char?.id || !record.content) return;
+        setActiveNewspaperRecordId(record.id);
+        setIsYesterdayNewspaperOpen(true);
+        markCurrentYesterdayNewspaperOpened(char.id, record.periodType || 'daily')
+            .then(updated => {
+                if (updated && currentChatCharIdRef.current === char.id) {
+                    setYesterdayNewspaperRecords(prev => prev.map(item => item.id === record.id ? updated : item));
+                }
+            })
+            .catch(error => {
+                console.warn('[Chat] Failed to mark newspaper opened:', error instanceof Error ? error.message : error);
+            });
+    }, [char?.id]);
+
+    const handleRetryYesterdayNewspaper = useCallback((record: YesterdayNewspaperRecord) => {
+        void refreshYesterdayNewspaper(true, record.periodType || 'daily');
+    }, [refreshYesterdayNewspaper]);
+
+    const handleRefreshActiveNewspaper = useCallback(() => {
+        if (!activeNewspaperRecord) return;
+        setIsYesterdayNewspaperOpen(false);
+        void refreshYesterdayNewspaper(true, activeNewspaperRecord.periodType || 'daily');
+    }, [activeNewspaperRecord, refreshYesterdayNewspaper]);
+
+    const handleGenerateNewspaperPeriod = useCallback((periodType: YesterdayNewspaperPeriodType) => {
+        if (!newspaperFeatureEnabled || isYesterdayNewspaperGenerating) return;
+        void refreshYesterdayNewspaper(true, periodType);
+    }, [isYesterdayNewspaperGenerating, newspaperFeatureEnabled, refreshYesterdayNewspaper]);
+
+    const handleToggleTodayScheduleFeature = useCallback(() => {
+        if (!char?.id) return;
+        const next = !todayScheduleFeatureEnabled;
+        writeChatFeatureToggle(chatTodayScheduleEnabledKey(char.id), next);
+        setTodayScheduleFeatureEnabled(next);
+
+        if (next) {
+            localStorage.setItem(`chat_today_schedule_entry_hidden_${char.id}`, 'false');
+            setIsTodayScheduleEntryHidden(false);
+            return;
+        }
+
+        todayLifeEnsureSeqRef.current += 1;
+        todayScheduleRequestSeqRef.current += 1;
+        lastTodayLifeEnsureKeyRef.current = '';
+        clearTodayLifeTimers();
+        setTodayLifeSyncText('');
+        setTodaySchedule(null);
+        setCalendarContext(null);
+        setIsTodayScheduleOpen(false);
+        setIsTodayScheduleLoading(false);
+        setShowManualScheduleForm(false);
+        setIsTodayScheduleEntryHidden(false);
+    }, [char?.id, clearTodayLifeTimers, todayScheduleFeatureEnabled]);
+
+    const handleToggleNewspaperFeature = useCallback(() => {
+        if (!char?.id) return;
+        const next = !newspaperFeatureEnabled;
+        writeChatFeatureToggle(chatNewspaperEnabledKey(char.id), next);
+        setNewspaperFeatureEnabled(next);
+
+        if (next) return;
+
+        yesterdayNewspaperSeqRef.current += 1;
+        setYesterdayNewspaperRecords([]);
+        setActiveNewspaperRecordId(null);
+        setIsYesterdayNewspaperOpen(false);
+    }, [char?.id, newspaperFeatureEnabled]);
+
     useEffect(() => {
         if (!isDataLoaded || !char) return;
+        if (!todayScheduleFeatureEnabled || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) return;
         const timer = window.setTimeout(() => {
             syncTodayLife(true);
         }, 500);
         return () => window.clearTimeout(timer);
-    }, [char?.id, isDataLoaded, syncTodayLife]);
+    }, [char?.id, isDataLoaded, syncTodayLife, todayScheduleFeatureEnabled]);
+
+    useEffect(() => {
+        yesterdayNewspaperSeqRef.current += 1;
+        setIsYesterdayNewspaperOpen(false);
+        setActiveNewspaperRecordId(null);
+        if (!isDataLoaded || !char || !newspaperFeatureEnabled || !readChatFeatureToggle(chatNewspaperEnabledKey(char.id))) {
+            setYesterdayNewspaperRecords([]);
+            return;
+        }
+        setYesterdayNewspaperRecords([]);
+        const timer = window.setTimeout(() => {
+            void refreshYesterdayNewspaper(false);
+        }, 650);
+        return () => window.clearTimeout(timer);
+    }, [char?.id, isDataLoaded, newspaperFeatureEnabled, refreshYesterdayNewspaper]);
 
     useEffect(() => {
         todayLifeEnsureSeqRef.current += 1;
@@ -490,22 +714,28 @@ const Chat: React.FC = () => {
         setShowManualScheduleForm(false);
         if (!char) {
             setIsTodayScheduleEntryHidden(false);
+            setTodayScheduleFeatureEnabled(false);
+            setNewspaperFeatureEnabled(false);
             setCalendarContext(null);
             return;
         }
-        setIsTodayScheduleEntryHidden(localStorage.getItem(`chat_today_schedule_entry_hidden_${char.id}`) === 'true');
+        const nextTodayScheduleEnabled = readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id));
+        const nextNewspaperEnabled = readChatFeatureToggle(chatNewspaperEnabledKey(char.id));
+        setTodayScheduleFeatureEnabled(nextTodayScheduleEnabled);
+        setNewspaperFeatureEnabled(nextNewspaperEnabled);
+        setIsTodayScheduleEntryHidden(nextTodayScheduleEnabled && localStorage.getItem(`chat_today_schedule_entry_hidden_${char.id}`) === 'true');
     }, [char?.id, clearTodayLifeTimers]);
 
     useEffect(() => {
-        if (!isDataLoaded || !char) {
+        if (!isDataLoaded || !char || !todayScheduleFeatureEnabled || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) {
             setCalendarContext(null);
             return;
         }
         void refreshCalendarContext();
-    }, [char?.id, isDataLoaded, refreshCalendarContext]);
+    }, [char?.id, isDataLoaded, refreshCalendarContext, todayScheduleFeatureEnabled]);
 
     useEffect(() => {
-        if (!isDataLoaded || !char) {
+        if (!isDataLoaded || !char || !todayScheduleFeatureEnabled || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) {
             setTodaySchedule(null);
             return;
         }
@@ -513,10 +743,11 @@ const Chat: React.FC = () => {
             void refreshTodaySchedule(false);
         }, 900);
         return () => window.clearTimeout(timer);
-    }, [char?.id, isDataLoaded, refreshTodaySchedule]);
+    }, [char?.id, isDataLoaded, refreshTodaySchedule, todayScheduleFeatureEnabled]);
 
     useEffect(() => {
         const handleScheduleUpdated = (event: Event) => {
+            if (!char?.id || !todayScheduleFeatureEnabled || !readChatFeatureToggle(chatTodayScheduleEnabledKey(char.id))) return;
             const detail = (event as CustomEvent<{ charId?: string }>).detail;
             if (detail?.charId && detail.charId !== char?.id) return;
             void refreshTodaySchedule(false);
@@ -525,7 +756,7 @@ const Chat: React.FC = () => {
         return () => {
             window.removeEventListener(TODAY_SCHEDULE_UPDATED_EVENT_NAME, handleScheduleUpdated);
         };
-    }, [char?.id, refreshTodaySchedule]);
+    }, [char?.id, refreshTodaySchedule, todayScheduleFeatureEnabled]);
 
     useEffect(() => () => {
         todayLifeEnsureSeqRef.current += 1;
@@ -546,6 +777,7 @@ const Chat: React.FC = () => {
     const timestampInterval = activeTheme.timestampIntervalMs ?? 180000; // default 3 minutes
 
     const draftKey = `chat_draft_${activeCharacterId}`;
+    const sendTextInFlightRef = useRef(false);
 
     // AI-visible categories: only those allowed for the active character (excludes __user__-only categories)
     const aiVisibleCategories = useMemo(() => categories.filter(cat => {
@@ -583,7 +815,12 @@ const Chat: React.FC = () => {
         onVoiceMessageSaved: autoTts && characterTtsConfig?.apiKey ? (msgId: number, text: string) => {
             // Fire-and-forget synthesis; synthesizeForMessage now updates metadata internally
             // before removing loading state, preventing the race condition.
-            synthesizeForMessage(msgId, text, characterTtsConfig).then(async (result) => {
+            synthesizeForMessage(msgId, text, characterTtsConfig, undefined, {
+                reason: '自动语音 TTS 合成',
+                conversationId: char?.id,
+                messageId: msgId,
+                userInitiated: false,
+            }).then(async (result) => {
                 if (result) {
                     // Metadata (duration, hasAudio) already updated by synthesizeForMessage.
                     // Just reload messages to refresh the UI from DB.
@@ -1002,6 +1239,9 @@ const Chat: React.FC = () => {
 
     const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
         if (!char || (!input.trim() && !customContent)) return;
+        const isPlainTextSend = !customContent && !customType;
+        if (isPlainTextSend && sendTextInFlightRef.current) return;
+        if (isPlainTextSend) sendTextInFlightRef.current = true;
         const text = customContent || input.trim();
         const type = customType || 'text';
         const timestamp = Date.now();
@@ -1068,6 +1308,7 @@ const Chat: React.FC = () => {
                 return next;
             });
             addToast('消息发送失败，请重试', 'error');
+            if (isPlainTextSend) sendTextInFlightRef.current = false;
             return;
         }
         setMessages(prev => {
@@ -1110,6 +1351,7 @@ const Chat: React.FC = () => {
         }, 0);
 
         // Manual trigger only: Removed auto triggerAI call
+        if (isPlainTextSend) sendTextInFlightRef.current = false;
     };
 
     const handleReroll = async () => {
@@ -1598,7 +1840,12 @@ const Chat: React.FC = () => {
         });
 
         // 2. Start synthesis (uses original text only, not translated)
-        const synthesisPromise = synthesizeForMessage(msg.id, ttsText, characterTtsConfig);
+        const synthesisPromise = synthesizeForMessage(msg.id, ttsText, characterTtsConfig, undefined, {
+            reason: '手动朗读 TTS 合成',
+            conversationId: char?.id,
+            messageId: msg.id,
+            userInitiated: true,
+        });
 
         // 3. Reload messages to show voice bubble at the original position
         await reloadMessages(visibleCountRef.current);
@@ -1739,7 +1986,13 @@ const Chat: React.FC = () => {
             // Strip <语音>/<語音> XML tags for compat messages (原版导入的 text 消息含标签)
             const xmlVoiceMatch = text.match(/^[\s]*<[语語]音>([\s\S]+?)<\/[语語]音>[\s]*$/);
             if (xmlVoiceMatch) text = xmlVoiceMatch[1].trim();
-            synthesizeForMessage(msgId, text, characterTtsConfig).then(async (result) => {
+            synthesizeForMessage(msgId, text, characterTtsConfig, undefined, {
+                reason: 'TTS 失败重试',
+                conversationId: char?.id,
+                messageId: msgId,
+                retryCount: 1,
+                userInitiated: true,
+            }).then(async (result) => {
                 if (result) {
                     await reloadMessages(visibleCountRef.current);
                     addToast('语音合成完成', 'success');
@@ -1895,6 +2148,13 @@ const Chat: React.FC = () => {
     const scopedTodaySchedule = todaySchedule?.charId === char?.id ? todaySchedule : null;
     const todayScheduleItems = scopedTodaySchedule?.effectiveItems || [];
     const todayScheduleRevisionCount = scopedTodaySchedule?.revisions?.length || 0;
+    const todayScheduleUserLabel = userProfile.name?.trim() || '你';
+    const formatTodayScheduleText = (value?: string | null) => {
+        if (!value) return '';
+        return value
+            .replace(/\buser\b/gi, todayScheduleUserLabel)
+            .replace(/用户/g, todayScheduleUserLabel);
+    };
     const todayCalendarLabels = calendarContext?.todayLabels || [];
     const { visibleLabels: visibleTodayCalendarLabels, hiddenCount: hiddenTodayCalendarLabelCount } = getCalendarDisplayLabels(todayCalendarLabels);
     const todayScheduleBadgeText = scopedTodaySchedule?.status === 'failed'
@@ -2158,8 +2418,14 @@ const Chat: React.FC = () => {
                         addToast('自定义方案已保存', 'success');
                     }
                 }}
-                showThinking={char.showThinking !== false}
-                onToggleShowThinking={() => updateCharacter(char.id, { showThinking: char.showThinking === false ? true : false })}
+                showThinking={THINKING_CHAIN_UI_ENABLED && char.showThinking !== false}
+                onToggleShowThinking={THINKING_CHAIN_UI_ENABLED ? () => updateCharacter(char.id, { showThinking: char.showThinking === false ? true : false }) : undefined}
+                newspaperEnabled={newspaperFeatureEnabled}
+                onToggleNewspaper={handleToggleNewspaperFeature}
+                newspaperGenerating={isYesterdayNewspaperGenerating}
+                onGenerateNewspaperPeriod={handleGenerateNewspaperPeriod}
+                todayScheduleEnabled={todayScheduleFeatureEnabled}
+                onToggleTodaySchedule={handleToggleTodayScheduleFeature}
             />
 
             <ChatHeader
@@ -2177,7 +2443,7 @@ const Chat: React.FC = () => {
                 onCallPress={() => { unlockAudio(); openApp(AppID.VoiceCall, { direction: 'outgoing' }); }}
             />
 
-            {!selectionMode && !isTodayScheduleEntryHidden && (
+            {!selectionMode && todayScheduleFeatureEnabled && !isTodayScheduleEntryHidden && (
                 <div className="pointer-events-none absolute right-3 top-[calc(6rem+0.75rem)] z-20 flex justify-end">
                     <div className="font-schedule-serif pointer-events-auto inline-flex max-w-[82vw] items-center gap-1 overflow-hidden rounded-full border border-[#eadfd2]/80 bg-[#fffaf2]/80 shadow-[0_10px_28px_rgba(80,62,44,0.08)] backdrop-blur-md">
                         <button
@@ -2206,7 +2472,7 @@ const Chat: React.FC = () => {
                 </div>
             )}
 
-            {!selectionMode && isTodayScheduleEntryHidden && (
+            {!selectionMode && todayScheduleFeatureEnabled && isTodayScheduleEntryHidden && (
                 <div className="pointer-events-none absolute right-3 top-[calc(6rem+0.75rem)] z-20 flex justify-end">
                     <button
                         type="button"
@@ -2222,15 +2488,17 @@ const Chat: React.FC = () => {
                 </div>
             )}
 
-            {!selectionMode && (
-                <DateWorldlineOrb
-                    charId={char.id}
-                    charName={char.name}
-                    userName={userProfile.name}
-                    isBusy={isTyping}
-                    onStartDiscussion={handleWorldlineStartDiscussion}
-                    onLaunch={handleWorldlineLaunch}
-                />
+            {DATE_WORLDLINE_ORB_ENABLED && DateWorldlineOrb && !selectionMode && (
+                <React.Suspense fallback={null}>
+                    <DateWorldlineOrb
+                        charId={char.id}
+                        charName={char.name}
+                        userName={userProfile.name}
+                        isBusy={isTyping}
+                        onStartDiscussion={handleWorldlineStartDiscussion}
+                        onLaunch={handleWorldlineLaunch}
+                    />
+                </React.Suspense>
             )}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
@@ -2253,11 +2521,19 @@ const Chat: React.FC = () => {
                     </div>
                 )}
 
-                {todayLifeSyncText && (
+                {todayScheduleFeatureEnabled && todayLifeSyncText && (
                     <div className="mx-auto mb-5 flex w-fit max-w-[82%] items-center gap-2 rounded-full border border-white/60 bg-white/65 px-3.5 py-2 text-[11px] text-slate-500 shadow-sm backdrop-blur-md">
                         <span className={`h-1.5 w-1.5 rounded-full ${todayLifeSyncTone === 'ready' ? 'bg-emerald-300' : 'bg-slate-300'}`} />
                         <span>{todayLifeSyncText}</span>
                     </div>
+                )}
+
+                {!selectionMode && newspaperFeatureEnabled && yesterdayNewspaperRecords.length > 0 && (
+                    <YesterdayNewspaperDeliveryStack
+                        records={yesterdayNewspaperRecords}
+                        onOpen={handleOpenYesterdayNewspaper}
+                        onRetry={handleRetryYesterdayNewspaper}
+                    />
                 )}
 
                 {displayMessages.map((m, i) => {
@@ -2309,7 +2585,7 @@ const Chat: React.FC = () => {
                                 statusCardData={isLastAssistant && hasStatusCardMode ? char.lastStatusCard : undefined}
                                 onRetryInnerVoice={isLastAssistant && statusMode !== 'off' && statusMode !== 'story_phone' ? retryMindSnapshot : undefined}
                                 onOpenStoryPhone={isLastAssistant && statusMode === 'story_phone' && !m.metadata?.storyPhoneConsumed ? handleOpenStoryPhone : undefined}
-                                showThinking={char.showThinking !== false}
+                                showThinking={THINKING_CHAIN_UI_ENABLED && char.showThinking !== false}
                             />
                         </div>
                     );
@@ -2395,7 +2671,20 @@ const Chat: React.FC = () => {
                 />
             </div>
 
-            {isTodayScheduleOpen && (
+            {newspaperFeatureEnabled && isYesterdayNewspaperOpen && activeNewspaperRecord?.content && (
+                <YesterdayNewspaperModal
+                    report={activeNewspaperRecord.content}
+                    charName={activeCharName}
+                    userName={userProfile.name || '你'}
+                    onClose={() => setIsYesterdayNewspaperOpen(false)}
+                    onRefresh={handleRefreshActiveNewspaper}
+                    isRefreshing={isYesterdayNewspaperGenerating}
+                    onSaved={() => addToast('小报原图已保存', 'success')}
+                    onSaveFailed={() => addToast('小报导出失败，可以稍后再试', 'error')}
+                />
+            )}
+
+            {todayScheduleFeatureEnabled && isTodayScheduleOpen && (
                 <div className="fixed inset-0 z-[96] flex items-end justify-center bg-[#211918]/35 px-0 pb-[calc(var(--safe-bottom)+8px)] pt-[calc(var(--safe-top)+12px)] backdrop-blur-sm sm:items-center sm:p-4">
                     <div className="font-schedule-serif flex max-h-[calc(100dvh-var(--safe-top)-var(--safe-bottom)-20px)] w-full max-w-xl flex-col overflow-hidden rounded-t-[28px] border border-[#f0e7dc] bg-[#fbf7ef] shadow-[0_24px_80px_rgba(42,28,22,0.24)] sm:max-h-[86vh] sm:rounded-[28px]">
                         <div className="flex shrink-0 items-start justify-between border-b border-[#eadfd2] bg-[#fffbf5]/70 px-5 py-4">
@@ -2495,7 +2784,7 @@ const Chat: React.FC = () => {
                                         <input
                                             value={manualScheduleDraft.reason}
                                             onChange={event => setManualScheduleDraft(prev => ({ ...prev, reason: event.target.value }))}
-                                            placeholder="原因，例如：刚才答应见面 / 临时改口 / 用户需要照顾"
+                                            placeholder={`原因，例如：刚才答应见面 / 临时改口 / ${todayScheduleUserLabel}需要照顾`}
                                             className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-rose-200"
                                         />
                                         <textarea
@@ -2585,18 +2874,18 @@ const Chat: React.FC = () => {
                                                         </span>
                                                     </div>
                                                     <div className={`text-[17px] font-normal leading-snug tracking-[0.04em] text-[#3f342f] ${item.cancelled ? 'line-through decoration-[#a79a8f] decoration-2' : ''}`}>
-                                                        {item.title}
+                                                        {formatTodayScheduleText(item.title)}
                                                     </div>
                                                     <p className={`mt-2 text-[14px] leading-relaxed tracking-[0.02em] text-[#6f6259] ${item.cancelled ? 'line-through decoration-[#c8baae]' : ''}`}>
-                                                        {item.description}
+                                                        {formatTodayScheduleText(item.description)}
                                                     </p>
                                                     {item.place && (
-                                                        <p className="mt-2 font-sans text-[11px] text-[#9a8d82]">地点：{item.place}</p>
+                                                        <p className="mt-2 font-sans text-[11px] text-[#9a8d82]">地点：{formatTodayScheduleText(item.place)}</p>
                                                     )}
                                                     {(item.reason || item.innerVoice) && (
                                                         <div className="mt-3 border-l border-[#e7d9cc] pl-3 text-[12px] leading-relaxed tracking-[0.02em] text-[#827469]">
-                                                            {item.reason && <p><span className="font-sans text-[10px] font-semibold text-[#b0968b]">变更原因：</span>{item.reason}</p>}
-                                                            {item.innerVoice && <p className="mt-1 text-[#c47770]"><span className="font-sans text-[10px] font-semibold text-[#b0968b]">心声：</span>{item.innerVoice}</p>}
+                                                            {item.reason && <p><span className="font-sans text-[10px] font-semibold text-[#b0968b]">变更原因：</span>{formatTodayScheduleText(item.reason)}</p>}
+                                                            {item.innerVoice && <p className="mt-1 text-[#c47770]"><span className="font-sans text-[10px] font-semibold text-[#b0968b]">心声：</span>{formatTodayScheduleText(item.innerVoice)}</p>}
                                                         </div>
                                                     )}
                                                 </div>

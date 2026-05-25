@@ -4,6 +4,7 @@ import { RealtimeConfig } from './realtime';
 import { CharacterProfile,GroupProfile,Worldbook } from './character';
 import { ChatTheme,Message,Emoji,EmojiCategory,VectorMemory } from './chat';
 import { MemoryRecord,SerializedMemoryRecordAudio } from './memoryRecord';
+import { YesterdayNewspaperRecord } from './newspaper';
 import { RoomTodo,RoomNote } from './room';
 import {
   SocialPost,SubAccount,SocialAppProfile,GalleryImage,DiaryEntry,
@@ -105,6 +106,7 @@ export interface FullBackupData {
     memoryRecords?: MemoryRecord[];
     memoryRecordAudio?: SerializedMemoryRecordAudio[];
     voiceAudio?: SerializedVoiceAudio[];
+    yesterdayNewspapers?: YesterdayNewspaperRecord[];
     musicAssets?: BackupMusicAssets;
 
     // Upstream SullyOS Memory Palace / Pixel Home stores

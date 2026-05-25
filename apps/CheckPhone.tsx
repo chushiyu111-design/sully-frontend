@@ -25,6 +25,7 @@ export const MAX_PHONE_VISIBLE_RECORDS = 60;
 export const MAX_PHONE_TITLE_CHARS = 96;
 export const MAX_PHONE_DETAIL_CHARS = 2400;
 export const MAX_PHONE_CHAT_DETAIL_CHARS = 6000;
+export const MAX_PHONE_PROMPT_MESSAGES = 50;
 const MAX_PHONE_META_CHARS = 160;
 const MAX_CHAT_DETAIL_LINES_RENDERED = 120;
 
@@ -87,18 +88,23 @@ export const normalizeStoredPhoneRecord = (record: PhoneEvidence): PhoneEvidence
     const unsafeRecord = record as unknown as Record<string, unknown>;
     const type = normalizePhoneText(unsafeRecord.type, 'generic', MAX_PHONE_META_CHARS);
     const detailLimit = type === 'chat' ? MAX_PHONE_CHAT_DETAIL_CHARS : MAX_PHONE_DETAIL_CHARS;
+    const systemMessageId = typeof unsafeRecord.systemMessageId === 'number' ? unsafeRecord.systemMessageId : undefined;
+    const value = normalizeOptionalPhoneText(unsafeRecord.value);
+    const shop = normalizeOptionalPhoneText(unsafeRecord.shop);
 
-    return {
-        ...record,
+    const normalized: PhoneEvidence = {
         id: normalizePhoneText(unsafeRecord.id, `rec-${normalizeTimestamp(unsafeRecord.timestamp) || 'unknown'}`, MAX_PHONE_META_CHARS),
         type,
         title: normalizePhoneText(unsafeRecord.title, 'Unknown', MAX_PHONE_TITLE_CHARS),
         detail: normalizePhoneText(unsafeRecord.detail, '...', detailLimit),
         timestamp: normalizeTimestamp(unsafeRecord.timestamp),
-        systemMessageId: typeof unsafeRecord.systemMessageId === 'number' ? unsafeRecord.systemMessageId : undefined,
-        value: normalizeOptionalPhoneText(unsafeRecord.value),
-        shop: normalizeOptionalPhoneText(unsafeRecord.shop)
     };
+
+    if (systemMessageId !== undefined) normalized.systemMessageId = systemMessageId;
+    if (value !== undefined) normalized.value = value;
+    if (shop !== undefined) normalized.shop = shop;
+
+    return normalized;
 };
 
 export const prunePhoneRecords = (records: PhoneEvidence[]): PhoneEvidence[] => {
@@ -123,6 +129,81 @@ export const prunePhoneRecords = (records: PhoneEvidence[]): PhoneEvidence[] => 
         .sort((a, b) => (a.record.timestamp - b.record.timestamp) || (a.index - b.index))
         .map(item => item.record);
 };
+
+export interface NormalizedPhoneState {
+    records: PhoneEvidence[];
+    customApps: PhoneCustomApp[];
+}
+
+export const normalizePhoneState = (
+    phoneState: CharacterProfile['phoneState'] | undefined,
+): NormalizedPhoneState => ({
+    records: prunePhoneRecords(phoneState?.records || []),
+    customApps: phoneState?.customApps || [],
+});
+
+const phoneRecordEquals = (a: PhoneEvidence, b: PhoneEvidence): boolean => {
+    const aKeys = Object.keys(a as unknown as Record<string, unknown>).sort().join('|');
+    const bKeys = Object.keys(b as unknown as Record<string, unknown>).sort().join('|');
+
+    return (
+        aKeys === bKeys &&
+        a.id === b.id &&
+        a.type === b.type &&
+        a.title === b.title &&
+        a.detail === b.detail &&
+        a.timestamp === b.timestamp &&
+        a.systemMessageId === b.systemMessageId &&
+        a.value === b.value &&
+        a.shop === b.shop
+    );
+};
+
+export const phoneStateNeedsNormalization = (
+    current: CharacterProfile['phoneState'] | undefined,
+    normalized = normalizePhoneState(current),
+): boolean => {
+    const records = current?.records || [];
+    if (records.length !== normalized.records.length) return true;
+    for (let i = 0; i < records.length; i += 1) {
+        if (!phoneRecordEquals(records[i], normalized.records[i])) return true;
+    }
+    return false;
+};
+
+export function buildPhoneSystemMessageDraft(input: {
+    type: string;
+    charName: string;
+    charAvatar?: string;
+    logPrefix: string;
+    title: string;
+    detail: string;
+    value?: string;
+    shop?: string;
+}) {
+    const detailLimit = input.type === 'chat' ? MAX_PHONE_CHAT_DETAIL_CHARS : MAX_PHONE_DETAIL_CHARS;
+    const phoneDetail = normalizePhoneText(input.detail, '', detailLimit);
+    const inlineDetail = phoneDetail.replace(/\n/g, ' ');
+    const phoneLabel = input.logPrefix || input.type;
+    const content = input.type === 'chat'
+        ? `[系统: ${input.charName} 与 "${input.title}" 的聊天记录-内容涉及: ${inlineDetail}]`
+        : `[系统: ${input.charName}的手机(${phoneLabel}) 显示: ${input.title} - ${inlineDetail}]`;
+
+    return {
+        content,
+        metadata: {
+            source: 'phone',
+            phoneType: input.type,
+            phoneLabel,
+            phoneTitle: limitPhoneText(input.title, MAX_PHONE_TITLE_CHARS),
+            phoneDetail,
+            phoneValue: input.value ? limitPhoneText(input.value, MAX_PHONE_META_CHARS) : null,
+            phoneShop: input.shop ? limitPhoneText(input.shop, MAX_PHONE_META_CHARS) : null,
+            charName: input.charName,
+            charAvatar: input.charAvatar
+        }
+    };
+}
 
 // --- Debug Component ---
 const LayoutInspector: React.FC = () => {
@@ -196,15 +277,23 @@ const CheckPhone: React.FC = () => {
             .sort((a, b) => b.timestamp - a.timestamp)
             .slice(0, MAX_PHONE_VISIBLE_RECORDS);
 
+    const normalizeTargetCharacter = (character: CharacterProfile): CharacterProfile => {
+        const normalizedPhoneState = normalizePhoneState(character.phoneState);
+        if (!phoneStateNeedsNormalization(character.phoneState, normalizedPhoneState)) return character;
+        updateCharacter(character.id, { phoneState: normalizedPhoneState });
+        return { ...character, phoneState: normalizedPhoneState };
+    };
+
     useEffect(() => {
         if (targetChar) {
             // Keep targetChar in sync with global state if it updates (e.g. deletion)
             const updated = characters.find(c => c.id === targetChar.id);
             if (updated) {
-                setTargetChar(updated);
+                const normalizedCharacter = normalizeTargetCharacter(updated);
+                setTargetChar(normalizedCharacter);
                 // Update selected record ref if open
                 if (selectedChatRecord) {
-                    const freshRecord = updated.phoneState?.records?.find(r => r.id === selectedChatRecord.id);
+                    const freshRecord = normalizedCharacter.phoneState?.records?.find(r => r.id === selectedChatRecord.id);
                     if (freshRecord) setSelectedChatRecord(normalizeStoredPhoneRecord(freshRecord));
                 }
             }
@@ -233,7 +322,7 @@ const CheckPhone: React.FC = () => {
     }, [selectedChatRecord?.detail, activeAppId]);
 
     const handleSelectChar = (c: CharacterProfile) => {
-        setTargetChar(c);
+        setTargetChar(normalizeTargetCharacter(c));
         setView('phone');
         setActiveAppId('home');
     };
@@ -322,7 +411,7 @@ const CheckPhone: React.FC = () => {
         try {
             // Include full memory details for accuracy
             const context = ContextBuilder.buildCoreContext(targetChar, userProfile, true);
-            const msgs = await DB.getMessagesByCharId(targetChar.id);
+            const msgs = await DB.getRecentMessagesByCharId(targetChar.id, MAX_PHONE_PROMPT_MESSAGES);
 
             const lastMsg = msgs[msgs.length - 1];
             const timeGap = getTimeGapHint(lastMsg?.timestamp);
@@ -461,33 +550,24 @@ ${cityContext}
                     const recordTitle = normalizedItem.title;
                     const recordDetail = normalizedItem.detail;
 
-                    let sysMsgContent = "";
-                    if (type === 'chat') {
-                        sysMsgContent = `[系统: ${targetChar.name} 与 "${recordTitle}" 的聊天记录-内容涉及: ${recordDetail.replace(/\n/g, ' ')}]`;
-                    } else {
-                        sysMsgContent = `[系统: ${targetChar.name}的手机(${logPrefix}) 显示: ${recordTitle} - ${recordDetail}]`;
-                    }
+                    const systemDraft = buildPhoneSystemMessageDraft({
+                        type,
+                        charName: targetChar.name,
+                        charAvatar: targetChar.avatar,
+                        logPrefix,
+                        title: recordTitle,
+                        detail: recordDetail,
+                        value: normalizedItem.value,
+                        shop: normalizedItem.shop
+                    });
 
-                    await DB.saveMessage({
+                    const systemMessageId = await DB.saveMessage({
                         charId: targetChar.id,
                         role: 'system',
                         type: 'text',
-                        content: sysMsgContent,
-                        metadata: {
-                            source: 'phone',
-                            phoneType: type,
-                            phoneLabel: logPrefix || type,
-                            phoneTitle: recordTitle,
-                            phoneDetail: recordDetail,
-                            phoneValue: normalizedItem.value || null,
-                            phoneShop: normalizedItem.shop || null,
-                            charName: targetChar.name,
-                            charAvatar: targetChar.avatar
-                        }
+                        content: systemDraft.content,
+                        metadata: systemDraft.metadata
                     });
-
-                    const currentMsgs = await DB.getMessagesByCharId(targetChar.id);
-                    const savedMsg = currentMsgs[currentMsgs.length - 1];
 
                     newRecordsToAdd.push({
                         id: `rec-${Date.now()}-${Math.random()}`,
@@ -497,7 +577,7 @@ ${cityContext}
                         value: normalizedItem.value,
                         shop: normalizedItem.shop,
                         timestamp: Date.now(),
-                        systemMessageId: savedMsg?.id
+                        systemMessageId
                     });
 
                     await new Promise(r => setTimeout(r, 50));

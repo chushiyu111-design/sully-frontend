@@ -107,23 +107,63 @@ describe('character TTS voice binding', () => {
         const base = {
             ...buildTtsConfig('global-voice'),
             languageBoost: 'Chinese',
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                languageCode: 'zh',
+            },
         };
 
         expect(buildVoiceCallTtsConfig(base).languageBoost).toBe('Chinese');
+        expect(buildVoiceCallTtsConfig(base).elevenLabs.languageCode).toBe('zh');
         expect(buildVoiceCallTtsConfig(base, { sourceLang: '日本語', targetLang: '中文' }).languageBoost).toBe('Japanese');
+        expect(buildVoiceCallTtsConfig(base, { sourceLang: '日本語', targetLang: '中文' }).elevenLabs.languageCode).toBe('ja');
         expect(buildVoiceCallTtsConfig(base, { sourceLang: '中文', targetLang: 'English' }).languageBoost).toBe('Chinese');
+        expect(buildVoiceCallTtsConfig(base, { sourceLang: '中文', targetLang: 'English' }).elevenLabs.languageCode).toBe('zh');
     });
 
     it('keeps translation paired with the sentence that is currently playing', () => {
         const first = buildVoiceCallQueuedSentence('こんにちは。[[翻译:你好。]]');
         const second = buildVoiceCallQueuedSentence('今日は何してたの？[[翻译:今天在做什么呀？]]');
 
-        expect(first).toEqual({ spokenText: 'こんにちは。', translationText: '你好。' });
-        expect(second).toEqual({ spokenText: '今日は何してたの？', translationText: '今天在做什么呀？' });
+        expect(first).toEqual({ spokenText: 'こんにちは。', displayText: 'こんにちは。', translationText: '你好。' });
+        expect(second).toEqual({ spokenText: '今日は何してたの？', displayText: '今日は何してたの？', translationText: '今天在做什么呀？' });
 
         const queue = [first!, second!];
         expect(getVoiceCallPlaybackSentence(queue, 0)?.translationText).toBe('你好。');
         expect(getVoiceCallPlaybackSentence(queue, 1)?.translationText).toBe('今天在做什么呀？');
+    });
+
+    it('keeps emotion tags for supported TTS engines while hiding them from subtitles', () => {
+        const minimax = buildVoiceCallQueuedSentence('(laughs softly) Alright, I am coming.');
+        const elevenV3 = buildVoiceCallQueuedSentence('(sighs) Alright, I am coming.', {
+            ...buildTtsConfig(),
+            voiceCallProvider: 'elevenlabs',
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                modelId: 'eleven_v3',
+            },
+        });
+        const elevenFlash = buildVoiceCallQueuedSentence('(sighs) Alright, I am coming.', {
+            ...buildTtsConfig(),
+            voiceCallProvider: 'elevenlabs',
+            elevenLabs: {
+                ...DEFAULT_TTS_CONFIG.elevenLabs,
+                modelId: 'eleven_flash_v2_5',
+            },
+        });
+
+        expect(minimax).toMatchObject({
+            spokenText: '(laughs) Alright, I am coming.',
+            displayText: 'Alright, I am coming.',
+        });
+        expect(elevenV3).toMatchObject({
+            spokenText: '[sighs] Alright, I am coming.',
+            displayText: 'Alright, I am coming.',
+        });
+        expect(elevenFlash).toMatchObject({
+            spokenText: 'Alright, I am coming.',
+            displayText: 'Alright, I am coming.',
+        });
     });
 
     it('checks required TTS credentials by voice-call provider', () => {

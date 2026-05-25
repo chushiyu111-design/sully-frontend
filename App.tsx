@@ -76,7 +76,7 @@ const SullyOSApp: React.FC = () => {
   }, []);
 
   return (
-    <div className="h-screen w-full bg-black overflow-hidden">
+    <div className="w-full bg-black overflow-hidden" style={{ height: '100dvh', minHeight: '-webkit-fill-available' }}>
       <div
         className="fixed inset-0 w-full h-full z-0 bg-black"
         style={{ transform: 'translateZ(0)' }}

@@ -31,6 +31,7 @@ import {
 } from '../storage';
 import { safeTimeoutSignal } from '../safeTimeout';
 import { resolveCharacterContentId } from '../db/characterStore';
+import { trackedApiRequest } from '../apiRequestLedger';
 
 export {
     getBackendResolutionDebug,
@@ -623,12 +624,20 @@ export async function tryBackendExtraction(
     if (!headers['X-LLM-Key'] || !headers['X-Embedding-Key']) return false;
 
     try {
-        const resp = await fetch(`${url}/api/extraction/extract`, {
+        const endpoint = `${url}/api/extraction/extract`;
+        const resp = await trackedApiRequest({
+            feature: 'memory',
+            reason: '后端记忆提取',
+            model: subApiConfig?.model,
+            conversationId: charId,
+            userInitiated: false,
+            url: endpoint,
+        }, () => fetch(endpoint, {
             method: 'POST',
             headers,
             body: JSON.stringify({ charId: contentCharId, charName, messages }),
             signal: safeTimeoutSignal(120000),
-        });
+        }));
 
         if (!resp.ok) {
             console.warn(`🔎 [Backend] Extraction error ${resp.status}, falling back to local`);
@@ -665,12 +674,20 @@ export async function tryBackendCallExtraction(
     if (!headers['X-LLM-Key'] || !headers['X-Embedding-Key']) return false;
 
     try {
-        const resp = await fetch(`${url}/api/extraction/extract-call`, {
+        const endpoint = `${url}/api/extraction/extract-call`;
+        const resp = await trackedApiRequest({
+            feature: 'phone',
+            reason: '通话结束记忆提取',
+            model: subApiConfig?.model,
+            conversationId: charId,
+            userInitiated: false,
+            url: endpoint,
+        }, () => fetch(endpoint, {
             method: 'POST',
             headers,
             body: JSON.stringify({ charId: contentCharId, charName, callHistory, callTimestamp }),
             signal: safeTimeoutSignal(60000),
-        });
+        }));
 
         if (!resp.ok) return false;
 

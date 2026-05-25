@@ -1,5 +1,5 @@
-import React,{ useEffect,useMemo,useState } from 'react';
-import { AppID,CharacterProfile,APIConfig,StoryPhoneCustomApp } from '../types';
+import React,{ useEffect,useMemo,useRef,useState } from 'react';
+import { AppID,CharacterProfile,APIConfig,Message,StoryPhoneCustomApp } from '../types';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
@@ -8,13 +8,14 @@ import { safeResponseJson } from '../utils/safeApi';
 import { selectSecondaryApiConfig } from '../utils/runtimeConfig';
 import { extractThinking } from '../utils/thinkingExtractor';
 import Modal from '../components/os/Modal';
-import { CaretLeft } from '@phosphor-icons/react';
+import { CaretLeft,ImageSquare,UploadSimple,X } from '@phosphor-icons/react';
 import StoryPhoneScreen, {
     PHONE_APPS,
     pickRandomPhoneApp,
     type PhoneAppDef,
     type PhoneClue,
     type PhoneClueItem,
+    type StoryPhoneHomeSurface,
     type StoryPhoneAppId,
 } from '../components/story-phone/StoryPhoneScreen';
 
@@ -39,10 +40,47 @@ function toPhoneAppDef(app: StoryPhoneCustomApp): PhoneAppDef {
         id: app.id,
         name: app.name,
         icon: app.icon || '▣',
+        iconImage: app.iconImage,
         color: app.color || '#0ea5e9',
         prompt: app.prompt,
         isCustom: true,
     };
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('file read failed'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('image load failed'));
+        image.src = src;
+    });
+}
+
+async function createAppIconDataUrl(file: File): Promise<string> {
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = await loadImage(dataUrl);
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+
+    const sourceSize = Math.min(image.naturalWidth || image.width, image.naturalHeight || image.height);
+    const sourceX = ((image.naturalWidth || image.width) - sourceSize) / 2;
+    const sourceY = ((image.naturalHeight || image.height) - sourceSize) / 2;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+    return canvas.toDataURL('image/webp', 0.9);
 }
 
 function normalizeClue(value: any, app: PhoneAppDef): PhoneClue {
@@ -77,9 +115,79 @@ function formatFallbackHistory(messages: Awaited<ReturnType<typeof DB.getMessage
     }).join('\n');
 }
 
+function cleanSeenPhoneField(value: string | undefined, fallback: string): string {
+    const text = String(value || '')
+        .replace(/<\/?seen_phone_page>/gi, '[seen_phone_page]')
+        .trim();
+    return text || fallback;
+}
+
+function cleanHomeSurfaceText(value: string | undefined): string {
+    return String(value || '')
+        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, ' ')
+        .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
+        .replace(/https?:\/\/\S+/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\[[^\]]{1,20}]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function limitHomeSurfaceText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength).trimEnd()}...`;
+}
+
+function pickHomeSurfaceSnippet(value: string | undefined, maxLength: number): string {
+    const text = cleanHomeSurfaceText(value);
+    if (!text) return '';
+    const segment = text
+        .split(/[。！？!?；;\n]+/)
+        .map(part => part.trim())
+        .find(part => part.length >= 4) || text;
+    return limitHomeSurfaceText(segment, maxLength);
+}
+
+function formatHomeSurfaceTime(timestamp?: number): string {
+    if (!timestamp) return '刚刚';
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return '刚刚';
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function getCharacterInnerVoice(char: CharacterProfile): string {
+    const moodState = char.moodState as { innerVoice?: unknown } | undefined;
+    return typeof moodState?.innerVoice === 'string' ? moodState.innerVoice : '';
+}
+
+function buildHomeSurface(messages: Message[], char: CharacterProfile, spotlightAppName: string): StoryPhoneHomeSurface {
+    const recentMessages = messages
+        .filter(message => message.type === 'text' && message.metadata?.source !== 'story_phone')
+        .slice()
+        .reverse();
+    const recentAssistant = recentMessages.find(message => message.role === 'assistant');
+    const recentUser = recentMessages.find(message => message.role === 'user');
+    const sourceMessage = recentAssistant || recentUser || recentMessages[0];
+    const messageSnippet = pickHomeSurfaceSnippet(sourceMessage?.content, 28);
+    const innerVoiceSnippet = pickHomeSurfaceSnippet(getCharacterInnerVoice(char), 28);
+    const snippet = messageSnippet || innerVoiceSnippet;
+
+    return {
+        headline: snippet ? '刚才的对话还没暗下去。' : `${char.name} 的屏幕刚刚亮过。`,
+        stickyNote: snippet ? `「${snippet}」` : '临时亮屏，桌面没有固定便签。',
+        spotlightDetail: snippet
+            ? `${spotlightAppName} 会贴着刚才那一幕生成。`
+            : `${spotlightAppName} 里有一页等待读取。`,
+        spotlightFooter: sourceMessage
+            ? `最近对话 · ${formatHomeSurfaceTime(sourceMessage.timestamp)}`
+            : '等待读取',
+    };
+}
+
 function formatStoryPhoneContext(clue: PhoneClue, char: CharacterProfile, userName: string): string {
-    const summary = clue.insertSummary || clue.evidenceText || `${userName} 查看了 ${char.name} 手机里的 ${clue.appName}。`;
-    const itemLines = clue.items.map((item, index) => {
+    const visibleContent = clue.items.map((item, index) => {
         const parts = [
             `${index + 1}. ${item.label}`,
             `   ${item.value}`,
@@ -88,15 +196,30 @@ function formatStoryPhoneContext(clue: PhoneClue, char: CharacterProfile, userNa
         return parts.join('\n');
     }).join('\n');
 
-    return `[系统: ${userName} 查看了 ${char.name} 手机中的「${clue.appName}」。]
+    const stateNotes = [
+        clue.timestamp ? `时间: ${clue.timestamp}` : '',
+        clue.subtitle ? `状态: ${clue.subtitle}` : '',
+    ].filter(Boolean).join('\n');
 
-【剧情摘要】
-${summary}
+    return `<seen_phone_page>
+${userName}刚才看见了你手机上的一页内容。
 
-【手机屏幕全量】
-App: ${clue.appName}
-标题: ${clue.title}
-${clue.subtitle ? `状态: ${clue.subtitle}\n` : ''}${clue.timestamp ? `时间: ${clue.timestamp}\n` : ''}${itemLines || clue.evidenceText || '（没有可见条目）'}`;
+注意：
+- 这是你手机里的内容，不是${userName}说的话。
+- 你知道/意识到${userName}可能已经看见了。
+- 请根据你的性格自然反应。
+
+页面来源：${cleanSeenPhoneField(clue.appName, '未知 App')}
+页面类型：${cleanSeenPhoneField(clue.title, `${clue.appName}页面`)}
+可见内容：
+${cleanSeenPhoneField(visibleContent || clue.evidenceText, '（没有可见条目）')}
+
+页面状态：
+${cleanSeenPhoneField(stateNotes, '无额外状态')}
+
+可能影响：
+${cleanSeenPhoneField(clue.insertSummary || clue.evidenceText || `${userName}看见了${char.name}手机里的${clue.appName}内容。`, '可能影响你接下来的情绪和回复。')}
+</seen_phone_page>`;
 }
 
 const StoryPhoneApp: React.FC = () => {
@@ -124,8 +247,11 @@ const StoryPhoneApp: React.FC = () => {
     const [showInstallModal, setShowInstallModal] = useState(false);
     const [newAppName, setNewAppName] = useState('');
     const [newAppIcon, setNewAppIcon] = useState(CUSTOM_ICON_PRESETS[0]);
+    const [newAppIconImage, setNewAppIconImage] = useState<string | null>(null);
     const [newAppColor, setNewAppColor] = useState(CUSTOM_COLOR_PRESETS[0]);
     const [newAppPrompt, setNewAppPrompt] = useState('');
+    const [homeSurface, setHomeSurface] = useState<StoryPhoneHomeSurface | undefined>();
+    const iconFileInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         setSpotlightApp(pickRandomPhoneApp(installedApps));
@@ -146,6 +272,31 @@ const StoryPhoneApp: React.FC = () => {
         }
     }, [activeAppId, installedApps, spotlightApp.id]);
 
+    useEffect(() => {
+        if (!char) {
+            setHomeSurface(undefined);
+            return;
+        }
+
+        let cancelled = false;
+        DB.getMessagesByCharId(char.id)
+            .then(messages => {
+                if (!cancelled) {
+                    setHomeSurface(buildHomeSurface(messages, char, spotlightApp.name));
+                }
+            })
+            .catch(error => {
+                console.error('[StoryPhone] home surface load failed:', error);
+                if (!cancelled) {
+                    setHomeSurface(buildHomeSurface([], char, spotlightApp.name));
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [char, spotlightApp.name]);
+
     const handleBack = () => {
         if (activeAppId !== 'home') {
             setActiveAppId('home');
@@ -161,6 +312,7 @@ const StoryPhoneApp: React.FC = () => {
     const resetInstallForm = () => {
         setNewAppName('');
         setNewAppIcon(CUSTOM_ICON_PRESETS[0]);
+        setNewAppIconImage(null);
         setNewAppColor(CUSTOM_COLOR_PRESETS[0]);
         setNewAppPrompt('');
     };
@@ -168,6 +320,29 @@ const StoryPhoneApp: React.FC = () => {
     const handleOpenInstallModal = () => {
         resetInstallForm();
         setShowInstallModal(true);
+    };
+
+    const handleUploadIcon = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.currentTarget.value = '';
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            addToast('请选择图片文件', 'error');
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            addToast('图标图片不要超过 5MB', 'error');
+            return;
+        }
+
+        try {
+            const dataUrl = await createAppIconDataUrl(file);
+            setNewAppIconImage(dataUrl);
+            addToast('图标已上传', 'success');
+        } catch (error) {
+            console.error('[StoryPhone] icon upload failed:', error);
+            addToast('图标读取失败，换张图试试', 'error');
+        }
     };
 
     const handleInstallApp = () => {
@@ -183,6 +358,7 @@ const StoryPhoneApp: React.FC = () => {
             id: `${CUSTOM_APP_ID_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             name,
             icon: newAppIcon.trim().slice(0, 4) || CUSTOM_ICON_PRESETS[0],
+            iconImage: newAppIconImage || undefined,
             color: newAppColor,
             prompt,
             installedAt: Date.now(),
@@ -362,6 +538,7 @@ ${task}`,
                 phonePeekInsertSummary: clue.insertSummary,
                 phonePeekWallpaper: wallpaper,
                 phonePeekAppIcon: sourceApp?.icon,
+                phonePeekAppIconImage: sourceApp?.iconImage,
                 phonePeekAppColor: sourceApp?.color,
                 phonePeekAppIsCustom: sourceApp?.isCustom,
                 charName: char.name,
@@ -397,7 +574,7 @@ ${task}`,
                     </button>
                     <div className="min-w-0 text-center">
                         <div className="text-[15px] font-semibold tracking-wide">{char.name} 的手机</div>
-                        <div className="text-[10px] font-medium text-[#3e4245]/45">剧情查手机</div>
+                        <div className="text-[10px] font-medium text-[#3e4245]/45">临时许可 · 屏幕亮起中</div>
                     </div>
                     <img src={char.avatar} className="h-10 w-10 rounded-2xl object-cover grayscale-[25%] saturate-[0.72] shadow-[0_10px_22px_rgba(64,69,71,0.14)] ring-1 ring-white/80" alt={char.name} />
                 </div>
@@ -413,6 +590,7 @@ ${task}`,
                         clue={clue}
                         isLoading={isLoading}
                         inserted={inserted}
+                        homeSurface={homeSurface}
                         onBackHome={() => setActiveAppId('home')}
                         onOpenApp={app => setActiveAppId(app.id)}
                         onGenerateApp={app => void generateForApp(app)}
@@ -449,10 +627,14 @@ ${task}`,
                 <div className="space-y-4">
                     <div className="flex items-center gap-4">
                         <div
-                            className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl text-3xl text-white shadow-lg ring-1 ring-black/5"
+                            className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl text-3xl text-white shadow-lg ring-1 ring-black/5"
                             style={{ background: newAppColor }}
                         >
-                            {newAppIcon}
+                            {newAppIconImage ? (
+                                <img src={newAppIconImage} className="absolute inset-0 h-full w-full object-cover" alt="" />
+                            ) : (
+                                newAppIcon
+                            )}
                         </div>
                         <div className="min-w-0 flex-1">
                             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">App 名称</label>
@@ -468,12 +650,46 @@ ${task}`,
 
                     <div>
                         <label className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-slate-400">图标</label>
+                        <input
+                            ref={iconFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleUploadIcon}
+                        />
+                        <div className="mb-3 flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => iconFileInputRef.current?.click()}
+                                className="flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm active:scale-95"
+                            >
+                                <UploadSimple className="h-4 w-4" weight="bold" />
+                                上传图片
+                            </button>
+                            {newAppIconImage && (
+                                <button
+                                    type="button"
+                                    onClick={() => setNewAppIconImage(null)}
+                                    className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500 active:scale-95"
+                                    aria-label="移除上传图标"
+                                >
+                                    <X className="h-4 w-4" weight="bold" />
+                                </button>
+                            )}
+                            <div className="ml-auto flex items-center gap-1 rounded-xl bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-400">
+                                <ImageSquare className="h-3.5 w-3.5" weight="bold" />
+                                256px 方形裁切
+                            </div>
+                        </div>
                         <div className="grid grid-cols-8 gap-2">
                             {CUSTOM_ICON_PRESETS.map(icon => (
                                 <button
                                     key={icon}
-                                    onClick={() => setNewAppIcon(icon)}
-                                    className={`flex h-8 w-8 items-center justify-center rounded-xl text-lg active:scale-95 ${newAppIcon === icon ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}
+                                    onClick={() => {
+                                        setNewAppIcon(icon);
+                                        setNewAppIconImage(null);
+                                    }}
+                                    className={`flex h-8 w-8 items-center justify-center rounded-xl text-lg active:scale-95 ${!newAppIconImage && newAppIcon === icon ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}
                                     aria-label={`选择图标 ${icon}`}
                                 >
                                     {icon}

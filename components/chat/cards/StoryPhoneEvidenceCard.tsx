@@ -35,6 +35,7 @@ function buildAppDefFromMessage(meta: Message['metadata'], appId: StoryPhoneAppI
         id: appId,
         name: appName,
         icon: asText(meta?.phonePeekAppIcon, '▣'),
+        iconImage: asText(meta?.phonePeekAppIconImage),
         color: asText(meta?.phonePeekAppColor, '#0ea5e9'),
         prompt: '',
         isCustom: meta?.phonePeekAppIsCustom === true || asText(meta?.phonePeekAppIsCustom) === 'true',

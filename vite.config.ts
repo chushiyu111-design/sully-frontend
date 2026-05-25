@@ -12,6 +12,14 @@ const REQUIRED_REMOTE_BUILD_ENV_KEYS = [
   'VITE_CSYOS_BACKEND_TOKEN',
 ] as const;
 
+function forwardElevenLabsApiKey(proxyReq: any, req: any) {
+  const apiKey = req.headers['x-elevenlabs-key'];
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    proxyReq.setHeader('xi-api-key', apiKey.trim());
+  }
+  proxyReq.removeHeader('x-elevenlabs-key');
+}
+
 function createBuildInfo(): BuildInfo {
   const builtAt = new Date().toISOString();
   const buildId =
@@ -102,13 +110,23 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           rewrite: () => '/v1/single-use-token/tts_websocket',
           configure: (proxy) => {
-            proxy.on('proxyReq', (proxyReq, req) => {
-              const apiKey = req.headers['x-elevenlabs-key'];
-              if (typeof apiKey === 'string' && apiKey.trim()) {
-                proxyReq.setHeader('xi-api-key', apiKey.trim());
-              }
-              proxyReq.removeHeader('x-elevenlabs-key');
-            });
+            proxy.on('proxyReq', forwardElevenLabsApiKey);
+          },
+        },
+        '/elevenlabs-voice-design': {
+          target: 'https://api.elevenlabs.io',
+          changeOrigin: true,
+          rewrite: () => '/v1/text-to-voice/design',
+          configure: (proxy) => {
+            proxy.on('proxyReq', forwardElevenLabsApiKey);
+          },
+        },
+        '/elevenlabs-voice-create': {
+          target: 'https://api.elevenlabs.io',
+          changeOrigin: true,
+          rewrite: () => '/v1/text-to-voice',
+          configure: (proxy) => {
+            proxy.on('proxyReq', forwardElevenLabsApiKey);
           },
         },
         // XHS Bridge 模式 (xiaohongshu-skills REST server)

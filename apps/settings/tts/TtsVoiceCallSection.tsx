@@ -1,6 +1,7 @@
 import React from 'react';
 import { getGuardedInputProps } from '../../../utils/inputGuards';
 import type { TtsFormState } from './useTtsForm';
+import TtsEchoSection from './TtsEchoSection';
 
 interface Props {
     voiceCallProvider: TtsFormState['voiceCallProvider'];
@@ -20,6 +21,7 @@ const ELEVENLABS_MODELS = [
     { value: 'eleven_flash_v2_5', label: 'eleven_flash_v2_5 (低延迟)' },
     { value: 'eleven_turbo_v2_5', label: 'eleven_turbo_v2_5' },
     { value: 'eleven_multilingual_v2', label: 'eleven_multilingual_v2' },
+    { value: 'eleven_v3', label: 'eleven_v3 (情绪标签 / 较慢)' },
 ];
 
 const ELEVENLABS_LANGUAGES = [
@@ -180,6 +182,11 @@ const TtsVoiceCallSection: React.FC<Props> = ({
                         className="w-4 h-4 accent-[#8ba4c4]"
                     />
                 </label>
+                <TtsEchoSection
+                    elevenLabsApiKey={elevenLabsApiKey}
+                    elevenLabsModelId={elevenLabsModelId}
+                    set={set}
+                />
             </div>
         )}
     </div>

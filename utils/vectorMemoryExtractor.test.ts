@@ -148,4 +148,52 @@ describe('vectorMemoryExtractor memory context selection', () => {
         expect(processResult).not.toHaveBeenCalled();
         expect(releaseExtractionLock).toHaveBeenCalledWith('char-1');
     });
+
+    it('includes phone evidence system messages in manual vector extraction prompts', async () => {
+        getMessagesByCharId.mockResolvedValue([
+            {
+                id: 1,
+                charId: 'char-1',
+                role: 'system',
+                type: 'text',
+                content: '[系统: Sully的手机(通话记录) 显示: 未接来电]',
+                timestamp: 1000,
+                metadata: { source: 'phone', phoneTitle: '未接来电' },
+            },
+            {
+                id: 2,
+                charId: 'char-1',
+                role: 'system',
+                type: 'text',
+                content: '[系统: 用户 查看了 Sully 手机中的「音乐」。]',
+                timestamp: 2000,
+                metadata: { source: 'story_phone', phonePeekTitle: '最后停留' },
+            },
+            {
+                id: 3,
+                charId: 'char-1',
+                role: 'system',
+                type: 'text',
+                content: '[连接中断: network error]',
+                timestamp: 3000,
+                metadata: { source: 'connection' },
+            },
+        ]);
+        getVectorMemoryHeaders.mockResolvedValue([]);
+
+        await expect(VectorMemoryExtractor.batchExtractFromMessages(
+            'char-1',
+            0,
+            10,
+            { baseUrl: 'https://llm.example.com/v1', apiKey: 'llm-key', model: 'test-model' },
+            'embedding-key',
+            'Sully',
+        )).resolves.toBe(0);
+
+        expect(callLLM).toHaveBeenCalledTimes(1);
+        const prompt = callLLM.mock.calls[0][0] as string;
+        expect(prompt).toContain('未接来电');
+        expect(prompt).toContain('用户 查看了 Sully 手机中的「音乐」');
+        expect(prompt).not.toContain('连接中断');
+    });
 });

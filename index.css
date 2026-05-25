@@ -59,6 +59,180 @@
   display: none;
 }
 
+.story-phone-system-ui {
+  --story-phone-accent: #687386;
+  --story-phone-card: rgba(255, 255, 255, 0.82);
+  --story-phone-card-soft: rgba(246, 248, 251, 0.78);
+  --story-phone-border: rgba(120, 130, 150, 0.12);
+  --story-phone-shadow: 0 6px 18px rgba(20, 25, 40, 0.06);
+  --story-phone-text: #27313f;
+  --story-phone-muted: #667180;
+  background-image: linear-gradient(180deg, #f4f6f9 0%, #eef1f5 100%);
+}
+
+.story-phone-system-ui .story-phone-accent-text {
+  color: var(--story-phone-accent) !important;
+}
+
+.story-phone-system-ui .story-phone-accent-soft {
+  background-color: color-mix(in srgb, var(--story-phone-accent) 11%, transparent) !important;
+}
+
+.story-phone-system-ui .story-phone-force-white {
+  color: #fff !important;
+}
+
+.story-phone-system-ui [class*="shadow-"],
+.story-phone-system-ui .shadow-sm,
+.story-phone-system-ui .shadow,
+.story-phone-system-ui .shadow-md,
+.story-phone-system-ui .shadow-lg {
+  box-shadow: var(--story-phone-shadow) !important;
+}
+
+.story-phone-system-ui [class*="border-"] {
+  border-color: var(--story-phone-border) !important;
+}
+
+.story-phone-system-ui [class*="bg-white/"],
+.story-phone-system-ui [class*="bg-[#fff"],
+.story-phone-system-ui [class*="bg-[#f8"],
+.story-phone-system-ui [class*="bg-[#fb"],
+.story-phone-system-ui [class*="bg-[#f3"],
+.story-phone-system-ui [class*="bg-[#f2"],
+.story-phone-system-ui [class*="bg-[#ef"],
+.story-phone-system-ui [class*="bg-[#ee"] {
+  background-color: var(--story-phone-card) !important;
+}
+
+.story-phone-system-ui :is(
+  [class*="bg-blue-"],
+  [class*="bg-sky-"],
+  [class*="bg-cyan-"],
+  [class*="bg-indigo-"],
+  [class*="bg-violet-"],
+  [class*="bg-fuchsia-"],
+  [class*="bg-pink-"],
+  [class*="bg-rose-"],
+  [class*="bg-red-"],
+  [class*="bg-orange-"],
+  [class*="bg-amber-"],
+  [class*="bg-yellow-"],
+  [class*="bg-lime-"],
+  [class*="bg-green-"],
+  [class*="bg-emerald-"],
+  [class*="bg-teal-"]
+) {
+  background-color: color-mix(in srgb, var(--story-phone-accent) 13%, #fff) !important;
+  color: var(--story-phone-accent) !important;
+}
+
+.story-phone-system-ui :is(
+  [class*="text-blue-"],
+  [class*="text-sky-"],
+  [class*="text-cyan-"],
+  [class*="text-indigo-"],
+  [class*="text-violet-"],
+  [class*="text-fuchsia-"],
+  [class*="text-pink-"],
+  [class*="text-rose-"],
+  [class*="text-red-"],
+  [class*="text-orange-"],
+  [class*="text-amber-"],
+  [class*="text-yellow-"],
+  [class*="text-lime-"],
+  [class*="text-green-"],
+  [class*="text-emerald-"],
+  [class*="text-teal-"]
+) {
+  color: var(--story-phone-accent) !important;
+}
+
+.story-phone-system-ui [class*="bg-gradient-to-"] {
+  filter: saturate(0.48) brightness(1.03);
+}
+
+.story-phone-system-ui [class*="bg-[radial-gradient"] {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--story-phone-accent) 12%, #fff),
+    rgba(255, 255, 255, 0)
+  ) !important;
+  opacity: 0.5;
+}
+
+.story-phone-system-ui [class*="bg-[#18122d]"],
+.story-phone-system-ui [class*="bg-[#241816]"],
+.story-phone-system-ui [class*="bg-[#0f131a]"],
+.story-phone-system-ui [class*="bg-[#101319]"],
+.story-phone-system-ui [class*="bg-[#171b22]"] {
+  background: var(--story-phone-card) !important;
+  color: var(--story-phone-text) !important;
+}
+
+.story-phone-system-ui [class*="bg-[#18122d]"] [class*="text-white"],
+.story-phone-system-ui [class*="bg-[#241816]"] [class*="text-white"],
+.story-phone-system-ui [class*="bg-[#0f131a]"] [class*="text-white"],
+.story-phone-system-ui [class*="bg-[#101319]"] [class*="text-white"],
+.story-phone-system-ui [class*="bg-[#171b22]"] [class*="text-white"] {
+  color: var(--story-phone-text) !important;
+}
+
+.story-phone-system-ui [class*="bg-[#18122d]"] [class*="text-white/"],
+.story-phone-system-ui [class*="bg-[#241816]"] [class*="text-white/"],
+.story-phone-system-ui [class*="bg-[#0f131a]"] [class*="text-white/"],
+.story-phone-system-ui [class*="bg-[#101319]"] [class*="text-white/"],
+.story-phone-system-ui [class*="bg-[#171b22]"] [class*="text-white/"] {
+  color: var(--story-phone-muted) !important;
+}
+
+.story-phone-system-ui [class*="text-5xl"] {
+  font-size: 2.25rem !important;
+  line-height: 2.45rem !important;
+}
+
+.story-phone-system-ui [class*="text-4xl"] {
+  font-size: 1.95rem !important;
+  line-height: 2.2rem !important;
+}
+
+.story-phone-system-ui [class*="text-3xl"] {
+  font-size: 1.55rem !important;
+  line-height: 1.85rem !important;
+}
+
+.story-phone-system-ui [class*="font-black"] {
+  font-weight: 650 !important;
+}
+
+.story-phone-system-ui [class*="font-bold"] {
+  font-weight: 600 !important;
+}
+
+@supports not (background-color: color-mix(in srgb, #000 10%, transparent)) {
+  .story-phone-system-ui .story-phone-accent-soft,
+  .story-phone-system-ui :is(
+    [class*="bg-blue-"],
+    [class*="bg-sky-"],
+    [class*="bg-cyan-"],
+    [class*="bg-indigo-"],
+    [class*="bg-violet-"],
+    [class*="bg-fuchsia-"],
+    [class*="bg-pink-"],
+    [class*="bg-rose-"],
+    [class*="bg-red-"],
+    [class*="bg-orange-"],
+    [class*="bg-amber-"],
+    [class*="bg-yellow-"],
+    [class*="bg-lime-"],
+    [class*="bg-green-"],
+    [class*="bg-emerald-"],
+    [class*="bg-teal-"]
+  ) {
+    background-color: rgba(100, 116, 139, 0.1) !important;
+  }
+}
+
 /* ==========================================
    Custom Theme (migrated from CDN inline config)
    Tailwind v4 CSS-first configuration
@@ -362,8 +536,8 @@
   --pill-text: #64748b;
 
   /* Smart Safe Area Variables */
-  --safe-top: env(safe-area-inset-top);
-  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* When the app is in native HTML5 Fullscreen mode, ignore safe areas 
@@ -371,6 +545,13 @@
 :fullscreen {
   --safe-top: 0px !important;
   --safe-bottom: 0px !important;
+}
+
+html,
+#root {
+  height: 100%;
+  min-height: 100%;
+  background-color: #0f1115;
 }
 
 body {
@@ -388,6 +569,15 @@ body {
   /* iOS Fix */
   width: 100vw;
   font-family: var(--app-font);
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
 }
 
 /* Global scroll behavior fix */

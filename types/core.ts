@@ -113,6 +113,7 @@ export interface APIConfig {
     useGeminiJailbreak?: boolean;
     useDeepSeekMode?: boolean;
     disablePrefill?: boolean;
+    streamChat?: boolean;
 }
 
 export interface ApiPreset {

@@ -22,6 +22,7 @@ import {
     parseTheaterAssistantBeatReplyGroups,
     parseTheaterAssistantPages,
     parseTheaterUserPages,
+    resolveTheaterPageIndexAfterMessagesChange,
     sanitizeTheaterUserBeats,
     stripTheaterBeatMarkers,
     type TheaterAssistantBeatReply,
@@ -287,7 +288,9 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     const [showWorldlineGuide, setShowWorldlineGuide] = useState(false);
     const [inputBeats, setInputBeats] = useState<TheaterInputBeat[]>(() => [createInputBeat('speech')]);
     const autoTimerRef = useRef<ReturnType<typeof setTimeout>>();
-    const prevPagesLenRef = useRef(0);
+    const prevPagesRef = useRef<TheaterVNPage[]>([]);
+    const prevMessageIdsRef = useRef<Set<string>>(new Set());
+    const pageIndexRef = useRef(0);
     /** Track whether the component mounted with messages already present (i.e. resumed history) */
     const hadInitialMessagesRef = useRef(messages.length > 0);
 
@@ -349,6 +352,10 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
     // ── Typewriter ──
     const { displayed, done, skipToEnd } = useTypewriter(currentPage?.text || '', 30);
 
+    useEffect(() => {
+        pageIndexRef.current = pageIndex;
+    }, [pageIndex]);
+
     // ── Theater TTS Playback ──
     const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
     const ttsUrlRef = useRef<string | null>(null);
@@ -395,7 +402,11 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
 
     // ── Page navigation: distinguish initial load vs new content ──
     useEffect(() => {
-        if (pages.length === 0) return;
+        if (pages.length === 0) {
+            prevPagesRef.current = pages;
+            prevMessageIdsRef.current = new Set(messages.map(msg => String(msg.id)));
+            return;
+        }
 
         if (!hasInitializedRef.current) {
             hasInitializedRef.current = true;
@@ -406,15 +417,28 @@ const TheaterSession: React.FC<TheaterSessionProps> = ({
                 // Fresh session — first scene just generated: start from page 0
                 setPageIndex(0);
             }
-            prevPagesLenRef.current = pages.length;
-        } else if (pages.length !== prevPagesLenRef.current) {
-            // New content from AI: jump to first NEW page
-            const firstNewIndex = Math.max(0, prevPagesLenRef.current);
-            setPageIndex(firstNewIndex);
-            setShowInput(false);
-            prevPagesLenRef.current = pages.length;
+        } else {
+            const previousMessageIds = prevMessageIdsRef.current;
+            const hasMessageChange =
+                messages.length !== previousMessageIds.size
+                || messages.some(msg => !previousMessageIds.has(String(msg.id)));
+
+            if (hasMessageChange || pages.length !== prevPagesRef.current.length) {
+                const nextPageIndex = resolveTheaterPageIndexAfterMessagesChange(
+                    prevPagesRef.current,
+                    pages,
+                    pageIndexRef.current,
+                    previousMessageIds,
+                    messages,
+                );
+                setPageIndex(nextPageIndex);
+                if (hasMessageChange) setShowInput(false);
+            }
         }
-    }, [pages.length]);
+
+        prevPagesRef.current = pages;
+        prevMessageIdsRef.current = new Set(messages.map(msg => String(msg.id)));
+    }, [pages, messages]);
 
     // ── Auto-play: advance page after typewriter finishes ──
     useEffect(() => {

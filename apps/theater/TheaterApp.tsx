@@ -15,6 +15,7 @@ import { buildDatePreamble, buildTheaterScene, buildDateTail, buildDateTimeBlock
 import { hasCompleteApiConfig } from '../../utils/apiValidation';
 import { DEFAULT_DATE_SUMMARY_PROMPT, buildSummaryPrompt } from '../../utils/dateSummaryPrompts';
 import { renderMarkdown } from '../../utils/markdownLite';
+import { trackedApiRequest } from '../../utils/apiRequestLedger';
 import type { CharacterProfile, Message, TheaterLocation, DirectorEvent, TheaterSessionState, TheaterTimeline, TransitionEvent, LocationSuggestion } from '../../types';
 import { buildGiftExchangePrompt, buildFarewellPrompt, buildMetaLetterPrompt, formatSessionContextForEnding } from '../../utils/dateEndingPrompts';
 import { TIME_SLOT_LABELS } from '../../types/theater';
@@ -93,6 +94,30 @@ const isTheaterSummaryMessage = (m: Message) =>
     m.metadata?.source === 'theater' && m.metadata?.isSummary === true;
 
 // hasCompleteApiConfig — imported from utils/apiValidation.ts
+
+const fetchTheaterChatCompletion = (
+    config: { baseUrl: string; apiKey: string; model?: string },
+    body: Record<string, unknown>,
+    reason: string,
+    conversationId?: string,
+    messageId?: number,
+    userInitiated = false,
+): Promise<Response> => {
+    const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    return trackedApiRequest({
+        feature: 'theater',
+        reason,
+        model: typeof body.model === 'string' ? body.model : config.model,
+        conversationId,
+        messageId,
+        userInitiated,
+        url,
+    }, () => fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+        body: JSON.stringify(body),
+    }));
+};
 
 const THEATER_ENDING_ACT_LABELS: Record<TheaterEndingAct, string> = {
     'user-gift': '用户送出的礼物',
@@ -556,17 +581,17 @@ const TheaterApp: React.FC = () => {
                     prevLocation, loc,
                     updatedSession.timeSlot, updatedSession.eventHistory,
                 );
-                const resp = await fetch(
-                    `${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+                const resp = await fetchTheaterChatCompletion(
+                    secondaryConfig,
                     {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secondaryConfig.apiKey}` },
-                        body: JSON.stringify({
-                            model: secondaryConfig.model || apiConfig!.model,
-                            messages: [{ role: 'user', content: prompt }],
-                            temperature: 0.7,
-                        }),
+                        model: secondaryConfig.model || apiConfig!.model,
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: 0.7,
                     },
+                    '约会转场导演事件',
+                    char.id,
+                    undefined,
+                    false,
                 );
                 if (resp.ok) {
                     const data = await safeResponseJson(resp);
@@ -615,21 +640,21 @@ const TheaterApp: React.FC = () => {
                     ? `\n\n(System: 转场已触发。写一段从${prevLocation.name}到${loc.name}的完整叙事。严格遵守沉浸互动格式。)`
                     : `\n\n(System: 你们正在从${prevLocation.name}去${loc.name}。写一段转场叙事。严格遵守沉浸互动格式。)`;
 
-                const resp = await fetch(
-                    `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+                const resp = await fetchTheaterChatCompletion(
+                    apiConfig,
                     {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                        body: JSON.stringify({
-                            model: apiConfig.model,
-                            messages: [
-                                { role: 'system', content: systemPrompt },
-                                ...historyMsgs,
-                                { role: 'user', content: `（去${loc.name}吧。）` + transitionHint },
-                            ],
-                            temperature: 0.85,
-                        }),
+                        model: apiConfig.model,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            ...historyMsgs,
+                            { role: 'user', content: `（去${loc.name}吧。）` + transitionHint },
+                        ],
+                        temperature: 0.85,
                     },
+                    '约会转场叙事',
+                    char.id,
+                    undefined,
+                    true,
                 );
 
                 if (!resp.ok) throw new Error('API Error');
@@ -717,18 +742,21 @@ const TheaterApp: React.FC = () => {
             const charPov = char.dateCharPerspective || 'third';
             systemPrompt += buildTheaterScene(char.name, userProfile.name, dateEmotions, userPov, charPov, sess.timeSlot);
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchTheaterChatCompletion(
+                apiConfig,
+                {
                     model: apiConfig.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `（你们刚到 ${loc.name}。请写一段到场描写。）` },
                     ],
                     temperature: 0.85,
-                }),
-            });
+                },
+                '约会地点开场',
+                char.id,
+                undefined,
+                true,
+            );
 
             if (!response.ok) throw new Error('API Error');
             const data = await safeResponseJson(response);
@@ -793,7 +821,7 @@ const TheaterApp: React.FC = () => {
         const normalizedUserBeats = sanitizeTheaterUserBeats(userBeats || []);
 
         // 1. Save user message
-        await DB.saveMessage({
+        const userMessageId = await DB.saveMessage({
             charId: char.id, role: 'user', type: 'text', content: text,
             metadata: {
                 source: 'theater',
@@ -867,15 +895,18 @@ const TheaterApp: React.FC = () => {
                         },
                     );
 
-                    const dirResponse = await fetch(`${secondaryConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secondaryConfig.apiKey}` },
-                        body: JSON.stringify({
+                    const dirResponse = await fetchTheaterChatCompletion(
+                        secondaryConfig,
+                        {
                             model: secondaryConfig.model || apiConfig.model,
                             messages: [{ role: 'user', content: directorPrompt }],
                             temperature: 0.7,
-                        }),
-                    });
+                        },
+                        '约会导演事件',
+                        char.id,
+                        undefined,
+                        false,
+                    );
 
                     if (dirResponse.ok) {
                         const dirData = await safeResponseJson(dirResponse);
@@ -955,10 +986,9 @@ const TheaterApp: React.FC = () => {
             }
             eventNote += buildTheaterUserBeatsSystemNote(normalizedUserBeats, userProfile.name, char.name);
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchTheaterChatCompletion(
+                apiConfig,
+                {
                     model: apiConfig.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
@@ -966,8 +996,12 @@ const TheaterApp: React.FC = () => {
                         { role: 'user', content: text + eventNote },
                     ],
                     temperature: 0.85,
-                }),
-            });
+                },
+                directorHint ? '约会导演提示回复' : '约会聊天回复',
+                char.id,
+                userMessageId,
+                true,
+            );
 
             if (!response.ok) throw new Error('API Error');
             const data = await safeResponseJson(response);
@@ -1106,18 +1140,21 @@ const TheaterApp: React.FC = () => {
             if (targetMessages.length < 4) { if (summaryType === 'manual') addToast('消息太少，无法总结', 'info'); return null; }
             const promptSnapshot = char.theaterSummaryPrompt?.trim() || DEFAULT_DATE_SUMMARY_PROMPT;
             const prompt = buildSummaryPrompt(char.name, userProfile.name, new Date().toLocaleString(), targetMessages, promptSnapshot);
-            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchTheaterChatCompletion(
+                selectedApi,
+                {
                     model: selectedApi.model,
                     messages: [
                         { role: 'system', content: '你负责把520约会记录整理成可供角色之后自然记住的总结。只输出总结正文。' },
                         { role: 'user', content: prompt },
                     ],
                     temperature: 0.45,
-                }),
-            });
+                },
+                summaryType === 'auto' ? '约会自动摘要更新' : '约会手动摘要生成',
+                char.id,
+                undefined,
+                summaryType === 'manual',
+            );
             if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
             const data = await safeResponseJson(response);
             const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
@@ -1212,18 +1249,21 @@ ${exitPromptContent}
 - 不要写报告口吻，不要出现“总结如下”。
 - 把之前的总结片段和新内容融合成一份流畅的整体，不要简单拼接。`;
 
-            const response = await fetch(`${selectedApi.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${selectedApi.apiKey}` },
-                body: JSON.stringify({
+            const response = await fetchTheaterChatCompletion(
+                selectedApi,
+                {
                     model: selectedApi.model,
                     messages: [
                         { role: 'system', content: '你负责把520约会的所有记录整理成一份完整的最终总结。只输出总结正文。' },
-                    { role: 'user', content: fullPrompt },
+                        { role: 'user', content: fullPrompt },
                     ],
                     temperature: 0.45,
-                }),
-            });
+                },
+                '约会退出最终摘要',
+                char.id,
+                undefined,
+                true,
+            );
             if (!response.ok) throw new Error(`Summary API Error: ${response.status}`);
             const data = await safeResponseJson(response);
             const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
@@ -1651,18 +1691,21 @@ ${exitPromptContent}
 
         const prompt = buildGiftExchangePrompt(char.name, userProfile.name, userGift, sessionContext);
 
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
+        const response = await fetchTheaterChatCompletion(
+            apiConfig,
+            {
                 model: apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: prompt },
                 ],
                 temperature: 0.85,
-            }),
-        });
+            },
+            '约会散场礼物回应',
+            char.id,
+            undefined,
+            true,
+        );
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const data = await safeResponseJson(response);
         const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
@@ -1678,18 +1721,21 @@ ${exitPromptContent}
 
         const prompt = buildFarewellPrompt(char.name, userProfile.name, sessionContext);
 
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
+        const response = await fetchTheaterChatCompletion(
+            apiConfig,
+            {
                 model: apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: prompt },
                 ],
                 temperature: 0.85,
-            }),
-        });
+            },
+            '约会散场告别',
+            char.id,
+            undefined,
+            true,
+        );
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const data = await safeResponseJson(response);
         const extracted = extractThinking(data.choices?.[0]?.message?.content || '');
@@ -1711,18 +1757,21 @@ ${exitPromptContent}
             isFirstMetaLetter: !hasPreviousMetaLetter,
         });
 
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
+        const response = await fetchTheaterChatCompletion(
+            apiConfig,
+            {
                 model: apiConfig.model,
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: prompt },
                 ],
                 temperature: 0.8,
-            }),
-        });
+            },
+            '约会散场信件',
+            char.id,
+            undefined,
+            true,
+        );
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const data = await safeResponseJson(response);
         const extracted = extractThinking(data.choices?.[0]?.message?.content || '');

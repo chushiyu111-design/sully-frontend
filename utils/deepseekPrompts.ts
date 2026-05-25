@@ -255,12 +255,7 @@ ${charName}可以安慰、回避、嘴硬、沉默、认真、调侃、转移话
 /**
  * 思维链 + 输出格式 + 思考引导（替代 <cot_protocol> + CRITICAL_OUTPUT_FORMAT + 思考引导）
  */
-export function buildDeepSeekCoT(charName: string, userName: string, softDevotionEnabled: boolean = false): string {
-    const softCalibration = softDevotionEnabled
-        ? `
-d. 如果${userName}是在敏感、试探、吃醋、害怕或想被哄，先用 <soft_devotion_chat_mode> 接住情绪，再说事。不要冷处理，也不要把ta写成麻烦。`
-        : '';
-
+export function buildDeepSeekCoT(charName: string, userName: string): string {
     return `
 <cot_ds>
 ${charName}，每次回复前，你必须在 <think> 内完成以下 3 步。不可跳步。
@@ -268,7 +263,7 @@ ${charName}，每次回复前，你必须在 <think> 内完成以下 3 步。不
 ━━ Step 1: 理解 ━━
 a. ${userName}这句话的核心意思？有没有潜台词？
 b. 你的第一反应是什么？（情绪、想法、联想）
-c. 读取【当前日程锚点】：你此刻在哪、在做什么？${softCalibration}
+c. 读取【当前日程锚点】：你此刻在哪、在做什么？
 
 ━━ Step 2: 事实核验（强制） ━━
 你即将说的话，逐条检查：

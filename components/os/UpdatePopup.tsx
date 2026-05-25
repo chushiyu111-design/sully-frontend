@@ -1,20 +1,24 @@
 import React,{ useState,useEffect } from 'react';
 
 const UPDATE_VERSION_KEY = 'sullyos_update_seen_version';
-export const CURRENT_VERSION = 'v2.10.0';
+export const CURRENT_VERSION = 'v2.11.0';
 
 const UPDATE_LOGS = [
     {
-        title: '520 特别更新 · 约会功能上线',
-        desc: '聊天框里的喜欢，终于有了可以抵达的地方。\n\n现在，你可以和他一起进入线下地图，像乙游约会一样，在不同地点触发属于你们的互动。'
+        title: '1. 查手机上线',
+        desc: '聊天页面现在可以查看 char 的小手机了。\n\n查到的内容可以塞进当前剧情里，让他亲自解释——\n或者说，亲自狡辩。\n\n聊天记录、页面内容、心声卡片等也都做了相关性升级，会更贴近当前聊天。'
     },
     {
-        title: '5.20 Csy 特别功能 · 轨迹正式上线',
-        desc: '回到过去的时间节点看看他，看看那些你们还未曾相遇的日子。\n\n一个人不是从被看见的那一刻才开始存在的。在遇见你之前，他也已经独自活过很久了。\n\n现在，你可以回去看看那些日子，回头看看他原本走过的路，也可以看见自己是从什么时候开始，慢慢进入他的人生。'
+        title: '2. ElevenLabs 语音接口',
+        desc: '新增 ElevenLabs 语音接口，目前主要用于通话模式。\n\n相比 minimax，ElevenLabs 会更适合外国 char、人机恋、偏真实感或影视感的声线。\n\n也新增了让 char 自己给自己捏声线的小设计，用不用都可以，当作参考也很可爱。\n\n试听效果可以参考吱的小红书视频。'
     },
     {
-        title: '5.21 Csy 特别功能 · 对影',
-        desc: '这是同一个人，在不同时间里的相逢。\n\n也是你第一次如此清楚地看见——原来他并不是突然变成了今天的样子。\n\n也看他们在某一瞬间忽然意识到：原来某个人，真的让命运偏离过原本的方向。\n\n举杯邀明月，对影成几人。'
+        title: '3. Soft Devotion Chat',
+        desc: '新增 soft devotion chat。\n\n开启后，char 的共情、安抚、低压陪伴能力会更明显。\n\n适合想要被好好哄一哄的时候使用，实测吵架使用风味更佳。'
+    },
+    {
+        title: '4. 昨日来信 / 回望·周章 / 回望·月章',
+        desc: '新增回顾类小报功能。\n\n它会把过去一天、一周、一个月的聊天整理成娱乐小报一样的形式，支持高清原图导出。\n\n开关在聊天设置里。'
     }
 ];
 
@@ -58,7 +62,7 @@ const UpdatePopup: React.FC<UpdatePopupProps> = ({ canShow }) => {
                     <div className="flex items-center justify-center gap-2 mb-1">
                         <h2 className="text-xl font-extrabold text-slate-800 tracking-tight">发现新版本 {CURRENT_VERSION}</h2>
                     </div>
-                    <p className="text-[12px] text-slate-400 mt-1 font-medium">520 特别更新 · Csy 二改糯米机</p>
+                    <p className="text-[12px] text-slate-400 mt-1 font-medium">5.25 更新 · Csy 手抓糯米机</p>
                 </div>
 
                 {/* Content */}

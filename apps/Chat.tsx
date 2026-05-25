@@ -26,6 +26,7 @@ import { CloudStt,SttNotConfiguredError } from '../utils/cloudStt';
 import { haptic } from '../utils/haptics';
 import { withCharacterTtsVoice } from '../utils/characterTts';
 import { getEffectiveHistoryStartMessageId,isAfterHistoryStart } from '../utils/historyStart';
+import { shouldHideLifeStreamLikeMessage } from '../utils/lifeStreamVisibility';
 import {
   BackendAgentManager,
   AGENT_MESSAGE_SAVED_EVENT_NAME,
@@ -87,7 +88,7 @@ function getDisplayableMainChatMessages(
     return messages
         .filter(isMainChatVisibleMessage)
         .filter(m => (m.type as string) !== 'health_signal')
-        .filter(m => (m.type as string) !== 'lifestream')
+        .filter(m => !shouldHideLifeStreamLikeMessage(m))
         .filter(m => isAfterHistoryStart(m, historyStartMessageId))
         .filter(m => {
             if (m.metadata?.source === 'story_phone') return true;
@@ -1094,7 +1095,7 @@ const Chat: React.FC = () => {
                 const filtered = allMsgs
                     .filter(isMainChatVisibleMessage)
                     .filter(m => (m.type as string) !== 'health_signal')
-                    .filter(m => (m.type as string) !== 'lifestream')
+                    .filter(m => !shouldHideLifeStreamLikeMessage(m))
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'));
                 setAllHistoryMessages(filtered);
             });

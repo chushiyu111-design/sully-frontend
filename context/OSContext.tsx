@@ -5,6 +5,7 @@ import { DB } from '../utils/db';
 import { onSystemLog } from '../utils/systemInterceptor';
 import { exportSystemData,importSystemData,ExportStateSnapshot,ImportCallbacks,SystemBackupMode,SystemBackupOptions } from '../utils/systemBackup';
 import { setHapticsEnabled as setHapticsEnabledGlobal } from '../utils/haptics';
+import { shouldHideLifeStreamLikeMessage } from '../utils/lifeStreamVisibility';
 import { preloadImages } from '../utils/preloadResources';
 import { useAutoBackup } from '../hooks/useAutoBackup';
 import {
@@ -544,25 +545,36 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                 }
 
                                 const msgRole = msg.role || 'assistant';
+                                const msgMetadata = msg.metadata || {};
+                                const hideAsLifeStream = shouldHideLifeStreamLikeMessage({
+                                    role: msgRole,
+                                    type: 'text',
+                                    content: msg.content,
+                                    metadata: msgMetadata,
+                                });
+                                const savedType = hideAsLifeStream ? 'lifestream' as any : 'text';
+                                const savedMetadata = hideAsLifeStream
+                                    ? { ...msgMetadata, hiddenFromUser: true, lifeStreamHidden: true }
+                                    : msgMetadata;
 
                                 const saveResult = backendMessageId
                                     ? await DB.saveMessageOnceByBackendId({
                                         charId: msg.charId,
                                         ...(msg.ownerUserId ? { ownerUserId: msg.ownerUserId } : {}),
                                         role: msgRole,
-                                        type: 'text',
+                                        type: savedType,
                                         content: msg.content,
                                         timestamp: msg.createdAt,
-                                        ...(msg.metadata ? { metadata: msg.metadata } : {}),
+                                        ...(Object.keys(savedMetadata).length > 0 ? { metadata: savedMetadata } : {}),
                                     })
                                     : { saved: true, id: await DB.saveMessage({
                                         charId: msg.charId,
                                         ...(msg.ownerUserId ? { ownerUserId: msg.ownerUserId } : {}),
                                         role: msgRole,
-                                        type: 'text',
+                                        type: savedType,
                                         content: msg.content,
                                         timestamp: msg.createdAt,
-                                        ...(msg.metadata ? { metadata: msg.metadata } : {}),
+                                        ...(Object.keys(savedMetadata).length > 0 ? { metadata: savedMetadata } : {}),
                                     }) };
                                 await DB.deleteScheduledMessage(msg.id);
 
@@ -574,7 +586,7 @@ const OSDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =
                                 }
 
                                 savedCount++;
-                                if (msgRole === 'assistant') {
+                                if (msgRole === 'assistant' && !hideAsLifeStream) {
                                     assistantSavedCount++;
                                     if (!firstAssistantContent) {
                                         firstAssistantContent = msg.content;

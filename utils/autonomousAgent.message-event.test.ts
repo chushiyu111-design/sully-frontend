@@ -148,4 +148,34 @@ describe('BackendAgentManager agent message saved event', () => {
             listener.cleanup();
         }
     });
+
+    it('stores backend life stream style messages as hidden fragments', async () => {
+        mockedDB.saveMessageOnceByBackendId.mockResolvedValue({ saved: true, id: 43 });
+        const manager = createManager();
+        const listener = listenForAgentMessageSaved();
+
+        try {
+            await (manager as any).enqueueBackendMessage({
+                id: 'backend-life-1',
+                role: 'assistant',
+                content: '上午在党校这边给培训班上了半天课，刚下课，准备去食堂吃午饭。',
+                createdAt: 1777550400000,
+                metadata: { source: 'autonomous' },
+            });
+
+            expect(listener.events).toEqual([]);
+            expect(mockedDB.saveMessageOnceByBackendId).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'lifestream',
+                metadata: expect.objectContaining({
+                    backendMessageId: 'backend-life-1',
+                    source: 'autonomous',
+                    fromBackend: true,
+                    hiddenFromUser: true,
+                    lifeStreamHidden: true,
+                }),
+            }));
+        } finally {
+            listener.cleanup();
+        }
+    });
 });

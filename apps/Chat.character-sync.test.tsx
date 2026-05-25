@@ -364,6 +364,32 @@ describe('Chat active character fallback', () => {
                 charId: 'char-1',
                 role: 'assistant',
                 type: 'text',
+                content: '上午在党校这边给培训班上了半天课，刚下课，准备去食堂吃午饭。',
+                timestamp: 1500,
+                metadata: {
+                    source: 'autonomous',
+                    fromBackend: true,
+                    backendMessageId: 'backend-life-1',
+                },
+            },
+            {
+                id: 3,
+                charId: 'char-1',
+                role: 'assistant',
+                type: 'text',
+                content: '看到消息回我一下，哪怕只发个表情。',
+                timestamp: 1700,
+                metadata: {
+                    source: 'autonomous',
+                    fromBackend: true,
+                    backendMessageId: 'backend-checkin-1',
+                },
+            },
+            {
+                id: 4,
+                charId: 'char-1',
+                role: 'assistant',
+                type: 'text',
                 content: '正常聊天消息',
                 timestamp: 2000,
             },
@@ -380,9 +406,11 @@ describe('Chat active character fallback', () => {
         render(<Chat />);
 
         await waitFor(() => {
-            expect(screen.getByTestId('message-item-2')).toHaveTextContent('正常聊天消息');
+            expect(screen.getByTestId('message-item-4')).toHaveTextContent('正常聊天消息');
         });
         expect(screen.queryByText('午后的草坪生活碎片')).not.toBeInTheDocument();
+        expect(screen.queryByText('上午在党校这边给培训班上了半天课，刚下课，准备去食堂吃午饭。')).not.toBeInTheDocument();
+        expect(screen.getByText('看到消息回我一下，哪怕只发个表情。')).toBeInTheDocument();
     });
 
     it('ignores a stale imported history breakpoint so new chat messages stay visible', async () => {

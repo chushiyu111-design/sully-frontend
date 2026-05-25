@@ -16,6 +16,7 @@ import { pullMemories } from './backendClient';
 import { buildCoreMemoryDigest,buildMountedWorldbooksDigest } from './agentContextSnapshot';
 import { getPrimaryApiConfig as getRuntimePrimaryApiConfig,getRealtimeConfig } from './runtimeConfig';
 import { buildCurrentLifeAnchorForCharacter } from './lifeAnchor';
+import { shouldHideLifeStreamLikeMessage } from './lifeStreamVisibility';
 import { formatMessageForContext,shouldIncludeMessageInContext } from './messageContext';
 import { loadCalendarContextForCharacter, type CalendarContext } from './calendarContext';
 import {
@@ -676,18 +677,28 @@ export class BackendAgentManager {
             ...(metadata.fromWeixinId ? { fromWeixinId: metadata.fromWeixinId } : {}),
             ...(metadata.bubbleIndex !== undefined ? { bubbleIndex: metadata.bubbleIndex } : {}),
         };
+        const hideAsLifeStream = shouldHideLifeStreamLikeMessage({
+            role,
+            type: 'text',
+            content: message.content,
+            metadata: msgMeta,
+        });
+        const savedType = hideAsLifeStream ? 'lifestream' as any : 'text';
+        const savedMetadata = hideAsLifeStream
+            ? { ...msgMeta, hiddenFromUser: true, lifeStreamHidden: true }
+            : msgMeta;
 
         // Save directly to messages store (bypass scheduled queue to avoid lost messages)
         const saveResult = await DB.saveMessageOnceByBackendId({
             charId: this.charId,
             role,
-            type: 'text',
+            type: savedType,
             content: message.content,
             timestamp: message.createdAt || message.created_at || now,
-            metadata: msgMeta,
+            metadata: savedMetadata,
         });
 
-        if (saveResult.saved && typeof saveResult.id === 'number' && typeof window !== 'undefined') {
+        if (!hideAsLifeStream && saveResult.saved && typeof saveResult.id === 'number' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent<AgentMessageSavedEventDetail>(AGENT_MESSAGE_SAVED_EVENT_NAME, {
                 detail: {
                     charId: this.uiCharId || this.charId,

@@ -544,6 +544,7 @@ describe('Chat active character fallback', () => {
             }],
             hasMore: false,
         });
+        localStorage.setItem('chat_today_schedule_enabled_char-1', 'true');
 
         const { rerender } = render(<Chat />);
 

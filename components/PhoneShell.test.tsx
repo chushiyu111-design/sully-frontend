@@ -264,10 +264,13 @@ describe('PhoneShell active app rendering', () => {
             </VirtualTimeProvider>,
         );
 
-        const appFrame = screen.getByTestId('active-app-container');
+        const appFrame = screen.getByTestId('app-frame');
+        const activeAppContainer = screen.getByTestId('active-app-container');
 
-        expect(appFrame.style.paddingTop).toBe('var(--safe-top, env(safe-area-inset-top))');
-        expect(appFrame.style.paddingBottom).toBe('');
+        expect(appFrame.style.paddingTop).toBe('');
+        expect(appFrame.style.paddingBottom).toBe('var(--safe-bottom, env(safe-area-inset-bottom))');
+        expect(activeAppContainer.style.paddingTop).toBe('var(--safe-top, env(safe-area-inset-top))');
+        expect(activeAppContainer.style.paddingBottom).toBe('');
     });
 
     it('does not add safe-area padding on the launcher', () => {
@@ -277,10 +280,13 @@ describe('PhoneShell active app rendering', () => {
             </VirtualTimeProvider>,
         );
 
-        const appFrame = screen.getByTestId('active-app-container');
+        const appFrame = screen.getByTestId('app-frame');
+        const activeAppContainer = screen.getByTestId('active-app-container');
 
-        expect(appFrame.style.paddingTop).toBe('0px');
-        expect(appFrame.style.paddingBottom).toBe('');
+        expect(appFrame.style.paddingTop).toBe('');
+        expect(appFrame.style.paddingBottom).toBe('0px');
+        expect(activeAppContainer.style.paddingTop).toBe('0px');
+        expect(activeAppContainer.style.paddingBottom).toBe('');
     });
 
     it('does not call the Android-only overlay API before hiding the iOS status bar', async () => {

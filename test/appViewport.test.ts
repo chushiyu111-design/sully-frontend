@@ -48,6 +48,52 @@ describe('app viewport css metrics', () => {
     expect(metrics.safeBottomFallback).toBe(34);
   });
 
+  it('keeps iOS standalone app height full when the visual viewport only excludes the home indicator', () => {
+    const metrics = getViewportCssMetrics({
+      innerWidth: 440,
+      innerHeight: 956,
+      visualViewport: {
+        width: 440,
+        height: 922,
+        offsetTop: 0,
+        offsetLeft: 0,
+      },
+      screenHeight: 956,
+      screenAvailHeight: 956,
+      platform: 'iPhone',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+
+    expect(metrics.height).toBe(956);
+    expect(metrics.safeTopFallback).toBe(44);
+    expect(metrics.safeBottomFallback).toBe(34);
+  });
+
+  it('uses the screen height fallback when iOS reports both layout and visual viewport below fullscreen height', () => {
+    const metrics = getViewportCssMetrics({
+      innerWidth: 440,
+      innerHeight: 922,
+      visualViewport: {
+        width: 440,
+        height: 922,
+        offsetTop: 0,
+        offsetLeft: 0,
+      },
+      screenHeight: 956,
+      screenAvailHeight: 922,
+      platform: 'iPhone',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+
+    expect(metrics.height).toBe(956);
+    expect(metrics.safeTopFallback).toBe(44);
+    expect(metrics.safeBottomFallback).toBe(34);
+  });
+
   it('does not add the iOS fallback in regular mobile Safari viewport height', () => {
     const metrics = getViewportCssMetrics({
       innerWidth: 440,
@@ -90,6 +136,54 @@ describe('app viewport css metrics', () => {
     expect(metrics.offsetTop).toBe(292);
     expect(metrics.safeTopFallback).toBe(0);
     expect(metrics.safeBottomFallback).toBe(0);
+  });
+
+  it('keeps iOS standalone keyboard viewport shrunk instead of expanding behind the keyboard', () => {
+    const metrics = getViewportCssMetrics({
+      innerWidth: 440,
+      innerHeight: 956,
+      visualViewport: {
+        width: 440,
+        height: 420,
+        offsetTop: 292,
+        offsetLeft: 0,
+      },
+      screenHeight: 956,
+      screenAvailHeight: 956,
+      platform: 'iPhone',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+
+    expect(metrics.height).toBe(420);
+    expect(metrics.offsetTop).toBe(292);
+    expect(metrics.safeTopFallback).toBe(44);
+    expect(metrics.safeBottomFallback).toBe(34);
+  });
+
+  it('keeps iOS standalone keyboard viewport shrunk when innerHeight also follows the keyboard', () => {
+    const metrics = getViewportCssMetrics({
+      innerWidth: 440,
+      innerHeight: 420,
+      visualViewport: {
+        width: 440,
+        height: 420,
+        offsetTop: 292,
+        offsetLeft: 0,
+      },
+      screenHeight: 956,
+      screenAvailHeight: 956,
+      platform: 'iPhone',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+      maxTouchPoints: 5,
+      standalone: true,
+    });
+
+    expect(metrics.height).toBe(420);
+    expect(metrics.offsetTop).toBe(292);
+    expect(metrics.safeTopFallback).toBe(44);
+    expect(metrics.safeBottomFallback).toBe(34);
   });
 
   it('treats touch MacIntel as iPadOS', () => {

@@ -47,8 +47,7 @@ function isFullscreenLikeViewport(env: ViewportEnvironment): boolean {
   }
 
   const viewportHeight = env.visualViewport?.height || env.innerHeight;
-  const screenHeights = [env.screenHeight, env.screenAvailHeight]
-    .filter((value): value is number => typeof value === 'number' && value > 0);
+  const screenHeights = getScreenHeights(env);
 
   if (screenHeights.length === 0) return false;
 
@@ -56,12 +55,27 @@ function isFullscreenLikeViewport(env: ViewportEnvironment): boolean {
   return viewportHeight >= screenHeight - FULLSCREEN_HEIGHT_TOLERANCE_PX;
 }
 
+function getScreenHeights(env: ViewportEnvironment): number[] {
+  return [env.screenHeight, env.screenAvailHeight]
+    .filter((value): value is number => typeof value === 'number' && value > 0);
+}
+
 export function getViewportCssMetrics(env: ViewportEnvironment): ViewportCssMetrics {
   const width = clampViewportSize(env.visualViewport?.width, env.innerWidth);
-  const height = clampViewportSize(env.visualViewport?.height, env.innerHeight);
+  const visualHeight = clampViewportSize(env.visualViewport?.height, env.innerHeight);
+  const layoutHeight = clampViewportSize(env.innerHeight, visualHeight);
   const offsetTop = Math.max(0, Math.round(env.visualViewport?.offsetTop || 0));
   const offsetLeft = Math.max(0, Math.round(env.visualViewport?.offsetLeft || 0));
   const shouldUseIOSFallback = isAppleMobileViewport(env) && isFullscreenLikeViewport(env);
+  const screenHeights = getScreenHeights(env);
+  const fullscreenHeight = screenHeights.length > 0
+    ? Math.max(...screenHeights, layoutHeight, visualHeight)
+    : Math.max(layoutHeight, visualHeight);
+  const keyboardReferenceHeight = Math.max(layoutHeight, fullscreenHeight);
+  const isKeyboardLikeViewport = visualHeight < keyboardReferenceHeight - FULLSCREEN_HEIGHT_TOLERANCE_PX;
+  const height = shouldUseIOSFallback && !isKeyboardLikeViewport
+    ? fullscreenHeight
+    : visualHeight;
 
   return {
     width,

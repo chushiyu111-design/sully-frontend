@@ -555,7 +555,11 @@ const PhoneShell: React.FC = () => {
 
       {/* Full-screen app frame. ActiveAppContainer keeps app content inside the device safe area. */}
       <div
+        data-testid="app-frame"
         className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none flex flex-col"
+        style={{
+          paddingBottom: activeApp !== AppID.Launcher ? 'var(--safe-bottom, env(safe-area-inset-bottom))' : 0
+        }}
       >
         <ActiveAppContainer activeApp={activeApp} onCloseApp={handleCloseActiveApp} />
 

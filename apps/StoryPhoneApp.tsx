@@ -85,9 +85,9 @@ async function createAppIconDataUrl(file: File): Promise<string> {
 
 function normalizeClue(value: any, app: PhoneAppDef): PhoneClue {
     const rawItems = Array.isArray(value?.items) ? value.items : [];
-    const itemLimit = app.id === 'wechat' ? 14 : 6;
-    const itemValueLimit = app.id === 'wechat' ? 520 : 260;
-    const itemDetailLimit = app.id === 'wechat' ? 520 : 320;
+    const itemLimit = app.id === 'wechat' ? 14 : app.id === 'qq' ? 12 : 6;
+    const itemValueLimit = app.id === 'wechat' ? 520 : app.id === 'qq' ? 900 : 260;
+    const itemDetailLimit = app.id === 'wechat' ? 520 : app.id === 'qq' ? 520 : 320;
     const items = rawItems
         .slice(0, itemLimit)
         .map((item: any): PhoneClueItem => ({

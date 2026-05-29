@@ -1,5 +1,14 @@
 import type { CharacterProfile,GroupProfile } from '../types';
 
+export type GroupDirectorUserContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
+export interface GroupDirectorImageAttachment {
+    tag: number;
+    url: string;
+}
+
 const SPEAKER_KEYS = [
     'charId',
     'characterId',
@@ -17,6 +26,24 @@ const SPEAKER_KEYS = [
 ] as const;
 
 const CONTENT_KEYS = ['content', 'message', 'text', 'reply', 'body'] as const;
+
+export function isAttachableGroupDirectorImageUrl(value: unknown): value is string {
+    return typeof value === 'string' && /^(data:|https?:\/\/)/i.test(value.trim());
+}
+
+export function buildGroupDirectorUserContent(
+    prompt: string,
+    attachedImages: GroupDirectorImageAttachment[],
+): string | GroupDirectorUserContentPart[] {
+    if (attachedImages.length === 0) return prompt;
+    return [
+        { type: 'text', text: prompt },
+        ...attachedImages.map(img => ({
+            type: 'image_url' as const,
+            image_url: { url: img.url },
+        })),
+    ];
+}
 
 function normalizeComparable(value: unknown): string {
     if (value === null || value === undefined) return '';

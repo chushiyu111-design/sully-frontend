@@ -170,4 +170,19 @@ describe('ChatParser', () => {
         expect(ChatParser.sanitize('原文\\n%%BILINGUAL%%\\nTranslation')).toBe('原文\n%%BILINGUAL%%\nTranslation');
         expect(ChatParser.cleanAiSecondPass('[[SEND_EMOJI: 揉脸]]\\n[[SHARE_SONG: 晴天 | 周杰伦 | 0]]')).toBe('[[SEND_EMOJI: 揉脸]]\n[[SHARE_SONG: 晴天 | 周杰伦 | 0]]');
     });
+
+    it('strips leaked photo director summary blocks from visible replies', () => {
+        const { ChatParser } = chatParserModule;
+        const leaked = [
+            '等我一下。',
+            '画面：蓝山巷小院温馨复古的木质中岛台。',
+            '镜头：中近景，主观视角俯拍。',
+            '氛围：温馨、烟火气、诱惑。',
+        ].join('\n');
+
+        expect(ChatParser.cleanAiSecondPass(leaked)).toBe('等我一下。');
+        expect(ChatParser.sanitize(leaked)).toBe('等我一下。');
+        expect(ChatParser.sanitize('画面：窗边自拍\n镜头：中近景\n氛围：柔和')).toBe('');
+        expect(ChatParser.sanitize('这个画面：真的很像旧电影。')).toBe('这个画面：真的很像旧电影。');
+    });
 });

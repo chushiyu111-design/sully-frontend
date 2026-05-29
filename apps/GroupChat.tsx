@@ -11,10 +11,13 @@ import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../constants/archivePrompts';
 import { formatMessageForContext,shouldIncludeMessageInContext } from '../utils/messageContext';
 import {
+    buildGroupDirectorUserContent,
     getGroupDirectorActionContent,
     getGroupMemberCharacters,
+    isAttachableGroupDirectorImageUrl,
     parseGroupDirectorActions,
     resolveGroupDirectorMemberId,
+    type GroupDirectorImageAttachment,
 } from '../utils/groupChatDirector';
 
 // 复用 Chat.tsx 的高颜值样式逻辑，但针对群聊微调
@@ -691,21 +694,43 @@ ${recentPrivate || '(暂无私聊)'}
             }
 
             // 3. Group History (uses configurable context limit)
-            const recentGroupMsgs = currentMsgs.filter(m => shouldIncludeMessageInContext(m)).slice(-contextLimit).map(m => {
+            // Keep raw image data out of prompt text, but attach recent valid images as OpenAI
+            // content parts so the director can actually see what the group is reacting to.
+            const recentMsgsWindow = currentMsgs.filter(m => shouldIncludeMessageInContext(m)).slice(-contextLimit);
+            const MAX_ATTACHED_IMAGES = 3;
+            const validImageWindowIdx: number[] = [];
+            recentMsgsWindow.forEach((m, i) => {
+                if (m.type === 'image' && isAttachableGroupDirectorImageUrl(m.content)) {
+                    validImageWindowIdx.push(i);
+                }
+            });
+            const attachedSet = new Set(validImageWindowIdx.slice(-MAX_ATTACHED_IMAGES));
+            const attachedImages: GroupDirectorImageAttachment[] = [];
+            const recentGroupMsgs = recentMsgsWindow.map((m, i) => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
                 }
-                const content = formatMessageForContext(m, {
-                    surface: 'secondaryModel',
-                    charName: name,
-                    userName: userProfile.name,
-                    emojis,
-                    compact: true,
-                    maxContentChars: 300,
-                }) || m.content;
+                let content: string;
+                if (m.type === 'image' && attachedSet.has(i) && isAttachableGroupDirectorImageUrl(m.content)) {
+                    const tag = attachedImages.length + 1;
+                    attachedImages.push({ tag, url: m.content.trim() });
+                    content = `[图片#${tag}]`;
+                } else {
+                    content = formatMessageForContext(m, {
+                        surface: 'secondaryModel',
+                        charName: name,
+                        userName: userProfile.name,
+                        emojis,
+                        compact: true,
+                        maxContentChars: 300,
+                    }) || (m.type === 'image' ? '[图片]' : m.content);
+                }
                 return `${name}: ${content}`;
             }).join('\n');
+            const attachedImagesNote = attachedImages.length > 0
+                ? `\n（本轮附带 ${attachedImages.length} 张最近的图片，对应记录里的 [图片#1] ~ [图片#${attachedImages.length}]。请基于实际图片内容自然反应，不要无视，也不要瞎猜没附上的旧图。）\n`
+                : '';
 
             // NEW: Build Categorized Emoji Context (filtered by group member visibility)
             const emojiContextStr = (() => {
@@ -742,6 +767,7 @@ ${recentPrivate || '(暂无私聊)'}
 当前场景：大家正在群里聊天。
 最近聊天记录：
 ${recentGroupMsgs}
+${attachedImagesNote}
 
 ### 任务：生成一段精彩的群聊互动 (Conversation Flow)
 请作为导演，接管所有角色，让群聊**自然地流动起来**。
@@ -775,12 +801,13 @@ ${recentGroupMsgs}
 ]
 `;
 
+            const userMessageContent = buildGroupDirectorUserContent(prompt, attachedImages);
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
+                    messages: [{ role: "user", content: userMessageContent }],
                     temperature: 0.9, // High creativity for banter
                     max_tokens: 8000
                 })

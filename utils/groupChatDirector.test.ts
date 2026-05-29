@@ -1,6 +1,8 @@
 import { describe,expect,it } from 'vitest';
 import {
+    buildGroupDirectorUserContent,
     getGroupDirectorActionContent,
+    isAttachableGroupDirectorImageUrl,
     normalizeGroupProfiles,
     parseGroupDirectorActions,
     resolveGroupDirectorMemberId,
@@ -58,5 +60,27 @@ describe('groupChatDirector helpers', () => {
 
         expect(actions).toHaveLength(1);
         expect(getGroupDirectorActionContent(actions[0])).toBe('第一句');
+    });
+
+    it('builds multimodal director content when recent group images are attached', () => {
+        const content = buildGroupDirectorUserContent('最近聊天记录：\n用户: [图片#1]', [
+            { tag: 1, url: 'data:image/jpeg;base64,group-image' },
+        ]);
+
+        expect(content).toEqual([
+            { type: 'text', text: '最近聊天记录：\n用户: [图片#1]' },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,group-image' } },
+        ]);
+    });
+
+    it('keeps director content as plain text when there are no images to attach', () => {
+        expect(buildGroupDirectorUserContent('普通群聊 prompt', [])).toBe('普通群聊 prompt');
+    });
+
+    it('recognizes attachable group image urls', () => {
+        expect(isAttachableGroupDirectorImageUrl('data:image/png;base64,abc')).toBe(true);
+        expect(isAttachableGroupDirectorImageUrl('https://example.com/a.jpg')).toBe(true);
+        expect(isAttachableGroupDirectorImageUrl('[图片]')).toBe(false);
+        expect(isAttachableGroupDirectorImageUrl('')).toBe(false);
     });
 });

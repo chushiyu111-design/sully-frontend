@@ -60,6 +60,33 @@ function clipText(text: string, limit?: number): string {
     return text.length > limit ? text.slice(0, limit) : text;
 }
 
+const PHOTO_DIRECTOR_SUMMARY_LINE_RE = /^\s*(?:[-*+]\s*)?(?:配文|连续性|画面|镜头|氛围|视觉标签|生成意图|正向提示词|负向提示词|positive\s+prompt|negative\s+prompt|final\s+prompt|prompt|scene|camera|mood)\s*[：:]/i;
+const STRONG_PHOTO_DIRECTOR_LABEL_RE = /^\s*(?:[-*+]\s*)?(?:视觉标签|生成意图|正向提示词|负向提示词|positive\s+prompt|negative\s+prompt|final\s+prompt|prompt)\s*[：:]/i;
+
+function hasInternalPhotoDirectorSummaryShape(text: string): boolean {
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const labeledLines = lines.filter(line => PHOTO_DIRECTOR_SUMMARY_LINE_RE.test(line));
+    return labeledLines.length >= 2 || lines.some(line => STRONG_PHOTO_DIRECTOR_LABEL_RE.test(line));
+}
+
+function stripInternalPhotoDirectorSummary(text: string): string {
+    if (!hasInternalPhotoDirectorSummaryShape(text)) return text;
+    return text
+        .split(/\r?\n/)
+        .filter(line => !PHOTO_DIRECTOR_SUMMARY_LINE_RE.test(line))
+        .join('\n')
+        .trim();
+}
+
+function safeImageReplySummary(value: unknown): string {
+    const cleaned = stripInternalPhotoDirectorSummary(formatScalar(value));
+    return compactText(cleaned).slice(0, 80);
+}
+
+function joinGeneratedImageChatSummary(parts: string[]): string {
+    return compactText(parts.map(part => part.trim()).filter(Boolean).join(' '));
+}
+
 function formatScalar(value: unknown, fallback = ''): string {
     if (value === null || value === undefined) return fallback;
     return String(value);
@@ -138,7 +165,7 @@ function formatReplyPrefix(message: ContextMessage): string {
         || !!reply.imageUrl
         || looksLikeImageReplyContent(reply.content);
     const content = isImageReply
-        ? (reply.visualSummary || (looksLikeImageReplyContent(reply.content) ? '图片' : reply.content))
+        ? (safeImageReplySummary(reply.visualSummary) || (looksLikeImageReplyContent(reply.content) ? '图片' : safeImageReplySummary(reply.content) || '图片'))
         : reply.content;
     return `[回复 "${content.substring(0, 50)}..."]: `;
 }
@@ -266,6 +293,38 @@ function getImageContextSummary(message: ContextMessage, maxContentChars?: numbe
     return clipText(compactText(String(summary || '')), maxContentChars);
 }
 
+function getGeneratedAssistantImageChatSummary(message: ContextMessage, maxContentChars?: number): string {
+    const metadata = message.metadata || {};
+    const photoMeta = metadata.photoMeta || {};
+    const director = photoMeta.directorResult || {};
+    const caption = formatScalar(metadata.caption || director.caption).trim();
+    const continuity = formatScalar(
+        photoMeta.continuity_summary
+        || director.continuity_summary
+        || metadata.continuitySummary
+        || metadata.continuity_summary,
+    ).trim();
+
+    const safeParts = [
+        caption ? `配文「${truncateInline(caption, 80)}」。` : '',
+        continuity ? `后续承接：${truncateInline(continuity, 180)}` : '',
+    ];
+    const safeSummary = joinGeneratedImageChatSummary(safeParts);
+    if (safeSummary) return clipText(safeSummary, maxContentChars);
+
+    const fallbackSummary = formatScalar(metadata.visualSummary || metadata.photoSummary).trim();
+    if (fallbackSummary && !hasInternalPhotoDirectorSummaryShape(fallbackSummary)) {
+        return clipText(compactText(fallbackSummary), maxContentChars);
+    }
+
+    return '';
+}
+
+function truncateInline(text: string, limit: number): string {
+    const clean = compactText(text);
+    return clean.length > limit ? `${clean.slice(0, limit)}...` : clean;
+}
+
 function getUrlFileLabel(value: string): string {
     const text = value.trim();
     if (!text || text.startsWith('data:')) return '';
@@ -312,13 +371,17 @@ function formatMessageBody(message: ContextMessage, options: FormatMessageContex
         case 'voice':
             return formatVoice(message, { ...options, maxContentChars });
         case 'image': {
-            const summary = getImageContextSummary(message, maxContentChars);
             if (isGenerationSurface(options)) {
-                const label = isAssistantRole(message) ? '你发送过的图片' : '用户发来的图片';
+                const isAssistantImage = isAssistantRole(message);
+                const label = isAssistantImage ? '你发送过的图片（图片已显示给用户）' : '用户发来的图片';
+                const summary = isAssistantImage
+                    ? getGeneratedAssistantImageChatSummary(message, maxContentChars)
+                    : getImageContextSummary(message, maxContentChars);
                 return summary
                     ? `[${label}] ${summary}`
                     : `[${label}]`;
             }
+            const summary = getImageContextSummary(message, maxContentChars);
             const prefix = '发送了';
             return summary
                 ? `[${prefix}一张图片] ${summary}`

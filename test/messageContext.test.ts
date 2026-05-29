@@ -180,7 +180,7 @@ describe('message context formatter', () => {
         expect(metadataEmoji).not.toContain('data:image');
     });
 
-    it('keeps generated assistant images as lightweight summaries in main chat history', () => {
+    it('keeps generated assistant images as chat-safe summaries in main chat history', () => {
         const { apiMessages } = ChatPrompts.buildMessageHistory([
             msg({
                 role: 'assistant',
@@ -193,10 +193,48 @@ describe('message context formatter', () => {
             }),
         ], 10, character, user, []);
 
-        expect(apiMessages[0]?.content).toBe('[2026-04-21 10:30] [你发送过的图片] 窗边自拍，暖光，近景构图。');
+        expect(apiMessages[0]?.content).toBe('[2026-04-21 10:30] [你发送过的图片（图片已显示给用户）] 窗边自拍，暖光，近景构图。');
     });
 
-    it('only attaches raw image content for the latest user image', () => {
+    it('does not leak generated photo director fields into main chat history', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory([
+            msg({
+                role: 'assistant',
+                type: 'image',
+                content: 'data:image/png;base64,very-large-generated-image',
+                metadata: {
+                    imageId: 'photo-1',
+                    caption: '给你看。',
+                    visualSummary: [
+                        '画面：角色站在窗边，傍晚暖光照在侧脸上。',
+                        '镜头：近景自拍构图',
+                        '氛围：柔和、私密',
+                        '视觉标签：1girl, solo, window light',
+                    ].join('\n'),
+                    photoMeta: {
+                        continuity_summary: '窗边自拍，暖光。',
+                        directorResult: {
+                            caption: '给你看。',
+                            scene_zh: '角色站在窗边，傍晚暖光照在侧脸上。',
+                            camera: '近景自拍构图',
+                            mood: '柔和、私密',
+                            continuity_summary: '窗边自拍，暖光。',
+                        },
+                    },
+                },
+            }),
+        ], 10, character, user, []);
+
+        expect(apiMessages[0]?.content).toContain('[你发送过的图片（图片已显示给用户）]');
+        expect(apiMessages[0]?.content).toContain('配文「给你看。」');
+        expect(apiMessages[0]?.content).toContain('后续承接：窗边自拍，暖光。');
+        expect(apiMessages[0]?.content).not.toContain('画面：');
+        expect(apiMessages[0]?.content).not.toContain('镜头：');
+        expect(apiMessages[0]?.content).not.toContain('氛围：');
+        expect(apiMessages[0]?.content).not.toContain('视觉标签');
+    });
+
+    it('keeps user images as structured image messages', () => {
         const { apiMessages } = ChatPrompts.buildMessageHistory([
             msg({
                 id: 1,
@@ -213,12 +251,110 @@ describe('message context formatter', () => {
             }),
         ], 10, character, user, []);
 
-        expect(apiMessages[0]?.content).toBe('[2026-04-21 10:30] [用户发来的图片] 上一张图');
+        expect(Array.isArray(apiMessages[0]?.content)).toBe(true);
+        expect(apiMessages[0]?.content[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,older-user-image' },
+        });
         expect(Array.isArray(apiMessages[1]?.content)).toBe(true);
         expect(apiMessages[1]?.content[1]).toEqual({
             type: 'image_url',
             image_url: { url: 'data:image/png;base64,latest-user-image' },
         });
+    });
+
+    it('keeps a sent image visible to the model when the user follows up with text', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory([
+            msg({
+                id: 1,
+                type: 'image',
+                content: 'data:image/png;base64,user-image',
+                metadata: { caption: '刚发的图' },
+            }),
+            msg({
+                id: 2,
+                type: 'text',
+                content: '看看这个是什么',
+                timestamp: new Date(2026, 3, 21, 10, 31).getTime(),
+            }),
+        ], 10, character, user, []);
+
+        expect(Array.isArray(apiMessages[0]?.content)).toBe(true);
+        expect(apiMessages[0]?.content[0]?.text).toContain('[用户发来的图片] 刚发的图');
+        expect(apiMessages[0]?.content[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,user-image' },
+        });
+        expect(Array.isArray(apiMessages[1]?.content)).toBe(false);
+        expect(apiMessages[1]?.content).toContain('看看这个是什么');
+    });
+
+    it('does not duplicate a previous image into later text messages', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory([
+            msg({
+                id: 1,
+                type: 'image',
+                content: 'data:image/png;base64,already-replied-image',
+                metadata: { caption: '已经聊过的图' },
+            }),
+            msg({
+                id: 2,
+                role: 'assistant',
+                type: 'text',
+                content: '我看到了。',
+                timestamp: new Date(2026, 3, 21, 10, 31).getTime(),
+            }),
+            msg({
+                id: 3,
+                type: 'text',
+                content: '那继续说刚才的',
+                timestamp: new Date(2026, 3, 21, 10, 32).getTime(),
+            }),
+        ], 10, character, user, []);
+
+        expect(Array.isArray(apiMessages[0]?.content)).toBe(true);
+        expect(apiMessages[0]?.content[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,already-replied-image' },
+        });
+        expect(Array.isArray(apiMessages[2]?.content)).toBe(false);
+        expect(apiMessages[2]?.content).toContain('那继续说刚才的');
+        expect(apiMessages[2]?.content).not.toContain('already-replied-image');
+    });
+
+    it('keeps multiple user images as separate structured messages', () => {
+        const { apiMessages } = ChatPrompts.buildMessageHistory([
+            msg({
+                id: 1,
+                type: 'image',
+                content: 'data:image/png;base64,first-image',
+                metadata: { caption: '第一张' },
+            }),
+            msg({
+                id: 2,
+                type: 'image',
+                content: 'data:image/png;base64,second-image',
+                metadata: { caption: '第二张' },
+                timestamp: new Date(2026, 3, 21, 10, 31).getTime(),
+            }),
+            msg({
+                id: 3,
+                type: 'text',
+                content: '看后一张',
+                timestamp: new Date(2026, 3, 21, 10, 32).getTime(),
+            }),
+        ], 10, character, user, []);
+
+        expect(apiMessages[0]?.content[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,first-image' },
+        });
+        expect(apiMessages[1]?.content[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,second-image' },
+        });
+        expect(Array.isArray(apiMessages[2]?.content)).toBe(false);
+        expect(apiMessages[2]?.content).toContain('看后一张');
     });
 
     it('formats image reply prefixes without leaking raw image URLs', () => {
@@ -240,6 +376,33 @@ describe('message context formatter', () => {
         expect(text).toContain('[回复 "窗边自拍...');
         expect(text).toContain('好帅');
         expect(text).not.toContain('https://cdn.example.com');
+    });
+
+    it('formats generated image reply prefixes without leaking director fields', () => {
+        const text = formatMessageForContext(msg({
+            role: 'user',
+            content: '好帅',
+            replyTo: {
+                id: 91,
+                name: '糯米',
+                content: 'https://cdn.example.com/generated/window-selfie.webp',
+                type: 'image',
+                visualSummary: [
+                    '画面：窗边自拍',
+                    '镜头：中近景',
+                    '氛围：柔和',
+                ].join('\n'),
+            },
+        }), {
+            surface: 'chat',
+            charName: '糯米',
+        });
+
+        expect(text).toContain('[回复 "图片...');
+        expect(text).toContain('好帅');
+        expect(text).not.toContain('画面：');
+        expect(text).not.toContain('镜头：');
+        expect(text).not.toContain('氛围：');
     });
 
     it('keeps secondary model summaries unchanged while group director is low-induction', () => {

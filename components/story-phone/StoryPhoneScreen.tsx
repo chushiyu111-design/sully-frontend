@@ -109,7 +109,7 @@ export interface StoryPhoneHomeSurface {
 
 export const PHONE_APPS: PhoneAppDef[] = [
     { id: 'wechat', name: '微信', icon: '微', color: '#18b35f', prompt: '生成角色真实在使用的微信数据，而不是一页线索卡。必须输出丰富 wechatData：角色自己的微信资料、聊天列表、联系人、群聊、朋友圈、收藏、服务/账单、作品/视频号、小店与卡包、表情、设置等。内容要从当前角色人设、世界观、关系、主聊天历史和本轮状态推导；允许有隐私痕迹、未读、置顶、撤回、转账、红包、工作群、好友互动。每个私聊/群聊都要有多条 chatMessages，不要只有和 user 的聊天完整；朋友圈要有角色本人和好友/联系人发布的多条动态与点赞评论，post.text 必须像本人发的朋友圈原话，禁止写成“旧识/重点关注对象/家族纽带/人生导师”这类人设关系摘要。top-level items 只作为当前停留页摘要，完整内容放进 wechatData。' },
-    { id: 'qq', name: 'QQ', icon: 'Q', color: '#2d7df0', prompt: '精做一个完整的 QQ App 内容快照，不要只生成几条粗略线索。必须让 QQ 像角色真实长期使用的社交软件：消息页、好友私聊、多个群聊、QQ空间说说/访客/留言、相册、群文件/微云、收藏、联系人资料、等级/个性签名、匿名或旧关系痕迹都要有内容。生成 8-12 个可点开的 items；items 的 label 写好友名、群名、功能页或相册/文件夹名，detail 写具体时间、群身份、空间权限、QQ号、文件名、相册名、访客记录或旧记录痕迹。每个 item.value 不能只有二三条，至少写 5-8 行屏幕上可见的原文或列表项：私聊/群聊要有多轮对话、撤回/未读/语音/图片/表情/文件等痕迹；空间动态要有多条说说、点赞评论和访客；相册要有多个相册/照片描述；文件要有多个文件名、大小、下载/转发记录；资料页要有昵称、QQ号、等级、签名、备注、共同群或最近互动。内容要从当前角色人设、关系、主聊天历史和本轮状态推导，像翻到一整个 QQ，而不是每个模块只有摘要。避免写成“旧识/重点对象”这类人设说明，必须写屏幕上真的会出现的 QQ 文案。' },
+    { id: 'qq', name: 'QQ', icon: 'Q', color: '#2d7df0', prompt: '精做一个完整的 QQ App 内容快照，不要只生成几条粗略线索。必须让 QQ 像角色真实长期使用的社交软件：消息页、好友私聊、多个群聊、QQ空间说说/访客/留言、相册、群文件/微云、收藏、联系人资料、等级/个性签名、匿名或旧关系痕迹都要有内容。生成 8-12 个可点开的 items；items 的 label 写好友名、群名、功能页或相册/文件夹名，detail 写具体时间、群身份、空间权限、QQ号、文件名、相册名、访客记录或旧记录痕迹。每个 item.value 不能只有二三条，至少写 5-8 行屏幕上可见的原文或列表项：私聊/群聊要有多轮对话、撤回/未读/语音/图片/表情/文件等痕迹；空间动态要有多条说说、点赞评论和访客，但评论/访客/点赞数量不要单独作为纯数字 item.value，计数请写进 detail 或写成“林野：别装，访客记录看得到”这类真实评论原文；相册要有多个相册/照片描述；文件要有多个文件名、大小、下载/转发记录；资料页要有昵称、QQ号、等级、签名、备注、共同群或最近互动。内容要从当前角色人设、关系、主聊天历史和本轮状态推导，像翻到一整个 QQ，而不是每个模块只有摘要。避免写成“旧识/重点对象”这类人设说明，必须写屏幕上真的会出现的 QQ 文案。' },
     { id: 'messages', name: '信息', icon: '💬', color: 'from-emerald-400 to-green-600', prompt: '生成一段手机聊天/未发送消息/置顶会话线索。' },
     { id: 'notes', name: '备忘录', icon: '📝', color: 'from-amber-200 to-yellow-500', prompt: '生成一条备忘录、清单或私密随手记。' },
     { id: 'photos', name: '相册', icon: '🖼️', color: 'from-fuchsia-300 to-sky-400', prompt: '生成几张相册缩略图的文字描述，像用户翻到了相册最近项目。' },
@@ -970,13 +970,73 @@ function getQQItemTime(item: PhoneClueItem, fallback?: string): string {
     return match?.[0] || fallback || '刚刚';
 }
 
+const QQ_SPACE_METRIC_LABEL_RE = /^(赞|点赞|点赞数|评论|评论数|转发|转发数|访客|访客数|访问|访问数|留言|留言数|说说|说说数|相册|相册数|浏览|浏览量)$/;
+const QQ_SPACE_STAT_ALIASES: Record<string, string[]> = {
+    说说: ['说说', '动态'],
+    相册: ['相册', '照片', '图片'],
+    留言: ['留言', '评论'],
+    访客: ['访客', '访问', '浏览'],
+};
+
+function isQQMetricOnlyLine(line: string): boolean {
+    const normalized = line.replace(/\s+/g, '').trim();
+    if (!normalized) return false;
+    if (/^\d{1,5}$/.test(normalized)) return true;
+    if (/^\d{1,5}(个赞|条评论|次转发|位访客|个访客|条留言|条说说|个相册|次访问|次浏览)$/.test(normalized)) return true;
+    return /^(赞|点赞|点赞数|评论|评论数|转发|转发数|访客|访客数|访问|访问数|留言|留言数|说说|说说数|相册|相册数|浏览|浏览量)[:：]?\d{1,5}(个|条|次|人|位)?$/.test(normalized);
+}
+
+function isQQSpaceMetricItem(item: PhoneClueItem): boolean {
+    const label = item.label.trim();
+    const lines = item.value
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    return QQ_SPACE_METRIC_LABEL_RE.test(label) && lines.length > 0 && lines.every(isQQMetricOnlyLine);
+}
+
+function getQQSpaceFeedEntries(items: PhoneClueItem[]): { item: PhoneClueItem; index: number }[] {
+    const entries = items
+        .map((item, index) => ({ item, index }))
+        .filter(entry => !isQQSpaceMetricItem(entry.item));
+    return entries.length > 0 ? entries : items.map((item, index) => ({ item, index }));
+}
+
+function getQQSpacePostText(item: PhoneClueItem, fallbackName: string, max = 112): string {
+    const lines = itemText(item)
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .filter(line => !isQQMetricOnlyLine(line));
+    const text = lines.join('\n').trim();
+    if (text) return previewText(text, max);
+    return `${fallbackName || item.label} 的空间动态还停在屏幕上。`;
+}
+
+function getQQSpaceStatValue(items: PhoneClueItem[], label: string, fallback: number): number {
+    const aliases = QQ_SPACE_STAT_ALIASES[label] || [label];
+    const metric = items.find(item => {
+        const rawLabel = item.label.trim();
+        return aliases.some(alias => rawLabel.includes(alias)) && isQQSpaceMetricItem(item);
+    });
+    const source = metric ? itemText(metric) : '';
+    const match = source.match(/\d{1,5}/);
+    if (match) return Number(match[0]);
+    return fallback;
+}
+
 const QQScreen: React.FC<AppContentProps> = ({ clue, charName, charAvatar, compact, theme, nestedRoute = DEFAULT_NESTED_ROUTE, onNavigate }) => {
-    const items = getClueItems(clue).slice(0, compact ? 4 : 6);
+    const items = getClueItems(clue).slice(0, compact ? 8 : 12);
     const selectedItem = getRouteItem(items, nestedRoute.itemIndex);
     const goHome = onNavigate ? () => onNavigate(DEFAULT_NESTED_ROUTE) : undefined;
     const pageInset = compact ? '-mx-3 -my-3' : '-mx-4 -my-4';
     const pagePad = compact ? 'px-3' : 'px-4';
     const qqNumber = `QQ号 ${String(10000 + charName.length * 137 + items.length * 11)}`;
+    const spaceFeedEntries = getQQSpaceFeedEntries(items);
+    const spaceStats = ['说说', '相册', '留言', '访客'].map((label, index) => ({
+        label,
+        value: getQQSpaceStatValue(items, label, Math.max(1, spaceFeedEntries.length + index + 1)),
+    }));
 
     if (nestedRoute.name === 'thread') {
         return <PhoneThreadDetail item={selectedItem} charName={charName} charAvatar={charAvatar} compact={compact} theme={theme} platform="qq" onBack={goHome} />;
@@ -1040,17 +1100,17 @@ const QQScreen: React.FC<AppContentProps> = ({ clue, charName, charAvatar, compa
                             <button type="button" className="mb-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold text-[#2F8CFF]" style={{ borderColor: QQ_DIVIDER }}>装扮</button>
                         </div>
                         <div className={`${compact ? 'mt-3' : 'mt-4'} grid grid-cols-4 rounded-[18px] text-center`} style={{ backgroundColor: QQ_LIGHT_BLUE }}>
-                            {['说说', '相册', '留言', '访客'].map((label, index) => (
-                                <span key={label} className="border-r px-2 py-2 last:border-r-0" style={{ borderColor: '#fff' }}>
-                                    <span className={`${compact ? 'text-xs' : 'text-sm'} block font-semibold text-[#1F2A3D]`}>{items.length + index + 1}</span>
-                                    <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} text-[#8491A5]`}>{label}</span>
+                            {spaceStats.map(stat => (
+                                <span key={stat.label} className="border-r px-2 py-2 last:border-r-0" style={{ borderColor: '#fff' }}>
+                                    <span className={`${compact ? 'text-xs' : 'text-sm'} block font-semibold text-[#1F2A3D]`}>{stat.value}</span>
+                                    <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} text-[#8491A5]`}>{stat.label}</span>
                                 </span>
                             ))}
                         </div>
                     </div>
                 </div>
                 <div className={`${pagePad} space-y-2 pb-4 pt-2`}>
-                    {items.map((item, index) => (
+                    {spaceFeedEntries.map(({ item, index }) => (
                         <button
                             key={`${item.label}-space-${index}`}
                             type="button"
@@ -1067,7 +1127,7 @@ const QQScreen: React.FC<AppContentProps> = ({ clue, charName, charAvatar, compa
                                         <span className={`${compact ? 'text-[12px]' : 'text-sm'} truncate font-semibold text-[#1F2A3D]`}>{item.label}</span>
                                         <span className={`${compact ? 'text-[8px]' : 'text-[10px]'} shrink-0 text-[#8491A5]`}>{getQQItemTime(item, clue.timestamp)}</span>
                                     </span>
-                                    <span className={`${compact ? 'text-[10px]' : 'text-xs'} mt-1 line-clamp-3 block leading-relaxed text-[#1F2A3D]`}>{getItemPreview(item, 112)}</span>
+                                    <span className={`${compact ? 'text-[10px]' : 'text-xs'} mt-1 line-clamp-3 block leading-relaxed text-[#1F2A3D]`}>{getQQSpacePostText(item, charName)}</span>
                                     <span className="mt-2 grid grid-cols-3 gap-1.5">
                                         {[0, 1, 2].map(tile => (
                                             <span key={tile} className="h-12 rounded-xl bg-[linear-gradient(135deg,#D9EEFF,#F7FBFF)]" />

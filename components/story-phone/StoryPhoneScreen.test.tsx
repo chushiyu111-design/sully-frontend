@@ -107,6 +107,11 @@ describe('StoryPhoneScreen home UI', () => {
                             detail: '仅好友可见',
                         },
                         {
+                            label: '评论数',
+                            value: '7',
+                            detail: '空间互动',
+                        },
+                        {
                             label: '群文件',
                             value: '毕业照原图.zip 最近被重新下载。',
                             detail: '微云 · 148MB',
@@ -134,6 +139,8 @@ describe('StoryPhoneScreen home UI', () => {
         expect(screen.getAllByText('赞').length).toBeGreaterThan(0);
         expect(screen.getAllByText('评论').length).toBeGreaterThan(0);
         expect(screen.getAllByText('转发').length).toBeGreaterThan(0);
+        expect(screen.queryByText('评论数')).not.toBeInTheDocument();
+        expect(screen.getAllByText('7').length).toBeGreaterThan(0);
 
         fireEvent.click(screen.getByLabelText('返回上一层'));
 

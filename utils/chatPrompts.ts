@@ -942,6 +942,13 @@ Step 5 — 最后检查
             if (lastMsg && currentMsg) timeGapHint = ChatPrompts.getTimeGapHint(lastMsg, currentMsg.timestamp);
         }
 
+        const isAttachableUserImage = (m: Message): boolean => (
+            m.type === 'image'
+            && m.role === 'user'
+            && typeof m.content === 'string'
+            && (/^data:image\//i.test(m.content) || /^https?:\/\//i.test(m.content))
+        );
+
         return {
             apiMessages: historySlice.map((m, index) => {
                 let content: any = formatMessageForContext(m, {
@@ -952,13 +959,7 @@ Step 5 — 最后检查
                     timestampFormatter: ChatPrompts.formatDate,
                 }) || '';
 
-                const shouldAttachImageUrl = m.type === 'image'
-                    && m.role === 'user'
-                    && index === historySlice.length - 1
-                    && typeof m.content === 'string'
-                    && (/^data:image\//i.test(m.content) || /^https?:\/\//i.test(m.content));
-
-                if (shouldAttachImageUrl) {
+                if (isAttachableUserImage(m)) {
                     let textPart = content;
                     if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };

@@ -210,6 +210,12 @@ describe('useChatAI context loading', () => {
             expect.anything(),
             undefined,
             [],
+            expect.objectContaining({
+                autoCall: undefined,
+                autoPhoto: undefined,
+                autoShareSong: undefined,
+                autoVoice: undefined,
+            }),
         );
     });
 
@@ -310,6 +316,55 @@ describe('useChatAI context loading', () => {
         expect(mockedMindSnapshotExtractor.generateInnerVoice).not.toHaveBeenCalled();
         expect(mockedVectorMemoryExtractor.maybeExtract).not.toHaveBeenCalled();
         expect(mockedEventExtractor.extract).not.toHaveBeenCalled();
+    });
+
+    it('keeps trailing chat instructions inside multimodal user content', async () => {
+        mockedChatPrompts.buildMessageHistory.mockReturnValueOnce({
+            apiMessages: [{
+                role: 'user',
+                content: [
+                    { type: 'text', text: '[2026-04-21 10:31] 看看这个是什么' },
+                    { type: 'image_url', image_url: { url: 'data:image/png;base64,user-image' } },
+                ],
+            }],
+            historySlice: [makeMessage(1, '看看这个是什么')],
+        } as any);
+
+        const char = {
+            id: 'char-1',
+            name: 'Sully',
+            avatar: '',
+            description: '',
+            systemPrompt: '',
+            memories: [],
+            contextLimit: 777,
+            statusBarMode: 'off',
+        } as CharacterProfile;
+
+        const { result } = renderHook(() => useChatAI({
+            char,
+            userProfile: { name: 'Tester', avatar: '' } as any,
+            apiConfig: { baseUrl: 'https://example.test', apiKey: 'sk-test', model: 'test-model' },
+            groups: [],
+            emojis: [],
+            categories: [],
+            addToast: vi.fn(),
+            setMessages: vi.fn(),
+        }));
+
+        await act(async () => {
+            await result.current.triggerAI([makeMessage(1, '看看这个是什么')]);
+        });
+
+        const body = JSON.parse((mockedSafeFetchJson.mock.calls[0][1] as RequestInit).body as string);
+        const userMessages = body.messages.filter((message: any) => message.role === 'user');
+        expect(userMessages).toHaveLength(1);
+        expect(Array.isArray(userMessages[0].content)).toBe(true);
+        expect(userMessages[0].content).toEqual(expect.arrayContaining([
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,user-image' } },
+            expect.objectContaining({ type: 'text', text: expect.stringContaining('[思考提示]') }),
+        ]));
+        expect(body.messages[body.messages.length - 1]).toEqual({ role: 'assistant', content: '<thinking>' });
     });
 
     it('uses streaming preview when the experimental stream toggle is enabled', async () => {

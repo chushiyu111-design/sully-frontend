@@ -90,6 +90,44 @@ class ChatStreamError extends Error {
     }
 }
 
+function appendTextToChatContent(content: any, text: string): any {
+    if (!text) return content;
+    if (typeof content === 'string') return `${content}${text}`;
+    if (Array.isArray(content)) return [...content, { type: 'text', text }];
+    return `${String(content || '')}${text}`;
+}
+
+function cleanTextFromChatContent(content: any, patterns: RegExp[]): any {
+    const clean = (value: string) => patterns.reduce((text, pattern) => text.replace(pattern, ''), value);
+    if (typeof content === 'string') return clean(content);
+    if (Array.isArray(content)) {
+        return content.map(part => {
+            if (part?.type === 'text' && typeof part.text === 'string') {
+                return { ...part, text: clean(part.text) };
+            }
+            return part;
+        });
+    }
+    return content;
+}
+
+function appendTextToLastUserMessage(messages: any[], text: string): boolean {
+    const lastUserIdx = messages.map(m => m.role).lastIndexOf('user');
+    if (lastUserIdx < 0) return false;
+    messages[lastUserIdx].content = appendTextToChatContent(messages[lastUserIdx].content, text);
+    return true;
+}
+
+function cloneChatMessageForRetry(message: any): any {
+    if (!Array.isArray(message?.content)) return { ...message };
+    return {
+        ...message,
+        content: message.content.map((part: any) => (
+            part && typeof part === 'object' ? { ...part } : part
+        )),
+    };
+}
+
 function extractStreamTextDelta(payload: any): string {
     const choice = payload?.choices?.[0];
     const delta = choice?.delta;
@@ -616,9 +654,7 @@ export const useChatAI = ({
             }
 
             if (trailingInstructions) {
-                if (lastUserIdx >= 0 && typeof fullMessages[lastUserIdx].content === 'string') {
-                    fullMessages[lastUserIdx].content += trailingInstructions;
-                } else {
+                if (!appendTextToLastUserMessage(fullMessages, trailingInstructions)) {
                     fullMessages.push({ role: 'user', content: `[系统执行指令]${trailingInstructions}` });
                 }
             }
@@ -765,19 +801,24 @@ export const useChatAI = ({
                 console.warn('🔒 [ChainLock] Format drop detected! Got thinking but no content. Retrying without prefill...');
                 try {
                     // Remove the prefill assistant message and thinking chain lock for retry
-                    const retryMessages = fullMessages.filter(m => 
-                        !(m.role === 'assistant' && typeof m.content === 'string' && (m.content.startsWith('<thinking>') || m.content.startsWith('<think>')))
-                    );
+                    const retryMessages = fullMessages
+                        .filter(m =>
+                            !(m.role === 'assistant' && typeof m.content === 'string' && (m.content.startsWith('<thinking>') || m.content.startsWith('<think>')))
+                        )
+                        .map(cloneChatMessageForRetry);
                     
                     // The thinking chain lock was injected into the last user message, we need to remove it
                     const rLastUserIdx = retryMessages.map(m => m.role).lastIndexOf('user');
-                    if (rLastUserIdx >= 0 && typeof retryMessages[rLastUserIdx].content === 'string') {
-                        retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考提示\][\s\S]*?输出正文。/, '');
-                        retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考链格式锁定\][\s\S]*?━━━━━━━━━━━━━━━/, '');
-                        // Also clean DeepSeek-style chain lock (no separator block)
-                        retryMessages[rLastUserIdx].content = retryMessages[rLastUserIdx].content.replace(/\[思考链格式锁定\][\s\S]*?思考链闭合后必须紧跟正文内容。/, '');
-                        // Add a direct instruction instead
-                        retryMessages[rLastUserIdx].content += `\n\n[系统: 请直接输出角色的回复正文，不需要 <${thinkTag}> 标签。]`;
+                    if (rLastUserIdx >= 0) {
+                        retryMessages[rLastUserIdx].content = cleanTextFromChatContent(retryMessages[rLastUserIdx].content, [
+                            /\[思考提示\][\s\S]*?输出正文。/,
+                            /\[思考链格式锁定\][\s\S]*?━━━━━━━━━━━━━━━/,
+                            /\[思考链格式锁定\][\s\S]*?思考链闭合后必须紧跟正文内容。/,
+                        ]);
+                        retryMessages[rLastUserIdx].content = appendTextToChatContent(
+                            retryMessages[rLastUserIdx].content,
+                            `\n\n[系统: 请直接输出角色的回复正文，不需要 <${thinkTag}> 标签。]`,
+                        );
                     } else {
                         retryMessages.push({ role: 'user', content: `[系统: 请直接输出角色的回复正文，不需要 <${thinkTag}> 标签。]` });
                     }

@@ -95,6 +95,22 @@ function stripLeakedVoiceHistoryLabels(text: string): string {
         .replace(/[【\[]\s*(?:你上一条语音|你上一條語音|上一条语音|上一條語音|你刚才的语音|你剛才的語音|你发出的语音|你發出的語音)(?:消息)?(?:[（(]\s*\d+\s*秒\s*[）)])?\s*[】\]]\s*/g, '');
 }
 
+const PHOTO_DIRECTOR_LEAK_LINE_RE = /^\s*(?:[-*+]\s*)?(?:配文|连续性|画面|镜头|氛围|视觉标签|生成意图|正向提示词|负向提示词|positive\s+prompt|negative\s+prompt|final\s+prompt|prompt|scene|camera|mood)\s*[：:]/i;
+const STRONG_PHOTO_DIRECTOR_LEAK_LINE_RE = /^\s*(?:[-*+]\s*)?(?:视觉标签|生成意图|正向提示词|负向提示词|positive\s+prompt|negative\s+prompt|final\s+prompt|prompt)\s*[：:]/i;
+
+function stripLeakedPhotoDirectorSummary(text: string): string {
+    const lines = text.split(/\r?\n/);
+    const labeledLines = lines.filter(line => PHOTO_DIRECTOR_LEAK_LINE_RE.test(line));
+    const hasStrongLeakLabel = lines.some(line => STRONG_PHOTO_DIRECTOR_LEAK_LINE_RE.test(line));
+    if (labeledLines.length < 2 && !hasStrongLeakLabel) return text;
+
+    return lines
+        .filter(line => !PHOTO_DIRECTOR_LEAK_LINE_RE.test(line))
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 function normalizeSongShareTags(text: string): string {
     let result = text.replace(
         /(?:\[\[|\[|【)\s*(?:分享(?:歌曲|音乐)|(?:share[-_]?)?song)\s*[:：]\s*([\s\S]*?)\s*(?:\]\]|]|】)/gi,
@@ -439,7 +455,7 @@ export const ChatParser = {
      * Called after every API completion (initial + re-calls from search/diary/xhs).
      */
     cleanAiSecondPass: (text: string): string => {
-        let result = stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text))
+        let result = stripLeakedPhotoDirectorSummary(stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text)))
             // ══════════════════════════════════════════════════════════════
             // Layer 1: TIMESTAMP STRIPPING
             // ══════════════════════════════════════════════════════════════
@@ -508,7 +524,7 @@ export const ChatParser = {
         result = normalizeSongShareTags(result);
         // Strip any CoT protocol residual that leaked through (e.g. from Gemini native thinking)
         result = stripCoTResidual(result);
-        return stripLeakedVoiceHistoryLabels(stripLeakedChatLinePrefixes(result));
+        return stripLeakedPhotoDirectorSummary(stripLeakedVoiceHistoryLabels(stripLeakedChatLinePrefixes(result)));
     },
 
     /**
@@ -518,7 +534,8 @@ export const ChatParser = {
      * Preserves [[SEND_EMOJI:]] and [[SHARE_SONG:]] for downstream splitResponse.
      */
     sanitize: (text: string): string => {
-        return stripLeakedVoiceHistoryLabels(stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text)))
+        const normalized = stripLeakedPhotoDirectorSummary(stripLeakedVoiceHistoryLabels(stripLeakedChatLinePrefixes(normalizeChatTextEnvelope(text))));
+        return stripLeakedPhotoDirectorSummary(normalized
             // ── Strip leaked timestamps ──
             .replace(/\[\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}[：:]\d{2}\]\s*/g, '')
             .replace(/\[\d{1,2}[-/]\d{1,2}\s+\d{1,2}[：:]\d{2}\]\s*/g, '')
@@ -561,7 +578,7 @@ export const ChatParser = {
             .replace(/%%TRANS%%[\s\S]*/gi, '')
             // ── Collapse excessive whitespace ──
             .replace(/\n{3,}/g, '\n\n')
-            .trim();
+            .trim());
     },
 
     /**

@@ -727,7 +727,7 @@ const MessageItem = React.memo(({
             ? m.metadata.originalAssetId
             : undefined;
         const imageSummary = String(m.metadata?.visualSummary || m.metadata?.caption || '').trim();
-        const imageAlt = imageSummary || (isUser ? 'Uploaded image' : 'Generated image');
+        const imageAlt = isUser ? 'Uploaded image' : 'Generated image';
         const fallbackPreviewSrc = imageSrc || thumbnailSrc;
         if ((isGeneratingImage || isFailedImage) && !thumbnailSrc) {
             return commonLayout(

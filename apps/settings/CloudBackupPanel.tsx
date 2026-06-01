@@ -24,7 +24,11 @@ import {
     readGithubBackupConfig,
     uploadGithubBackup,
 } from '../../utils/githubBackup';
-import { readSystemBackupIncludeVoiceAudio,type SystemBackupMode,type SystemBackupOptions } from '../../utils/systemBackup';
+import {
+    readSystemBackupIncludeVoiceAudio,
+    type SystemBackupMode,
+    type SystemBackupOptions,
+} from '../../utils/systemBackup';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -51,6 +55,24 @@ function formatFullDate(iso: string): string {
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit',
     });
+}
+
+const GITHUB_BACKUP_INCLUDE_MEMORY_RECORD_AUDIO_KEY = 'github_backup_include_memory_record_audio';
+
+function readGithubBackupIncludeMemoryRecordAudio(): boolean {
+    try {
+        return localStorage.getItem(GITHUB_BACKUP_INCLUDE_MEMORY_RECORD_AUDIO_KEY) === 'true';
+    } catch {
+        return false;
+    }
+}
+
+function writeGithubBackupIncludeMemoryRecordAudio(value: boolean): void {
+    try {
+        localStorage.setItem(GITHUB_BACKUP_INCLUDE_MEMORY_RECORD_AUDIO_KEY, String(value));
+    } catch {
+        // Backup preferences should never block the upload flow.
+    }
 }
 
 // ─── Icons (pure SVG, no emoji) ──────────────────────────────────────────
@@ -134,6 +156,7 @@ const GithubBackupCard: React.FC<GithubBackupCardProps> = ({
     const [downloading, setDownloading] = useState(false);
     const [progress, setProgress] = useState<number | null>(null);
     const [connectResult, setConnectResult] = useState('');
+    const [includeMemoryRecordAudio, setIncludeMemoryRecordAudio] = useState(readGithubBackupIncludeMemoryRecordAudio);
 
     const refreshGithubBackups = useCallback(async () => {
         if (!config) {
@@ -192,6 +215,12 @@ const GithubBackupCard: React.FC<GithubBackupCardProps> = ({
         addToast('GitHub 备份已断开', 'info');
     };
 
+    const toggleMemoryRecordAudioBackup = () => {
+        const next = !includeMemoryRecordAudio;
+        setIncludeMemoryRecordAudio(next);
+        writeGithubBackupIncludeMemoryRecordAudio(next);
+    };
+
     const handleGithubUpload = async () => {
         if (!config || uploading) return;
         setUploading(true);
@@ -200,10 +229,11 @@ const GithubBackupCard: React.FC<GithubBackupCardProps> = ({
             addToast('正在生成备份...', 'info');
             const blob = await exportSystem('full', {
                 includeVoiceAudio: readSystemBackupIncludeVoiceAudio(),
-                includeMemoryRecordAudio: false,
+                includeMemoryRecordAudio,
             });
             const filename = `Sully_Backup_full_${Date.now()}.zip`;
-            addToast(`备份已生成（${formatBytes(blob.size)}），正在上传到 GitHub...`, 'info');
+            const audioNote = includeMemoryRecordAudio ? '包含回忆唱片歌曲音频' : '不含歌曲音频';
+            addToast(`备份已生成（${formatBytes(blob.size)}，${audioNote}），正在上传到 GitHub...`, 'info');
             const result = await uploadGithubBackup(config, blob, filename, (percent) => {
                 setProgress(percent);
             });
@@ -319,6 +349,24 @@ const GithubBackupCard: React.FC<GithubBackupCardProps> = ({
                                     <p className="text-xs text-stone-400">暂无 GitHub 备份</p>
                                 </div>
                             )}
+
+                            <button
+                                type="button"
+                                onClick={toggleMemoryRecordAudioBackup}
+                                disabled={uploading}
+                                aria-pressed={includeMemoryRecordAudio}
+                                className="w-full px-4 py-3 bg-white/75 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 text-left active:scale-[0.99] transition-all disabled:opacity-60"
+                            >
+                                <div className="min-w-0">
+                                    <div className="text-xs font-bold text-slate-600">包含回忆唱片歌曲音频</div>
+                                    <div className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+                                        打开后 GitHub 备份会带上可播放歌曲，文件会明显变大。
+                                    </div>
+                                </div>
+                                <div className={`shrink-0 w-11 h-6 rounded-full p-0.5 transition-colors ${includeMemoryRecordAudio ? 'bg-slate-900' : 'bg-slate-200'}`}>
+                                    <div className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${includeMemoryRecordAudio ? 'translate-x-5' : 'translate-x-0'}`} />
+                                </div>
+                            </button>
 
                             <div className="grid grid-cols-2 gap-2">
                                 <button
